@@ -33,10 +33,11 @@ body {
     font-weight: bold;
     color: black;
     margin-bottom: 10px;
+    left:30px;
 }
 
 .content {
-    width: 100%;
+    width: 140%;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
@@ -69,18 +70,33 @@ body {
 
 .animated-image {
     position: absolute;
-    bottom: 0;
+    bottom: 10px;
     left: 10%;
     width: 6%;
-    animation: fluidMove 8s infinite ease-in-out;
+    animation: fluidMove 10s infinite ease-in-out;
 }
 
 @keyframes fluidMove {
-    0%, 100% { transform: translateX(0) scale(0.1); }
-    25% { transform: translateX(60vw) scale(0.1); }
-    50% { transform: translateX(80vw) translateY(-10vh) scale(0.1); }
-    75% { transform: translateX(60vw) scale(0.1); }
+    0% {
+        transform: rotate(0deg) translateX(0) scale(0.1);
+    }
+    20% {
+        transform: rotate(90deg) translateX(-30px) scale(0.1); /* Rotate 90 degrees right and move left 30px */
+    }
+    40% {
+        transform: rotate(180deg) translateX(-30px) scale(0.1); /* Rotate 180 degrees */
+    }
+    60% {
+        transform: rotate(180deg) translateX(30px) scale(0.1); /* Move right 30px */
+    }
+    80% {
+        transform: rotate(90deg) translateX(30px) scale(0.1); /* Rotate 90 degrees left */
+    }
+    100% {
+        transform: rotate(0deg) translateX(0) scale(0.1); /* Reset to original state */
+    }
 }
+
 
 .right-column {
     flex: 1;
@@ -106,4 +122,6 @@ body {
     width: 100%;
     object-fit: cover; /* Cover the container */
     border-radius: 20px;
+    scale: 0.8;
+    margin-top: -200px;
 }
