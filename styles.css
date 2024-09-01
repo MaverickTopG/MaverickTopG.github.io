@@ -32,12 +32,12 @@ body {
     font-size: 3.5vw;
     font-weight: bold;
     color: black;
-    margin-left: 20px; /* Align with text content */
-    margin-bottom: 20px; /* Add space below the app name */
+    margin-left: 20px;
+    margin-bottom: 20px;
 }
 
 .content {
-    width: 100%; /* Set to 100% for consistent width */
+    width: 100%;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
@@ -65,40 +65,37 @@ body {
     color: #333;
     max-width: 500px;
     padding: 15px;
-    border-left: 4px solid black; /* Changed border to black */
+    border-left: 4px solid black;
 }
 
 .animated-image {
     position: absolute;
-    bottom: 50px;
+    bottom: 10px;
     left: 10%;
     width: 6%;
-    animation: fluidMove 10s infinite linear; 
-    
+    animation: fluidMove 10s infinite linear;
 }
 
 @keyframes fluidMove {
     0% {
-        transform: rotate(0deg) translateX(0) scale(0.1); /* Initial position */
+        transform: rotate(0deg) translateX(0) scale(0.1);
     }
     20% {
-        transform: rotate(-90deg) translateX(0) scale(0.1); /* Rotate 90 degrees left */
+        transform: rotate(-90deg) translateX(0) scale(0.1);
     }
     40% {
-        transform: rotate(-90deg) translateX(40vw) scale(0.1); /* Move halfway to the right */
+        transform: rotate(-90deg) translateX(40vw) scale(0.1);
     }
     60% {
-        transform: rotate(90deg) translateX(40vw) scale(0.1); /* Rotate 180 degrees to the right */
+        transform: rotate(90deg) translateX(40vw) scale(0.1);
     }
     80% {
-        transform: rotate(90deg) translateX(80vw) scale(0.1); /* Move to the final destination */
+        transform: rotate(90deg) translateX(80vw) scale(0.1);
     }
     100% {
-        transform: rotate(270deg) translateX(80vw) scale(0.1); /* Rotate back 90 degrees left to the original orientation */
+        transform: rotate(0deg) translateX(80vw) scale(0.1);
     }
 }
-
-
 
 .right-column {
     flex: 1;
@@ -111,18 +108,8 @@ body {
     position: relative;
 }
 
-.app-interface {
-    width: 100%;
-    max-width: 450px;
-    border-radius: 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    overflow: hidden;
-    margin-top: -20px; /* Adjust to align with the headline */
-}
-
 .app-video {
-    height: 100vh;
+    height: 100vh; /* Full height of the screen */
     width: 100%;
-    object-fit: cover;
-    border-radius: 20px;
+    object-fit: cover; /* Cover the container */
 }
