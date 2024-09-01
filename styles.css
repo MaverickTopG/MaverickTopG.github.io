@@ -70,30 +70,21 @@ body {
 
 .animated-image {
     position: absolute;
-    bottom: 10px;
+    bottom: 100px;
     left: 10%;
     width: 6%;
     animation: fluidMove 10s infinite linear;
 }
 
 @keyframes fluidMove {
-    0% {
-        transform: rotate(0deg) translateX(0) scale(0.1);
+   0% {
+        transform: rotate(90deg) translateY(30vh) scale(0.1);
     }
-    20% {
-        transform: rotate(-90deg) translateX(0) scale(0.1);
-    }
-    40% {
-        transform: rotate(-90deg) translateX(40vw) scale(0.1);
-    }
-    60% {
-        transform: rotate(90deg) translateX(40vw) scale(0.1);
-    }
-    80% {
-        transform: rotate(90deg) translateX(80vw) scale(0.1);
+    50% {
+        transform: rotate(-180deg) translateY(-30vh) scale(0.1);
     }
     100% {
-        transform: rotate(0deg) translateX(80vw) scale(0.1);
+        transform: rotate(90deg) scale(0.1);
     }
 }
 
@@ -112,4 +103,6 @@ body {
     height: 100vh; /* Full height of the screen */
     width: 100%;
     object-fit: cover; /* Cover the container */
+    scale: 0.8;
+    margin-top: -200px;
 }
