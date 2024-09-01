@@ -54,23 +54,11 @@ body {
     margin-bottom: 20px;
 }
 
-.download-button {
-    background-color: black;
-    color: #fff6e7;
-    border: none;
-    padding: 15px 30px;
+.app-info {
     font-size: 1.2rem;
-    cursor: pointer;
-    border-radius: 5px;
-    transition: all 0.3s;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    line-height: 1.6;
     margin-top: 20px;
-}
-
-.download-button:hover {
-    background-color: #fff6e7;
-    color: black;
-    border: 2px solid black;
+    color: #333;
 }
 
 .animated-image {
@@ -102,8 +90,6 @@ body {
     height: 100vh; /* Full height of the screen */
     width: auto; /* Keep proportional width */
     position: relative;
-    z-index: 1000;
-    top:-100px;
-    scale: 0.9;
-    
+    z-index: 2;
+    object-fit: cover; /* Make video fit within the frame */
 }
