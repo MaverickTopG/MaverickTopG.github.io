@@ -73,20 +73,9 @@ body {
     bottom: 100px;
     left: 10%;
     width: 6%;
-    animation: fluidMove 10s infinite linear;
 }
 
-@keyframes fluidMove {
-   0% {
-        transform: rotate(90deg) translateY(30vh) scale(0.1);
-    }
-    50% {
-        transform: rotate(-180deg) translateY(-30vh) scale(0.1);
-    }
-    100% {
-        transform: rotate(90deg) scale(0.1);
-    }
-}
+
 
 .right-column {
     flex: 1;
