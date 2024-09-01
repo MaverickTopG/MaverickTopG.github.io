@@ -32,12 +32,12 @@ body {
     font-size: 3.5vw;
     font-weight: bold;
     color: black;
-    margin-bottom: 10px;
-    left:30px;
+    margin-left: 20px; /* Align with text content */
+    margin-bottom: 20px; /* Add space below the app name */
 }
 
 .content {
-    width: 140%;
+    width: 100%; /* Set to 100% for consistent width */
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
@@ -65,37 +65,39 @@ body {
     color: #333;
     max-width: 500px;
     padding: 15px;
-    border-left: 4px solid #FF7F7F; /* Adds a stylish border for emphasis */
+    border-left: 4px solid black; /* Changed border to black */
 }
 
 .animated-image {
     position: absolute;
-    bottom: 10px;
+    bottom: 50px;
     left: 10%;
     width: 6%;
-    animation: fluidMove 10s infinite ease-in-out;
+    animation: fluidMove 10s infinite linear; 
+    
 }
 
 @keyframes fluidMove {
     0% {
-        transform: rotate(0deg) translateX(0) scale(0.1);
+        transform: rotate(0deg) translateX(0) scale(0.1); /* Initial position */
     }
     20% {
-        transform: rotate(90deg) translateX(-30px) scale(0.1); /* Rotate 90 degrees right and move left 30px */
+        transform: rotate(-90deg) translateX(0) scale(0.1); /* Rotate 90 degrees left */
     }
     40% {
-        transform: rotate(180deg) translateX(-30px) scale(0.1); /* Rotate 180 degrees */
+        transform: rotate(-90deg) translateX(40vw) scale(0.1); /* Move halfway to the right */
     }
     60% {
-        transform: rotate(180deg) translateX(30px) scale(0.1); /* Move right 30px */
+        transform: rotate(90deg) translateX(40vw) scale(0.1); /* Rotate 180 degrees to the right */
     }
     80% {
-        transform: rotate(90deg) translateX(30px) scale(0.1); /* Rotate 90 degrees left */
+        transform: rotate(90deg) translateX(80vw) scale(0.1); /* Move to the final destination */
     }
     100% {
-        transform: rotate(0deg) translateX(0) scale(0.1); /* Reset to original state */
+        transform: rotate(270deg) translateX(80vw) scale(0.1); /* Rotate back 90 degrees left to the original orientation */
     }
 }
+
 
 
 .right-column {
@@ -113,15 +115,14 @@ body {
     width: 100%;
     max-width: 450px;
     border-radius: 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1); /* Add shadow for better prominence */
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
     overflow: hidden;
+    margin-top: -20px; /* Adjust to align with the headline */
 }
 
 .app-video {
     height: 100vh;
     width: 100%;
-    object-fit: cover; /* Cover the container */
+    object-fit: cover;
     border-radius: 20px;
-    scale: 0.8;
-    margin-top: -200px;
 }
