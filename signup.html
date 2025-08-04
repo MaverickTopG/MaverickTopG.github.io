@@ -1001,7 +1001,7 @@ function getWeeklyDataFixed(startOfWeek) {
                                         <input type="date" value="${log.date}" data-field="date">
                                     </div>
                                     <div class="input-group">
-                                        <label>Location</label>
+                                        <label>Volunteering Job</label>
                                         <input type="text" value="${log.site || ''}" placeholder="Location" data-field="site">
                                     </div>
                                     <div class="input-group">
@@ -1366,7 +1366,7 @@ async function saveVolunteerHours(volunteerId) {
         }
 
         // Generate CSV content
-        let csvContent = "Date,Volunteer Name,Volunteer Email,Location,Hours,Organization\n";
+        let csvContent = "Date,Volunteer Name,Volunteer Email,Volunteering Job,Hours,Organization\n";
 
         // Sort logs by date, then by volunteer name
         filteredLogs.sort((a, b) => {
