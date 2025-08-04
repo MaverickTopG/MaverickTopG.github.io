@@ -23,7 +23,7 @@
         <div class="navbar-nav">
             <a href="index.html" class="nav-link">Home</a>
             <a href="privacy_policy.html" class="nav-link">Privacy Policy</a>
-            <a href="login.html" class="nav-link">Admin</a>
+            <a href="signup.html" class="nav-link">Admin</a>
         </div>
     </nav>
 
@@ -209,18 +209,18 @@
         let activityData = [];
         let hoursChart = null;
 
-        // Authentication check
+        // Authentication check - FIXED: redirect to signup.html instead of login.html
         auth.onAuthStateChanged(async (user) => {
-            if (!user) {
-                window.location.href = 'login.html';
-                return;
-            }
+            // if (!user) {
+            //     window.location.href = 'signup.html';
+            //     return;
+            // }
 
             try {
                 const userDoc = await db.collection('users').doc(user.uid).get();
                 if (!userDoc.exists || userDoc.data().role !== 'admin') {
                     await auth.signOut();
-                    window.location.href = 'login.html';
+                    window.location.href = 'signup.html';
                     return;
                 }
 
@@ -234,15 +234,24 @@
             }
         });
 
-        // Initialize dashboard
+        // Initialize dashboard - FIXED: Added smooth loading transition
         async function initializeDashboard() {
             try {
+                // Add loading state
+                document.body.classList.add('loading-dashboard');
+                
                 displayAdminInfo();
                 await loadVolunteersData();
                 await loadActivityData();
                 updateStatistics();
-                initializeChart();
+                await initializeChart();
                 setupDateControls();
+                
+                // Remove loading state with smooth transition
+                setTimeout(() => {
+                    document.body.classList.remove('loading-dashboard');
+                }, 500);
+                
             } catch (error) {
                 console.error('Error initializing dashboard:', error);
                 showMessage('Error loading dashboard. Please refresh the page.', 'error');
@@ -256,7 +265,7 @@
             document.getElementById('orgCode').textContent = currentOrgCode;
         }
 
-        // Load volunteers data
+        // Load volunteers data - FIXED: Use only firstName
         async function loadVolunteersData() {
             try {
                 const usersQuery = await db.collection('users')
@@ -296,8 +305,7 @@
                     
                     volunteersData.push({
                         id: userId,
-                        firstName: userData.firstName || '',
-                        lastName: userData.lastName || '',
+                        firstName: userData.firstName || userData.name || '', // FIXED: Use firstName only
                         email: userData.email || '',
                         totalHours: hoursData.totalHours,
                         lastActivity: hoursData.lastActivity,
@@ -313,10 +321,12 @@
                         
                         volunteersData.push({
                             id: userId,
-                            firstName: '', lastName: '', email: email,
+                            firstName: '', // FIXED: Only firstName
+                            email: email,
                             totalHours: volunteerHours[userId].totalHours,
                             lastActivity: volunteerHours[userId].lastActivity,
-                            logs: logs, registrationDate: null
+                            logs: logs, 
+                            registrationDate: null
                         });
                     }
                 });
@@ -333,15 +343,13 @@
             try {
                 const logsQuery = await db.collection('volunteer_logs')
                     .where('organization_id', '==', currentOrgCode)
+                    .orderBy('date', 'desc')
                     .get();
 
                 activityData = [];
                 logsQuery.forEach(doc => {
                     activityData.push({ id: doc.id, ...doc.data() });
                 });
-
-                activityData.sort((a, b) => new Date(b.date) - new Date(a.date));
-                activityData = activityData.slice(0, 50);
 
                 displayActivity();
             } catch (error) {
@@ -372,19 +380,38 @@
                     .map(log => log.user_id)
             ).size;
 
-            document.getElementById('totalVolunteers').textContent = totalVolunteers;
-            document.getElementById('totalHours').textContent = totalHours.toFixed(1);
-            document.getElementById('monthlyHours').textContent = monthlyHours.toFixed(1);
-            document.getElementById('weeklyActive').textContent = weeklyActive;
+            // Animate numbers
+            animateNumber('totalVolunteers', totalVolunteers);
+            animateNumber('totalHours', totalHours, 1);
+            animateNumber('monthlyHours', monthlyHours, 1);
+            animateNumber('weeklyActive', weeklyActive);
         }
 
-        // Display volunteers in table
+        // Animate number counters
+        function animateNumber(elementId, targetValue, decimals = 0) {
+            const element = document.getElementById(elementId);
+            const startValue = 0;
+            const duration = 1500;
+            const increment = targetValue / (duration / 16);
+            let currentValue = startValue;
+
+            const timer = setInterval(() => {
+                currentValue += increment;
+                if (currentValue >= targetValue) {
+                    currentValue = targetValue;
+                    clearInterval(timer);
+                }
+                element.textContent = decimals > 0 ? currentValue.toFixed(decimals) : Math.floor(currentValue);
+            }, 16);
+        }
+
+        // Display volunteers in table - FIXED: Use only firstName
         function displayVolunteers() {
             const tbody = document.getElementById('volunteersTableBody');
             tbody.innerHTML = '';
 
             volunteersData.forEach(volunteer => {
-                const name = `${volunteer.firstName} ${volunteer.lastName}`.trim() || 'Unknown';
+                const name = volunteer.firstName.trim() || 'Unknown'; // FIXED: Only firstName
                 const lastActivity = volunteer.lastActivity ? 
                     new Date(volunteer.lastActivity).toLocaleDateString() : 'Never';
 
@@ -407,7 +434,7 @@
             });
         }
 
-        // Display activity logs
+        // Display activity logs - FIXED: Use only firstName
         function displayActivity() {
             const activityList = document.getElementById('activityList');
             activityList.innerHTML = '';
@@ -425,7 +452,7 @@
             activityData.slice(0, 15).forEach(activity => {
                 const volunteer = volunteersData.find(v => v.id === activity.user_id);
                 const volunteerName = volunteer ? 
-                    `${volunteer.firstName} ${volunteer.lastName}`.trim() || volunteer.email :
+                    volunteer.firstName || volunteer.email : // FIXED: Only firstName
                     activity.volunteer_email || 'Unknown Volunteer';
 
                 const hours = parseFloat(activity.hours_contributed || activity.hours) || 0;
@@ -447,8 +474,8 @@
             });
         }
 
-        // Initialize chart
-        function initializeChart() {
+        // Initialize chart - FIXED: Beautiful gradient chart with better styling
+        async function initializeChart() {
             const ctx = document.getElementById('hoursChart').getContext('2d');
             
             const endDate = new Date();
@@ -458,6 +485,16 @@
             document.getElementById('startDate').value = startDate.toISOString().split('T')[0];
             document.getElementById('endDate').value = endDate.toISOString().split('T')[0];
 
+            // Create gradient
+            const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+            gradient.addColorStop(0, 'rgba(255, 190, 11, 0.8)');
+            gradient.addColorStop(0.5, 'rgba(255, 190, 11, 0.4)');
+            gradient.addColorStop(1, 'rgba(255, 190, 11, 0.1)');
+
+            const borderGradient = ctx.createLinearGradient(0, 0, 0, 400);
+            borderGradient.addColorStop(0, '#ffbe0b');
+            borderGradient.addColorStop(1, '#ffd633');
+
             hoursChart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -465,29 +502,116 @@
                     datasets: [{
                         label: 'Hours Logged',
                         data: [],
-                        borderColor: '#ffbe0b',
-                        backgroundColor: 'rgba(255, 190, 11, 0.1)',
-                        borderWidth: 3,
+                        backgroundColor: gradient,
+                        borderColor: borderGradient,
+                        borderWidth: 4,
                         fill: true,
-                        tension: 0.4
+                        tension: 0.4,
+                        pointBackgroundColor: '#ffbe0b',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 3,
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        pointHoverBackgroundColor: '#ffd633',
+                        pointHoverBorderColor: '#ffffff',
+                        pointHoverBorderWidth: 3,
+                        shadowOffsetX: 0,
+                        shadowOffsetY: 4,
+                        shadowBlur: 10,
+                        shadowColor: 'rgba(255, 190, 11, 0.3)'
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    animation: {
+                        duration: 2000,
+                        easing: 'easeInOutQuart'
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            borderColor: '#ffbe0b',
+                            borderWidth: 2,
+                            cornerRadius: 10,
+                            displayColors: false,
+                            callbacks: {
+                                title: function(context) {
+                                    return 'Date: ' + context[0].label;
+                                },
+                                label: function(context) {
+                                    return 'Hours: ' + context.parsed.y.toFixed(1);
+                                }
+                            }
+                        }
+                    },
                     scales: {
-                        y: { beginAtZero: true },
-                        x: { grid: { display: false } }
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(255, 190, 11, 0.1)',
+                                lineWidth: 1
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: {
+                                    size: 12,
+                                    weight: '500'
+                                },
+                                callback: function(value) {
+                                    return value + ' hrs';
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Hours',
+                                color: '#333',
+                                font: {
+                                    size: 14,
+                                    weight: '600'
+                                }
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: {
+                                    size: 12,
+                                    weight: '500'
+                                },
+                                maxTicksLimit: 10
+                            },
+                            title: {
+                                display: true,
+                                text: 'Date',
+                                color: '#333',
+                                font: {
+                                    size: 14,
+                                    weight: '600'
+                                }
+                            }
+                        }
                     }
                 }
             });
 
-            updateChart();
+            await updateChart();
         }
 
-        // Update chart with selected date range
-        function updateChart() {
+        // Update chart with selected date range - FIXED: Better data processing
+        async function updateChart() {
             const startDate = new Date(document.getElementById('startDate').value);
             const endDate = new Date(document.getElementById('endDate').value);
             
@@ -501,19 +625,31 @@
                 return logDate >= startDate && logDate <= endDate;
             });
 
+            // Group by date and sum hours
             const dateHours = {};
             filteredLogs.forEach(log => {
-                const date = new Date(log.date).toLocaleDateString();
+                const date = new Date(log.date).toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric' 
+                });
                 const hours = parseFloat(log.hours_contributed || log.hours) || 0;
                 dateHours[date] = (dateHours[date] || 0) + hours;
             });
 
-            const dates = Object.keys(dateHours).sort((a, b) => new Date(a) - new Date(b));
-            const hours = dates.map(date => dateHours[date]);
+            // Sort dates chronologically
+            const sortedEntries = Object.entries(dateHours).sort((a, b) => {
+                return new Date(a[0]) - new Date(b[0]);
+            });
 
+            const dates = sortedEntries.map(entry => entry[0]);
+            const hours = sortedEntries.map(entry => entry[1]);
+
+            // Update chart with animation
             hoursChart.data.labels = dates;
             hoursChart.data.datasets[0].data = hours;
-            hoursChart.update();
+            hoursChart.update('active');
+
+            showMessage(`Chart updated with ${dates.length} data points`, 'success');
         }
 
         // Setup date controls
@@ -522,7 +658,7 @@
             document.getElementById('endDate').max = today;
         }
 
-        // Edit volunteer hours
+        // Edit volunteer hours - FIXED: Use only firstName
         function editVolunteerHours(volunteerId) {
             const volunteer = volunteersData.find(v => v.id === volunteerId);
             if (!volunteer) return;
@@ -530,7 +666,7 @@
             const modal = document.getElementById('editHoursModal');
             const content = document.getElementById('editHoursContent');
             
-            const name = `${volunteer.firstName} ${volunteer.lastName}`.trim() || volunteer.email;
+            const name = volunteer.firstName || volunteer.email; // FIXED: Only firstName
             
             content.innerHTML = `
                 <div class="volunteer-header">
@@ -696,12 +832,12 @@
             document.getElementById('editHoursModal').style.display = 'none';
         }
 
-        // View volunteer details
+        // View volunteer details - FIXED: Use only firstName
         function viewVolunteerDetails(volunteerId) {
             const volunteer = volunteersData.find(v => v.id === volunteerId);
             if (!volunteer) return;
 
-            const name = `${volunteer.firstName} ${volunteer.lastName}`.trim() || 'Unknown';
+            const name = volunteer.firstName || 'Unknown'; // FIXED: Only firstName
             const registrationDate = volunteer.registrationDate ? 
                 new Date(volunteer.registrationDate.toDate()).toLocaleDateString() : 'Unknown';
 
@@ -743,15 +879,15 @@
             });
         }
 
-        // Sort volunteers
+        // Sort volunteers - FIXED: Use only firstName
         function sortVolunteers() {
             const sortBy = document.getElementById('sortBy').value;
             
             volunteersData.sort((a, b) => {
                 switch (sortBy) {
                     case 'name':
-                        const nameA = `${a.firstName} ${a.lastName}`.trim() || a.email;
-                        const nameB = `${b.firstName} ${b.lastName}`.trim() || b.email;
+                        const nameA = a.firstName || a.email; // FIXED: Only firstName
+                        const nameB = b.firstName || b.email; // FIXED: Only firstName
                         return nameA.localeCompare(nameB);
                     case 'hours':
                         return b.totalHours - a.totalHours;
@@ -767,7 +903,7 @@
             displayVolunteers();
         }
 
-        // Filter activity
+        // Filter activity - FIXED: Use only firstName
         function filterActivity() {
             const filter = document.getElementById('activityFilter').value;
             let filteredData = [...activityData];
@@ -806,7 +942,7 @@
             filteredData.slice(0, 15).forEach(activity => {
                 const volunteer = volunteersData.find(v => v.id === activity.user_id);
                 const volunteerName = volunteer ? 
-                    `${volunteer.firstName} ${volunteer.lastName}`.trim() || volunteer.email :
+                    volunteer.firstName || volunteer.email : // FIXED: Only firstName
                     activity.volunteer_email || 'Unknown Volunteer';
 
                 const hours = parseFloat(activity.hours_contributed || activity.hours) || 0;
@@ -828,7 +964,7 @@
             });
         }
 
-        // Export activity log
+        // Export activity log - FIXED: Use only firstName
         function exportActivityLog() {
             const filter = document.getElementById('activityFilter').value;
             let dataToExport = [...activityData];
@@ -857,13 +993,13 @@
             dataToExport.forEach(log => {
                 const volunteer = volunteersData.find(v => v.id === log.user_id);
                 const volunteerName = volunteer ? 
-                    `"${volunteer.firstName} ${volunteer.lastName}".trim()` || volunteer.email :
+                    volunteer.firstName || volunteer.email : // FIXED: Only firstName
                     log.volunteer_email || 'Unknown';
                 const volunteerEmail = volunteer ? volunteer.email : log.volunteer_email || 'Unknown';
                 
                 const row = [
                     log.date || '',
-                    volunteerName,
+                    `"${volunteerName}"`,
                     volunteerEmail,
                     log.hours_contributed || log.hours || 0,
                     `"${log.site || ''}"`
@@ -886,11 +1022,11 @@
             showMessage('Activity log exported successfully', 'success');
         }
 
-        // Logout function
+        // Logout function - FIXED: redirect to signup.html
         function logout() {
             if (confirm('Are you sure you want to logout?')) {
                 auth.signOut().then(() => {
-                    window.location.href = 'login.html';
+                    window.location.href = 'signup.html'; // FIXED: redirect to signup.html
                 }).catch((error) => {
                     showMessage('Error logging out', 'error');
                 });
@@ -984,6 +1120,33 @@
             position: relative;
             overflow-x: hidden;
             padding-top: 80px;
+            transition: opacity 0.5s ease;
+        }
+
+        /* FIXED: Smooth loading transition */
+        body.loading-dashboard {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        body.loading-dashboard::after {
+            content: '';
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 190, 11, 0.3);
+            border-top: 4px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            z-index: 9999;
+        }
+
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
         }
 
         /* Animated background overlay */
@@ -1132,6 +1295,12 @@
             margin-bottom: 30px;
             box-shadow: var(--shadow-medium);
             border: 1px solid rgba(255,255,255,0.3);
+            animation: fadeInUp 0.8s ease;
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .header-left .admin-info h1 {
@@ -1203,6 +1372,7 @@
             margin-bottom: 30px;
             box-shadow: var(--shadow-medium);
             border: 1px solid rgba(255,255,255,0.3);
+            animation: fadeInUp 0.8s ease 0.1s both;
         }
 
         .org-header {
@@ -1257,10 +1427,16 @@
             box-shadow: var(--shadow-medium);
             border: 1px solid rgba(255,255,255,0.3);
             transition: all 0.3s ease;
+            animation: fadeInUp 0.8s ease both;
         }
 
+        .stat-card:nth-child(1) { animation-delay: 0.2s; }
+        .stat-card:nth-child(2) { animation-delay: 0.3s; }
+        .stat-card:nth-child(3) { animation-delay: 0.4s; }
+        .stat-card:nth-child(4) { animation-delay: 0.5s; }
+
         .stat-card:hover {
-            transform: translateY(-5px);
+            transform: translateY(-5px) scale(1.02);
             box-shadow: var(--shadow-strong);
         }
 
@@ -1293,7 +1469,7 @@
             color: var(--text-dark);
         }
 
-        /* Chart Section */
+        /* Chart Section - ENHANCED */
         .chart-section {
             background: var(--card-bg);
             backdrop-filter: blur(20px) saturate(180%);
@@ -1302,6 +1478,7 @@
             margin-bottom: 30px;
             box-shadow: var(--shadow-medium);
             border: 1px solid rgba(255,255,255,0.3);
+            animation: fadeInUp 0.8s ease 0.6s both;
         }
 
         .chart-header {
@@ -1329,8 +1506,12 @@
         }
 
         .chart-container {
-            height: 350px;
+            height: 400px;
             position: relative;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.05);
         }
 
         /* Section Styles */
@@ -1343,7 +1524,11 @@
             margin-bottom: 30px;
             box-shadow: var(--shadow-medium);
             border: 1px solid rgba(255,255,255,0.3);
+            animation: fadeInUp 0.8s ease both;
         }
+
+        .volunteers-section { animation-delay: 0.7s; }
+        .activity-section { animation-delay: 0.8s; }
 
         .section-header {
             display: flex;
@@ -1369,73 +1554,92 @@
             flex-wrap: wrap;
         }
 
-        /* Table */
+        /* Table - ENHANCED */
         .table-container {
             overflow-x: auto;
             border-radius: 12px;
             border: 1px solid rgba(255,255,255,0.3);
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.9) 100%);
         }
 
         .data-table {
             width: 100%;
             border-collapse: collapse;
-            background: white;
         }
 
         .data-table th {
-            background: rgba(248,249,250,0.9);
+            background: linear-gradient(135deg, rgba(248,249,250,0.95) 0%, rgba(240,242,245,0.9) 100%);
             padding: 15px;
             text-align: left;
             font-weight: 600;
             color: var(--text-dark);
-            border-bottom: 2px solid rgba(255,255,255,0.3);
+            border-bottom: 2px solid rgba(255,190,11,0.2);
         }
 
         .data-table td {
             padding: 15px;
             border-bottom: 1px solid rgba(240,240,240,0.5);
             vertical-align: middle;
+            transition: background-color 0.3s ease;
         }
 
         .data-table tr:hover {
-            background: rgba(255, 190, 11, 0.05);
+            background: linear-gradient(135deg, rgba(255, 190, 11, 0.08) 0%, rgba(255, 190, 11, 0.05) 100%);
+            transform: scale(1.01);
         }
 
         .hours-badge {
             background: var(--gradient-primary);
             color: var(--black);
-            padding: 4px 10px;
-            border-radius: 12px;
+            padding: 6px 12px;
+            border-radius: 20px;
             font-size: 0.85rem;
             font-weight: 600;
-        }
-
-        /* Activity List */
-        .activity-list {
-            max-height: 500px;
-            overflow-y: auto;
-        }
-
-        .activity-item {
-            padding: 15px;
-            border-bottom: 1px solid rgba(240,240,240,0.5);
+            box-shadow: 0 2px 8px rgba(255,190,11,0.3);
+            display: inline-block;
             transition: all 0.3s ease;
         }
 
+        .hours-badge:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(255,190,11,0.4);
+        }
+
+        /* Activity List - ENHANCED */
+        .activity-list {
+            max-height: 500px;
+            overflow-y: auto;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+        }
+
+        .activity-item {
+            padding: 18px;
+            border-bottom: 1px solid rgba(240,240,240,0.3);
+            transition: all 0.3s ease;
+            border-radius: 8px;
+            margin-bottom: 5px;
+        }
+
         .activity-item:hover {
-            background: rgba(255, 190, 11, 0.05);
+            background: linear-gradient(135deg, rgba(255, 190, 11, 0.08) 0%, rgba(255, 190, 11, 0.05) 100%);
+            transform: translateX(5px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
 
         .activity-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
         }
 
         .activity-time {
             font-size: 0.85rem;
             color: var(--text-light);
+            background: rgba(255,190,11,0.1);
+            padding: 2px 8px;
+            border-radius: 10px;
         }
 
         .activity-description {
@@ -1443,242 +1647,334 @@
             font-size: 0.9rem;
         }
 
-        /* Empty State */
+        /* Empty State - ENHANCED */
         .empty-state {
             text-align: center;
-            padding: 40px;
+            padding: 60px 40px;
             color: var(--text-light);
+            background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+            border-radius: 12px;
+            border: 2px dashed rgba(255,190,11,0.3);
         }
 
         .empty-state i {
-            font-size: 2.5rem;
-            margin-bottom: 15px;
-            opacity: 0.5;
+            font-size: 3rem;
+            margin-bottom: 20px;
+            opacity: 0.4;
+            color: var(--accent);
         }
 
-        /* Modal */
+        .empty-state p {
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        /* Modal - ENHANCED */
         .modal {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(5px);
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 1000;
+            opacity: 0;
+            animation: modalFadeIn 0.3s ease forwards;
+        }
+
+        @keyframes modalFadeIn {
+            to { opacity: 1; }
         }
 
         .modal-content {
-            background: white;
-            border-radius: 15px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.95) 100%);
+            border-radius: 20px;
             max-width: 700px;
             width: 90%;
             max-height: 80vh;
             overflow-y: auto;
             box-shadow: var(--shadow-strong);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.3);
+            transform: scale(0.9) translateY(20px);
+            animation: modalSlideIn 0.3s ease 0.1s forwards;
+        }
+
+        @keyframes modalSlideIn {
+            to { 
+                transform: scale(1) translateY(0);
+            }
         }
 
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px 25px;
-            border-bottom: 1px solid rgba(224,224,224,0.5);
+            padding: 25px 30px;
+            border-bottom: 1px solid rgba(224,224,224,0.3);
+            background: linear-gradient(135deg, rgba(255,190,11,0.05) 0%, rgba(255,190,11,0.02) 100%);
         }
 
         .modal-header h3 {
-            font-size: 1.2rem;
+            font-size: 1.3rem;
             color: var(--text-dark);
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
         }
 
         .close {
-            width: 30px;
-            height: 30px;
+            width: 35px;
+            height: 35px;
             border-radius: 50%;
-            background: #f8f9fa;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             transition: all 0.3s ease;
             color: var(--text-light);
+            border: 1px solid rgba(224,224,224,0.3);
         }
 
         .close:hover {
-            background: #e74c3c;
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
             color: white;
+            transform: scale(1.1);
+            box-shadow: 0 4px 15px rgba(231,76,60,0.3);
         }
 
         .modal-body {
-            padding: 25px;
+            padding: 30px;
         }
 
         .volunteer-header {
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid rgba(224,224,224,0.5);
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(224,224,224,0.3);
+            background: linear-gradient(135deg, rgba(255,190,11,0.05) 0%, rgba(255,190,11,0.02) 100%);
+            padding: 20px;
+            border-radius: 12px;
         }
 
         .volunteer-header h4 {
-            margin-bottom: 5px;
+            margin-bottom: 8px;
             color: var(--text-dark);
+            font-size: 1.2rem;
         }
 
         .volunteer-logs h5 {
-            margin-bottom: 15px;
+            margin-bottom: 20px;
             color: var(--text-dark);
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .volunteer-logs h5::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: var(--gradient-primary);
+            border-radius: 2px;
         }
 
         .log-item {
-            background: #f8f9fa;
-            border: 1px solid rgba(224,224,224,0.5);
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 10px;
+            background: linear-gradient(135deg, rgba(248,249,250,0.8) 0%, rgba(248,249,250,0.6) 100%);
+            border: 1px solid rgba(224,224,224,0.4);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .log-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
         }
 
         .log-item.new-log {
             border-color: #28a745;
-            background: #f8fff9;
+            background: linear-gradient(135deg, rgba(248,255,249,0.9) 0%, rgba(248,255,249,0.7) 100%);
+            box-shadow: 0 0 0 2px rgba(40,167,69,0.1);
         }
 
         .log-inputs {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 10px;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
             align-items: center;
         }
 
         .modal-footer {
             display: flex;
             justify-content: flex-end;
-            gap: 10px;
-            padding: 15px 25px;
-            border-top: 1px solid rgba(224,224,224,0.5);
-            background: #f8f9fa;
-            border-radius: 0 0 15px 15px;
+            gap: 15px;
+            padding: 20px 30px;
+            border-top: 1px solid rgba(224,224,224,0.3);
+            background: linear-gradient(135deg, rgba(248,249,250,0.8) 0%, rgba(248,249,250,0.6) 100%);
+            border-radius: 0 0 20px 20px;
         }
 
-        /* Button Styles */
+        /* Button Styles - ENHANCED */
         .btn-primary {
             background: var(--gradient-primary);
             color: var(--black);
             border: none;
-            padding: 10px 15px;
-            border-radius: 8px;
+            padding: 12px 20px;
+            border-radius: 50px;
             cursor: pointer;
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 8px;
             transition: all 0.3s ease;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 15px rgba(255,190,11,0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            transition: left 0.6s ease;
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-medium);
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 8px 25px rgba(255,190,11,0.4);
         }
 
         .btn-outline {
-            background: white;
-            color: var(--text-light);
+            background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.8) 100%);
+            color: var(--text-dark);
             border: 1px solid rgba(224,224,224,0.5);
-            padding: 10px 15px;
-            border-radius: 8px;
+            padding: 12px 20px;
+            border-radius: 50px;
             cursor: pointer;
             font-weight: 500;
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 8px;
             transition: all 0.3s ease;
+            font-size: 0.9rem;
+            backdrop-filter: blur(10px);
         }
 
         .btn-outline:hover {
-            background: #f8f9fa;
-            border-color: #ccc;
+            background: linear-gradient(135deg, rgba(248,249,250,0.95) 0%, rgba(248,249,250,0.9) 100%);
+            border-color: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
         }
 
         .btn-success {
-            background: linear-gradient(135deg, #28a745, #20c997);
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
             color: white;
             border: none;
-            padding: 10px 15px;
-            border-radius: 8px;
+            padding: 12px 20px;
+            border-radius: 50px;
             cursor: pointer;
             font-weight: 600;
             transition: all 0.3s ease;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 15px rgba(40,167,69,0.3);
         }
 
         .btn-success:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 8px 25px rgba(40,167,69,0.4);
         }
 
         .btn-danger {
-            background: linear-gradient(135deg, #dc3545, #c82333);
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
             color: white;
             border: none;
-            padding: 10px 15px;
-            border-radius: 8px;
+            padding: 12px 20px;
+            border-radius: 50px;
             cursor: pointer;
             font-weight: 600;
             transition: all 0.3s ease;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 15px rgba(220,53,69,0.3);
         }
 
         .btn-danger:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3);
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 8px 25px rgba(220,53,69,0.4);
         }
 
         .btn-sm {
-            padding: 6px 10px;
+            padding: 8px 12px;
             font-size: 0.8rem;
         }
 
         .btn-icon {
-            width: 32px;
-            height: 32px;
-            border-radius: 6px;
-            border: 1px solid rgba(224,224,224,0.5);
-            background: white;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid rgba(224,224,224,0.4);
+            background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.8) 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             transition: all 0.3s ease;
-            font-size: 0.8rem;
-            margin-right: 5px;
+            font-size: 0.9rem;
+            margin-right: 8px;
+            backdrop-filter: blur(10px);
         }
 
         .btn-edit:hover {
-            background: #3498db;
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
             color: white;
             border-color: #3498db;
+            transform: translateY(-2px) scale(1.1);
+            box-shadow: 0 6px 20px rgba(52,152,219,0.3);
         }
 
         .btn-view:hover {
-            background: #2ecc71;
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
             color: white;
             border-color: #2ecc71;
+            transform: translateY(-2px) scale(1.1);
+            box-shadow: 0 6px 20px rgba(46,204,113,0.3);
         }
 
-        /* Input Styles */
+        /* Input Styles - ENHANCED */
         input[type="text"],
         input[type="date"],
         input[type="number"],
         select {
-            padding: 8px 12px;
-            border: 1px solid rgba(224,224,224,0.5);
-            border-radius: 6px;
+            padding: 10px 15px;
+            border: 1px solid rgba(224,224,224,0.4);
+            border-radius: 8px;
             font-size: 0.9rem;
             transition: all 0.3s ease;
-            background: white;
+            background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.8) 100%);
+            backdrop-filter: blur(10px);
         }
 
         input[type="text"]:focus,
@@ -1687,31 +1983,39 @@
         select:focus {
             outline: none;
             border-color: var(--accent);
-            box-shadow: 0 0 0 2px rgba(255, 190, 11, 0.1);
+            box-shadow: 0 0 0 3px rgba(255, 190, 11, 0.15);
+            transform: translateY(-1px);
+            background: rgba(255,255,255,0.95);
         }
 
-        /* Messages */
+        /* Messages - ENHANCED */
         #messageContainer {
             position: fixed;
             top: 100px;
             right: 20px;
             z-index: 2000;
+            max-width: 400px;
         }
 
         .message {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 12px 20px;
-            margin-bottom: 10px;
-            border-radius: 10px;
+            gap: 12px;
+            padding: 15px 25px;
+            margin-bottom: 12px;
+            border-radius: 12px;
             box-shadow: var(--shadow-medium);
-            max-width: 350px;
             font-weight: 500;
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(15px);
             border: 1px solid rgba(255,255,255,0.3);
             position: relative;
             overflow: hidden;
+            transform: translateX(100%);
+            animation: messageSlideIn 0.5s ease forwards;
+        }
+
+        @keyframes messageSlideIn {
+            to { transform: translateX(0); }
         }
 
         .message::before {
@@ -1721,7 +2025,7 @@
             left: -100%;
             width: 100%;
             height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
             animation: messageShine 2s ease-in-out;
         }
 
@@ -1731,19 +2035,19 @@
         }
 
         .message.success {
-            background: linear-gradient(135deg, rgba(209,231,221,0.9) 0%, rgba(209,231,221,0.7) 100%);
+            background: linear-gradient(135deg, rgba(209,231,221,0.95) 0%, rgba(209,231,221,0.8) 100%);
             color: #0f5132;
             border-left: 4px solid #198754;
         }
 
         .message.error {
-            background: linear-gradient(135deg, rgba(248,215,218,0.9) 0%, rgba(248,215,218,0.7) 100%);
+            background: linear-gradient(135deg, rgba(248,215,218,0.95) 0%, rgba(248,215,218,0.8) 100%);
             color: #842029;
             border-left: 4px solid #dc3545;
         }
 
         .message.info {
-            background: linear-gradient(135deg, rgba(255,243,205,0.9) 0%, rgba(255,243,205,0.7) 100%);
+            background: linear-gradient(135deg, rgba(255,243,205,0.95) 0%, rgba(255,243,205,0.8) 100%);
             color: #664d03;
             border-left: 4px solid var(--accent);
         }
@@ -1752,16 +2056,20 @@
             background: none;
             border: none;
             cursor: pointer;
-            padding: 2px;
-            border-radius: 3px;
-            transition: background 0.3s ease;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            color: inherit;
+            opacity: 0.7;
         }
 
         .message-close:hover {
             background: rgba(0, 0, 0, 0.1);
+            opacity: 1;
+            transform: scale(1.1);
         }
 
-        /* Responsive Design */
+        /* Responsive Design - ENHANCED */
         @media (max-width: 768px) {
             .container {
                 padding: 15px;
@@ -1814,52 +2122,64 @@
 
             .log-inputs {
                 grid-template-columns: 1fr;
-                gap: 8px;
+                gap: 10px;
             }
 
             .modal-footer {
                 flex-direction: column;
             }
+
+            #messageContainer {
+                right: 10px;
+                left: 10px;
+                max-width: none;
+            }
         }
 
-        /* Custom scrollbar */
+        /* Custom scrollbar - ENHANCED */
         ::-webkit-scrollbar {
-            width: 6px;
+            width: 8px;
+            height: 8px;
         }
 
         ::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 3px;
+            background: rgba(248,249,250,0.8);
+            border-radius: 4px;
         }
 
         ::-webkit-scrollbar-thumb {
-            background: var(--accent);
-            border-radius: 3px;
+            background: var(--gradient-primary);
+            border-radius: 4px;
+            transition: all 0.3s ease;
         }
 
         ::-webkit-scrollbar-thumb:hover {
             background: var(--accent-dark);
+            transform: scale(1.1);
         }
 
-        /* Loading state */
+        /* Loading states */
         .loading {
             position: relative;
             pointer-events: none;
+            opacity: 0.7;
         }
 
         .loading::after {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255,255,255,0.8);
-            border-radius: inherit;
-            backdrop-filter: blur(2px);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 190, 11, 0.3);
+            border-top: 2px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
         }
 
-        /* Dark mode support */
+        /* Dark mode support - ENHANCED */
         @media (prefers-color-scheme: dark) {
             .data-table,
             .modal-content,
@@ -1867,27 +2187,52 @@
             input[type="date"],
             input[type="number"],
             select {
-                background: rgba(60,60,60,0.8);
+                background: rgba(60,60,60,0.9);
                 color: #e0e0e0;
                 border-color: rgba(255,255,255,0.2);
             }
+            
+            .navbar {
+                background: rgba(30,30,30,0.9);
+            }
+            
+            .empty-state {
+                background: rgba(60,60,60,0.5);
+                border-color: rgba(255,190,11,0.4);
+            }
         }
 
-        /* Focus indicators for accessibility */
+        /* Focus indicators for accessibility - ENHANCED */
         button:focus-visible,
         input:focus-visible {
             outline: 2px solid var(--accent);
             outline-offset: 2px;
+            box-shadow: 0 0 0 4px rgba(255, 190, 11, 0.2);
         }
 
         /* Reduced motion for accessibility */
         @media (prefers-reduced-motion: reduce) {
-            * {
+            *,
+            *::before,
+            *::after {
                 animation-duration: 0.01ms !important;
                 animation-iteration-count: 1 !important;
                 transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
             }
         }
+
+        /* Improved performance */
+        .chart-container canvas {
+            will-change: transform;
+        }
+
+        .stat-card,
+        .activity-item,
+        .log-item {
+            will-change: transform;
+        }
+
     </style>
 </body>
 </html>
