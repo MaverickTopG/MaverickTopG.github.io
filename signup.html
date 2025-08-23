@@ -121,7 +121,7 @@
           <i class="fas fa-building"></i>
         </div>
         <div class="org-details">
-          <h2 id="orgName">Loading Organization...</h2>
+          <h2 id="orgName">Loading Organization... This can take up to a minute to configure</h2>
           <p>Code: <span class="org-code" id="orgCode">XXXXXXXX</span></p>
         </div>
       </div>
@@ -291,27 +291,65 @@
     const hasAuthState = sessionStorage.getItem(`auth_${tabId}`);
 
     // Authentication state handler - FIXED
-    auth.onAuthStateChanged(async (user) => {
-      if (user && (isPageRefresh || hasAuthState)) {
-        try {
-          const userDoc = await db.collection('users').doc(user.uid).get();
-          if (userDoc.exists && userDoc.data().role === 'admin') {
-            currentAdmin = userDoc.data();
-            currentOrgCode = currentAdmin.organizationCode;
-            isAuthenticated = true;
-            sessionStorage.setItem(`auth_${tabId}`, 'true');
-            showDashboard();
-            await initializeDashboard();
-          }
-        } catch (error) {
-          console.error('Error checking authentication:', error);
+// ---- REPLACE the existing auth.onAuthStateChanged handler with this ----
+auth.onAuthStateChanged(async (user) => {
+  try {
+    // Only allow automatic dashboard access when this tab has the explicit session flag.
+    const hasTabAuth = sessionStorage.getItem(`auth_${tabId}`) === 'true';
+
+    // If user is signed in AND this tab is explicitly authenticated, proceed.
+    if (user && hasTabAuth) {
+      try {
+        const userDoc = await db.collection('users').doc(user.uid).get();
+        if (userDoc.exists && userDoc.data().role === 'admin') {
+          currentAdmin = userDoc.data();
+          currentOrgCode = currentAdmin.organizationCode;
+          isAuthenticated = true;
+
+          // ensure the tab session flag remains set
+          sessionStorage.setItem(`auth_${tabId}`, 'true');
+
+          // show dashboard and initialize
+          showDashboard();
+          await initializeDashboard();
+          return;
+        } else {
+          // Not an admin or doc missing: force sign out client-side and show auth UI
+          await auth.signOut();
+          sessionStorage.removeItem(`auth_${tabId}`);
+          isAuthenticated = false;
+          showAuth();
+          return;
         }
-      } else {
+      } catch (innerErr) {
+        console.error('Error checking authentication document:', innerErr);
         isAuthenticated = false;
-        sessionStorage.removeItem(`auth_${tabId}`);
         showAuth();
+        return;
       }
-    });
+    }
+
+    // If we get here: either no user OR user exists but this tab has NO auth flag.
+    // IMPORTANT: we do NOT auto sign-in. Show auth UI and clear any tab-specific flag.
+    sessionStorage.removeItem(`auth_${tabId}`);
+    isAuthenticated = false;
+    showAuth();
+
+    // (Optional) If you prefer to force a full Firebase sign-out in this tab when
+    // there's no tab flag, uncomment the next lines — but note this signs out the
+    // user globally (other tabs will also be signed out):
+    // if (user) {
+    //   await auth.signOut();
+    // }
+  } catch (error) {
+    console.error('auth.onAuthStateChanged error:', error);
+    // Fallback: show auth UI
+    sessionStorage.removeItem(`auth_${tabId}`);
+    isAuthenticated = false;
+    showAuth();
+  }
+});
+
 
     // Toggle between auth forms
     function toggleForm(type) {
@@ -372,54 +410,90 @@
     }
 
     // Sign up function
-    async function signup() {
-      const email = document.getElementById('signupEmail').value.trim();
-      const password = document.getElementById('signupPassword').value;
-      const organizationName = document.getElementById('organizationName').value.trim();
+// ---- Replace the existing signup() with this version ----
+async function signup() {
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPassword').value;
+  const organizationName = document.getElementById('organizationName').value.trim();
 
-      if (!email || !password || !organizationName) {
-        showMessage('Please fill in all fields', 'error');
-        return;
-      }
+  if (!email || !password || !organizationName) {
+    showMessage('Please fill in all fields', 'error');
+    return;
+  }
 
-      if (password.length < 6) {
-        showMessage('Password must be at least 6 characters long', 'error');
-        return;
-      }
+  if (password.length < 6) {
+    showMessage('Password must be at least 6 characters long', 'error');
+    return;
+  }
 
-      const signupBtn = document.querySelector('#signupForm .btn-primary');
-      signupBtn.disabled = true;
-      signupBtn.textContent = 'Creating Account...';
+  const signupBtn = document.querySelector('#signupForm .btn-primary');
+  signupBtn.disabled = true;
+  signupBtn.textContent = 'Creating Account...';
 
-      try {
-        showMessage('Creating your admin account...', 'info');
+  try {
+    // show persistent setup message while we create the user and DB records
+    clearAllMessages();
+    showMessage('Please wait — we are currently setting up your organization. This may take a few seconds...', 'info', { persistent: true });
 
-        const organizationCode = await generateUniqueOrganizationCode();
-        const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-        const user = userCredential.user;
+    const organizationCode = await generateUniqueOrganizationCode();
+    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+    const user = userCredential.user;
 
-        await db.collection('users').doc(user.uid).set({
-          uid: user.uid,
-          email: email,
-          role: 'admin',
-          organizationCode: organizationCode,
-          organizationName: organizationName,
-          volunteers: [],
-          createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+    await db.collection('users').doc(user.uid).set({
+      uid: user.uid,
+      email: email,
+      role: 'admin',
+      organizationCode: organizationCode,
+      organizationName: organizationName,
+      volunteers: [],
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
 
-        // Set session authentication for this tab only
-        sessionStorage.setItem(`auth_${tabId}`, 'true');
-        showSuccessState(organizationCode);
+    // setup finished — clear persistent message and show success
+    clearAllMessages();
+    showMessage('Account created successfully! Please sign in to access the dashboard.', 'success', { duration: 2500 });
 
-      } catch (error) {
-        console.error('Signup error:', error);
-        showMessage('Error: ' + error.message, 'error');
-      } finally {
-        signupBtn.disabled = false;
-        signupBtn.textContent = 'Create Account';
-      }
+    // Show the success state with organization code
+    showSuccessState(organizationCode);
+
+    // IMPORTANT: do NOT auto-auth this tab or set sessionStorage here.
+    // Instead, change the "Continue to Dashboard" button so it takes the user to Sign In.
+    const continueBtn = document.querySelector('#successState .btn-primary');
+    if (continueBtn) {
+      continueBtn.onclick = () => {
+        // Hide success block and show the sign-in form
+        document.getElementById('successState').classList.add('hidden');
+        document.getElementById('signupForm').classList.add('hidden');
+
+        // Make sure sign-in toggle is active & show sign-in form
+        document.getElementById('signInForm').classList.remove('hidden');
+        document.getElementById('signInToggle').classList.add('active');
+        document.getElementById('signupToggle').classList.remove('active');
+
+        // Prefill email and focus password so admin can sign in immediately
+        document.getElementById('signInEmail').value = email;
+        document.getElementById('signInPassword').value = '';
+        document.getElementById('signInPassword').focus();
+
+        clearAllMessages();
+        showMessage('Account created — please sign in with your email and password.', 'info', { duration: 4000 });
+      };
+    } else {
+      // fallback: if button not found, just show auth form and prefill
+      showAuth();
+      document.getElementById('signInEmail').value = email;
     }
+
+  } catch (error) {
+    console.error('Signup error:', error);
+    clearAllMessages();
+    showMessage('Error: ' + (error.message || error), 'error');
+  } finally {
+    signupBtn.disabled = false;
+    signupBtn.textContent = 'Create Account';
+  }
+}
+
 
     // Sign in function
     // Sign in function - FIXED
@@ -998,7 +1072,7 @@ function getWeeklyDataFixed(startOfWeek) {
                                 <div class="log-inputs">
                                     <div class="input-group">
                                         <label>Date</label>
-                                        <input type="date" value="${log.date}" data-field="date">
+<input type="date" value="${formatDateToInput(log.date || log.created_at || log.createdAt || log.timestamp)}" data-field="date">
                                     </div>
                                     <div class="input-group">
                                         <label>Volunteering Task</label>
@@ -1152,6 +1226,32 @@ async function saveVolunteerHours(volunteerId) {
     saveButton.innerHTML = originalButtonText;
   }
 }
+// Helper: return a YYYY-MM-DD string for a log's date
+function formatDateToInput(value) {
+  if (!value) return ''; // no date available
+
+  // Firestore Timestamp (compat) has toDate()
+  try {
+    if (typeof value.toDate === 'function') {
+      const d = value.toDate();
+      if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // If value is an object with created_at/createdAt inside
+  if (value && (value.created_at || value.createdAt)) {
+    return formatDateToInput(value.created_at || value.createdAt);
+  }
+
+  // Fallback: try building Date from string/number
+  const d = new Date(value);
+  if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+
+  return '';
+}
+
 
     // Add new log entry
     function addNewLog(volunteerId) {
@@ -1465,31 +1565,44 @@ async function saveVolunteerHours(volunteerId) {
     }
 
     // Show message helper
-    function showMessage(message, type) {
-      const container = document.getElementById('messageContainer');
-      const messageDiv = document.createElement('div');
-      messageDiv.className = `message ${type}`;
+  // ---- REPLACE showMessage with this improved version ----
+function showMessage(message, type = 'info', options = {}) {
+  const container = document.getElementById('messageContainer');
+  if (!container) return;
 
-      const icon = type === 'success' ? 'fas fa-check-circle' :
-        type === 'error' ? 'fas fa-exclamation-circle' :
-          'fas fa-info-circle';
+  // Optionally clear existing messages first
+  if (options.clearExisting) container.innerHTML = '';
 
-      messageDiv.innerHTML = `
-                <i class="${icon}"></i>
-                <span>${message}</span>
-                <button onclick="this.parentElement.remove()" class="message-close">
-                    <i class="fas fa-times"></i>
-                </button>
-            `;
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `message ${type}`;
 
-      container.appendChild(messageDiv);
+  const icon = type === 'success' ? 'fas fa-check-circle' :
+               type === 'error'   ? 'fas fa-exclamation-circle' :
+                                     'fas fa-info-circle';
 
-      setTimeout(() => {
-        if (messageDiv.parentNode) {
-          messageDiv.remove();
-        }
-      }, 5000);
-    }
+  messageDiv.innerHTML = `
+    <i class="${icon}"></i>
+    <span>${message}</span>
+    <button onclick="this.parentElement.remove()" class="message-close">
+      <i class="fas fa-times"></i>
+    </button>
+  `;
+
+  container.appendChild(messageDiv);
+
+  // If persistent flag NOT set, auto-remove after duration (default 5s)
+  if (!options.persistent) {
+    const duration = (typeof options.duration === 'number') ? options.duration : 5000;
+    setTimeout(() => { if (messageDiv.parentNode) messageDiv.remove(); }, duration);
+  }
+}
+
+// Helper to clear all messages
+function clearAllMessages() {
+  const container = document.getElementById('messageContainer');
+  if (container) container.innerHTML = '';
+}
+
 
     // Clear message helper
     function clearMessage() {
