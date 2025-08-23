@@ -281,6 +281,8 @@
     let volunteersData = [];
     let activityData = [];
     let weeklyChart = null;
+    let volunteersUnsub = null;
+let logsUnsub = null;
 
     // FIXED: Tab-specific authentication persistence
     let tabId = Math.random().toString(36).substr(2, 9);
@@ -601,18 +603,27 @@ async function signup() {
     }
 
     // Initialize dashboard
-    async function initializeDashboard() {
-      try {
-        displayAdminInfo();
-        await loadVolunteersData();
-        await loadActivityData();
-        updateStatistics();
-        await initializeWeeklyChart();
-      } catch (error) {
-        console.error('Error initializing dashboard:', error);
-        showMessage('Error loading dashboard. Please refresh the page.', 'error');
-      }
-    }
+async function initializeDashboard() {
+  try {
+    displayAdminInfo();
+
+    // cleanup any old listeners before attaching new ones
+    if (volunteersUnsub) { try { volunteersUnsub(); } catch (e) {} volunteersUnsub = null; }
+    if (logsUnsub) { try { logsUnsub(); } catch (e) {} logsUnsub = null; }
+
+    // Attach realtime listeners
+    await loadVolunteersData();
+    await loadActivityData();
+
+    // initial stats/chart build (listeners will keep them updated)
+    updateStatistics();
+    await initializeWeeklyChart();
+  } catch (error) {
+    console.error('Error initializing dashboard (realtime):', error);
+    showMessage('Error loading dashboard. Please refresh the page.', 'error');
+  }
+}
+
 
     // Display admin information
     function displayAdminInfo() {
@@ -622,126 +633,181 @@ async function signup() {
     }
 
     // Load volunteers data
-    async function loadVolunteersData() {
-      try {
-        console.log('Loading volunteers for org code:', currentOrgCode);
+   // Real-time listener for volunteers + logs aggregation
+async function loadVolunteersData() {
+  // Unsubscribe existing listener if present
+  if (volunteersUnsub) {
+    try { volunteersUnsub(); } catch (e) { console.warn('volunteersUnsub error', e); }
+  }
 
-        const usersQuery = await db.collection('users')
-          .where('organizationCode', '==', currentOrgCode)
-          .where('role', '==', 'volunteer')
-          .get();
+  console.log('Listening for volunteers for org code:', currentOrgCode);
+  const usersQuery = db.collection('users')
+    .where('organizationCode', '==', currentOrgCode)
+    .where('role', '==', 'volunteer');
 
-        const logsQuery = await db.collection('volunteer_logs')
-          .where('organization_id', '==', currentOrgCode)
-          .get();
+  volunteersUnsub = usersQuery.onSnapshot(async (usersSnap) => {
+    try {
+      // Build base users map
+      const usersMap = {};
+      usersSnap.forEach(doc => {
+        usersMap[doc.id] = doc.data();
+      });
 
-        volunteersData = [];
-        let volunteerHours = {};
+      // We still need logs aggregation; but those are handled by logs listener (below).
+      // For now, rebuild volunteersData scaffold with whatever we have and merge with volunteerHours if available
+      // Keep volunteersData minimal right now — logs listener will add hours and lastActivity when ready.
+      volunteersData = Object.keys(usersMap).map(uid => {
+        const u = usersMap[uid];
+        const displayName = u.firstName || u.name || u.fullName || u.displayName || u.email?.split('@')[0] || 'Unknown';
+        return {
+          id: uid,
+          firstName: displayName,
+          email: u.email || '',
+          totalHours: 0,
+          lastActivity: null,
+          logs: [],
+          registrationDate: u.createdAt || null
+        };
+      });
 
-        // Process logs first
-        logsQuery.forEach(doc => {
-          const log = doc.data();
+      // If there are logs already loaded in activityData, merge them
+      if (activityData && activityData.length > 0) {
+        // rebuild a map of hours/logs by user
+        const volunteerHours = {};
+        activityData.forEach(log => {
           const userId = log.user_id;
           const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-
-          console.log('Processing log:', { userId, hours, log });
-
-          if (!volunteerHours[userId]) {
-            volunteerHours[userId] = { totalHours: 0, lastActivity: null, logs: [] };
-          }
-
+          if (!volunteerHours[userId]) volunteerHours[userId] = { totalHours: 0, lastActivity: null, logs: [] };
           volunteerHours[userId].totalHours += hours;
-          volunteerHours[userId].logs.push({ id: doc.id, ...log });
-
-          if (!volunteerHours[userId].lastActivity ||
-            new Date(log.date) > new Date(volunteerHours[userId].lastActivity)) {
+          volunteerHours[userId].logs.push(log);
+          if (!volunteerHours[userId].lastActivity || new Date(log.date) > new Date(volunteerHours[userId].lastActivity)) {
             volunteerHours[userId].lastActivity = log.date;
           }
         });
 
-        // Process users
-        usersQuery.forEach(doc => {
-          const userData = doc.data();
-          const userId = doc.id;
-          const hoursData = volunteerHours[userId] || { totalHours: 0, lastActivity: null, logs: [] };
-
-          console.log('Processing user:', { userId, userData, hoursData });
-
-          const displayName = userData.firstName || userData.name || userData.fullName ||
-            userData.displayName || userData.email?.split('@')[0] || 'Unknown';
-
-          volunteersData.push({
-            id: userId,
-            firstName: displayName,
-            email: userData.email || '',
+        // merge into volunteersData
+        volunteersData = volunteersData.map(v => {
+          const hoursData = volunteerHours[v.id] || { totalHours: 0, lastActivity: null, logs: [] };
+          return {
+            ...v,
             totalHours: hoursData.totalHours,
             lastActivity: hoursData.lastActivity,
-            logs: hoursData.logs,
-            registrationDate: userData.createdAt
-          });
+            logs: hoursData.logs
+          };
         });
 
-        // Add volunteers who have logs but no user record
-        Object.keys(volunteerHours).forEach(userId => {
-          if (!volunteersData.find(v => v.id === userId)) {
-            const logs = volunteerHours[userId].logs;
+        // add volunteers that are only in logs but not in users collection
+        Object.keys(volunteerHours).forEach(uid => {
+          if (!volunteersData.find(v => v.id === uid)) {
+            const logs = volunteerHours[uid].logs;
             const email = logs[0]?.volunteer_email || logs[0]?.email || 'Unknown';
             const name = logs[0]?.firstName || logs[0]?.volunteer_name || email.split('@')[0] || 'Unknown';
-
             volunteersData.push({
-              id: userId,
+              id: uid,
               firstName: name,
               email: email,
-              totalHours: volunteerHours[userId].totalHours,
-              lastActivity: volunteerHours[userId].lastActivity,
+              totalHours: volunteerHours[uid].totalHours,
+              lastActivity: volunteerHours[uid].lastActivity,
               logs: logs,
               registrationDate: null
             });
           }
         });
-
-        console.log('Final volunteers data:', volunteersData);
-        displayVolunteers();
-      } catch (error) {
-        console.error('Error loading volunteers:', error);
-        showMessage('Error loading volunteers data', 'error');
       }
+
+      console.log('Realtime volunteersData updated:', volunteersData);
+      displayVolunteers();
+      updateStatistics(); // ensure stats reflect current state
+    } catch (error) {
+      console.error('Error in volunteers onSnapshot handler:', error);
     }
+  }, (err) => {
+    console.error('volunteers onSnapshot error:', err);
+    showMessage('Error listening for volunteers: ' + err.message, 'error');
+  });
+}
 
-    // Load activity data
-    async function loadActivityData() {
-      try {
-        const logsQuery = await db.collection('volunteer_logs')
-          .where('organization_id', '==', currentOrgCode)
-          .orderBy('date', 'desc')
-          .get();
+// Real-time listener for activity logs
+async function loadActivityData() {
+  // Unsubscribe existing listener if present
+  if (logsUnsub) {
+    try { logsUnsub(); } catch (e) { console.warn('logsUnsub error', e); }
+  }
 
-        activityData = [];
-        logsQuery.forEach(doc => {
-          activityData.push({ id: doc.id, ...doc.data() });
-        });
+  console.log('Listening for volunteer_logs for org code:', currentOrgCode);
+  const logsQuery = db.collection('volunteer_logs')
+    .where('organization_id', '==', currentOrgCode)
+    .orderBy('date', 'desc'); // keep ordering for activity feed
 
-        console.log('Activity data loaded:', activityData);
-      } catch (error) {
-        console.error('Error loading activity:', error);
-        try {
-          const logsQuery = await db.collection('volunteer_logs')
-            .where('organization_id', '==', currentOrgCode)
-            .get();
+  logsUnsub = logsQuery.onSnapshot((logsSnap) => {
+    try {
+      const newActivity = [];
+      logsSnap.forEach(doc => {
+        newActivity.push({ id: doc.id, ...doc.data() });
+      });
 
-          activityData = [];
-          logsQuery.forEach(doc => {
-            activityData.push({ id: doc.id, ...doc.data() });
-          });
+      activityData = newActivity;
+      console.log('Realtime activityData loaded:', activityData.length, 'items');
 
-          activityData.sort((a, b) => new Date(b.date) - new Date(a.date));
-          console.log('Activity data loaded (fallback):', activityData);
-        } catch (fallbackError) {
-          console.error('Fallback error loading activity:', fallbackError);
-          showMessage('Error loading activity data', 'error');
+      // Recalculate volunteersData totals based on new activityData
+      const volunteerHours = {};
+      activityData.forEach(log => {
+        const userId = log.user_id;
+        const hours = parseFloat(log.hours_contributed || log.hours) || 0;
+
+        if (!volunteerHours[userId]) volunteerHours[userId] = { totalHours: 0, lastActivity: null, logs: [] };
+        volunteerHours[userId].totalHours += hours;
+        volunteerHours[userId].logs.push(log);
+
+        if (!volunteerHours[userId].lastActivity || new Date(log.date) > new Date(volunteerHours[userId].lastActivity)) {
+          volunteerHours[userId].lastActivity = log.date;
         }
-      }
+      });
+
+      // Merge hours into volunteersData (or create new volunteer entries if needed)
+      const volunteersMap = {};
+      volunteersData.forEach(v => { volunteersMap[v.id] = v; });
+
+      Object.keys(volunteerHours).forEach(uid => {
+        const h = volunteerHours[uid];
+        if (volunteersMap[uid]) {
+          volunteersMap[uid].totalHours = h.totalHours;
+          volunteersMap[uid].lastActivity = h.lastActivity;
+          volunteersMap[uid].logs = h.logs;
+        } else {
+          // volunteer not in users collection, add placeholder
+          const logs = h.logs;
+          const email = logs[0]?.volunteer_email || logs[0]?.email || 'Unknown';
+          const name = logs[0]?.firstName || logs[0]?.volunteer_name || email.split('@')[0] || 'Unknown';
+          volunteersData.push({
+            id: uid,
+            firstName: name,
+            email: email,
+            totalHours: h.totalHours,
+            lastActivity: h.lastActivity,
+            logs: logs,
+            registrationDate: null
+          });
+        }
+      });
+
+      // Ensure volunteersData contains up-to-date values from volunteersMap
+      volunteersData = volunteersData.map(v => volunteersMap[v.id] ? volunteersMap[v.id] : v);
+
+      // Refresh UI & stats
+      displayVolunteers();
+      updateStatistics();
+      refreshWeeklyChart(); // update chart with latest logs
+
+    } catch (error) {
+      console.error('Error in logs onSnapshot handler:', error);
     }
+  }, (err) => {
+    console.error('logs onSnapshot error:', err);
+    showMessage('Error listening for activity: ' + err.message, 'error');
+  });
+}
+
 
     // Update statistics
     // PATCH 1: Replace the updateStatistics function
