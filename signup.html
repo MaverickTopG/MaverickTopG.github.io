@@ -5,9 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NexoLink - Admin Portal</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-auth-compat.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-firestore-compat.min.js"></script>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
@@ -24,7 +22,7 @@
     <div class="navbar-nav">
       <a href="index.html" class="nav-link">Home</a>
       <a href="privacy_policy.html" class="nav-link">Privacy Policy</a>
-      <button id="logoutBtn" onclick="logout()" class="nav-link logout-btn" style="display: none;">
+      <button id="navbarLogoutBtn" class="nav-link logout-btn" style="display: none;" onclick="logout()">
         <i class="fas fa-sign-out-alt"></i>
         Logout
       </button>
@@ -55,7 +53,8 @@
           <label for="signInPassword">Password</label>
           <input type="password" id="signInPassword" placeholder="Enter your password" autocomplete="current-password">
         </div>
-        <button type="button" class="btn-primary" onclick="signIn()">Sign In</button>
+        <a href="#" id="forgotPasswordLink" class="forgot-password-link">Forgot Password?</a>
+        <button type="button" class="btn-primary" id="signInBtn"><span>Sign In</span></button>
       </div>
 
       <!-- Signup Form -->
@@ -74,7 +73,7 @@
           <input type="text" id="organizationName" placeholder="Enter your organization name"
             autocomplete="organization">
         </div>
-        <button type="button" class="btn-primary" onclick="signup()">Create Account</button>
+        <button type="button" class="btn-primary" id="signupBtn"><span>Create Account</span></button>
       </div>
 
       <!-- Success State -->
@@ -93,1646 +92,785 @@
               Share this code with volunteers to register under your organization.
             </p>
           </div>
-          <button type="button" class="btn-primary" onclick="showDashboard()">Continue to Dashboard</button>
+          <button type="button" class="btn-primary"><span>Continue to Dashboard</span></button>
         </div>
       </div>
 
       <!-- Messages -->
-      <div id="authMessage"></div>
+      <div id="authMessage" class="auth-message"></div>
     </div>
   </div>
 
   <!-- Dashboard Section -->
-  <div id="dashboardSection" class="container" style="display: none;">
-    <!-- Header with User Info -->
-    <div class="header">
-      <div class="header-left">
-        <div class="admin-info">
-          <h1>Admin Dashboard</h1>
-          <span id="userEmail" class="user-email"></span>
+  <div id="dashboardSection" class="dashboard-shell" style="display: none;">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-logo">
+          <span class="logo-icon"><i class="fas fa-chart-line"></i></span>
+          <span class="logo-text">NexoLink</span>
         </div>
-      </div>
-    </div>
-
-    <!-- Organization Info -->
-    <div class="org-card">
-      <div class="org-header">
-        <div class="org-icon">
-          <i class="fas fa-building"></i>
+        <div class="sidebar-user">
+          <div class="sidebar-avatar" id="sidebarAvatar">N</div>
+          <div class="sidebar-user-meta">
+            <span class="sidebar-email" id="sidebarUserEmail"></span>
+            <span class="sidebar-role">Administrator</span>
+          </div>
         </div>
-        <div class="org-details">
-          <h2 id="orgName">Loading Organization... This can take up to a minute to configure</h2>
-          <p>Code: <span class="org-code" id="orgCode">XXXXXXXX</span></p>
+        <div class="sidebar-org">
+          <span class="org-label">Organization</span>
+          <strong id="sidebarOrgName">Organization</strong>
+          <span class="org-code" id="sidebarOrgCode">XXXXXXXX</span>
         </div>
-      </div>
-    </div>
-
-    <!-- Statistics Cards -->
-    <div class="stats-grid">
-      <div class="stat-card gradient-blue">
-        <div class="stat-icon">
-          <i class="fas fa-users"></i>
-        </div>
-        <div class="stat-content">
-          <h3>Total Volunteers</h3>
-          <div class="stat-number" id="totalVolunteers">0</div>
-        </div>
-      </div>
-      <div class="stat-card gradient-green">
-        <div class="stat-icon">
-          <i class="fas fa-clock"></i>
-        </div>
-        <div class="stat-content">
-          <h3>Total Hours</h3>
-          <div class="stat-number" id="totalHours">0</div>
-        </div>
-      </div>
-      <div class="stat-card gradient-orange">
-        <div class="stat-icon">
-          <i class="fas fa-calendar-week"></i>
-        </div>
-        <div class="stat-content">
-          <h3>This Week</h3>
-          <div class="stat-number" id="weeklyHours">0</div>
-        </div>
-      </div>
-      <div class="stat-card gradient-purple">
-        <div class="stat-icon">
-          <i class="fas fa-user-check"></i>
-        </div>
-        <div class="stat-content">
-          <h3>Active This Week</h3>
-          <div class="stat-number" id="weeklyActive">0</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Weekly Hours Bar Chart -->
-    <div class="chart-section">
-      <div class="chart-header">
-        <h3><i class="fas fa-chart-bar"></i> This Week's Volunteer Hours</h3>
-        <div class="chart-controls">
-          <button onclick="downloadSheetsReport()" class="btn-outline">
-            <i class="fas fa-file-excel"></i> Export to Google Sheets
+        <nav class="sidebar-nav">
+          <span class="nav-section">Reports</span>
+          <button class="nav-item active" type="button" data-view="overview">
+            <i class="fas fa-chart-area"></i>
+            Volunteer Stats
           </button>
-        </div>
-      </div>
-      <div class="chart-container">
-        <canvas id="weeklyChart"></canvas>
-      </div>
-    </div>
+          <span class="nav-section">Manage</span>
+          <button class="nav-item" type="button" data-view="volunteers">
+            <i class="fas fa-users"></i>
+            Volunteers
+          </button>
+          <button class="nav-item" type="button" data-view="approvals">
+            <i class="fas fa-user-check"></i>
+            Approvals
+          </button>
 
-    <!-- Volunteers Management -->
-    <div class="volunteers-section">
-      <div class="section-header">
-        <h3><i class="fas fa-users-cog"></i> Volunteer Management</h3>
-        <div class="section-controls">
-          <input type="text" id="searchVolunteer" placeholder="Search volunteers..." oninput="filterVolunteers()">
-          <select id="sortBy" onchange="sortVolunteers()">
-            <option value="name">Sort by Name</option>
-            <option value="hours">Sort by Hours</option>
-            <option value="recent">Sort by Recent Activity</option>
-          </select>
+          <button id="logoutBtn" class="nav-item logout-btn" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
+        </nav>
+      </aside>
+
+      <section class="main-area">
+        <div class="view-panel active" data-view="overview" id="view-overview">
+          <header class="page-header">
+            <div class="page-title-block">
+              <h1>Volunteer Stats</h1>
+            </div>
+            <div class="header-actions">
+              <div class="export-control-wrapper">
+                <button class="btn-outline export-btn" type="button" onclick="downloadSheetsReport()">
+                  <i class="fas fa-file-export"></i> Export
+                </button>
+                <div id="exportPopover" class="export-popover" style="display: none;">
+                  <div class="popover-header">
+                    <h5>Export Activity Log</h5>
+                    <button class="close-popover" onclick="closeSheetsModal()">&times;</button>
+                  </div>
+                  <div class="popover-body">
+                    <div class="form-group">
+                      <label for="sheetsStartDate">Start Date</label>
+                      <input type="date" id="sheetsStartDate">
+                    </div>
+                    <div class="form-group">
+                      <label for="sheetsEndDate">End Date</label>
+                      <input type="date" id="sheetsEndDate">
+                    </div>
+                  </div>
+                  <div class="popover-footer">
+                    <button onclick="generateSheetsData()" class="btn-primary">Generate CSV</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <section class="metrics-grid" aria-label="Key metrics">
+            <article class="metric-card">
+              <span class="metric-label">Total Volunteers</span>
+              <h2 id="metricTotalVolunteers">0</h2>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Hours Volunteered</span>
+              <h2 id="metricHours">0h 0m</h2>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Busiest Day</span>
+              <h2 id="metricBusiestDay">—</h2>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Economic Impact</span>
+              <h2 id="metricImpact">$0</h2>
+            </article>
+          </section>
+          <p class="donation-note">Donation value = Volunteer Hours × $28.27/hr (Independent Sector, 2024)</p>
+
+          <section class="visual-grid">
+            <article class="card activity-card">
+              <div class="card-header">
+                <h3>This week's volunteer hours</h3>
+                <div class="chart-controls week-navigator">
+                  <button class="btn-icon" id="prevWeekBtn" aria-label="Previous Week"><i class="fas fa-chevron-left"></i></button>
+                  <button class="btn-icon" id="nextWeekBtn" aria-label="Next Week"><i class="fas fa-chevron-right"></i></button>
+                </div>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="attendanceChart" aria-label="Weekly attendance activity"></canvas>
+              </div>
+            </article>
+
+            <article class="card top-employees-card">
+              <div class="card-header">
+                <h3>Top Volunteers</h3>
+              </div>
+              <ul id="topEmployeesList" class="top-employees-list"></ul>
+            </article>
+          </section>
+
+          <section class="secondary-grid">
+            <article class="card secondary-card heatmap-card" id="heatmapCard">
+              <div class="card-header" id="heatmapHeader">
+                <h3>Activity Calendar</h3>
+                <div class="header-actions">
+                  <label for="heatmapYearSelect" class="sr-only">Select Year</label>
+                  <select id="heatmapYearSelect" class="filter-chip"></select>
+                </div>
+              </div>
+              <div id="heatmapContainer" class="heatmap-container">
+                <!-- Heatmap will be rendered here by JS -->
+              </div>
+              <div id="heatmapExpandPrompt" class="heatmap-expand-prompt" style="display: none;">
+                <p>Screen is too small to display calendar.</p>
+                <button class="btn-outline" id="expandHeatmapBtn">Expand View</button>
+              </div>
+            </article>
+
+            <article class="card secondary-card" id="eventActivityCard">
+              <div class="card-header">
+                <h3>Weekly Active Volunteers</h3>
+              </div>
+              <div class="donut-wrapper">
+                <canvas id="eventActivityChart" aria-label="Weekly active volunteers"></canvas>
+                <div class="donut-center">
+                  <strong id="eventActivityPercent">0%</strong>
+                  <span>Active Rate</span>
+                </div>
+              </div>
+              <ul class="donut-legend">
+                <li><span class="legend-dot engaged"></span>Active Volunteers</li>
+                <li><span class="legend-dot inactive"></span>Inactive Volunteers</li>
+              </ul>
+            </article>
+          </section>
         </div>
-      </div>
-      <div class="table-container">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Total Hours</th>
-              <th>Last Activity</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="volunteersTableBody">
-            <!-- Volunteers will be loaded here -->
-          </tbody>
-        </table>
-      </div>
+
+        <div class="view-panel" data-view="edit-volunteer" id="view-edit-volunteer">
+          <div class="edit-volunteer-shell">
+            <header class="ev-header">
+              <div class="ev-header-left">
+                <button class="btn-icon" id="backToVolunteersBtn" title="Back to Volunteers">
+                  <i class="fas fa-arrow-left"></i>
+                </button>
+                <h1 id="editVolunteerName">Volunteer Name</h1>
+              </div>
+              <div class="ev-header-right">
+                <button id="cancelEditBtn" class="btn-outline ev-action-btn">Cancel</button>
+                <button id="saveVolunteerBtn" class="btn-primary ev-action-btn">Save Changes</button>
+              </div>
+            </header>
+
+            <div class="card ev-card">
+              <div class="ev-logs-section">
+                <div class="ev-logs-header">
+                  <h3>Activity Logs</h3>
+                </div>
+                <div class="ev-logs-column-headers">
+                  <span>Date</span>
+                  <span>Volunteering Task</span>
+                  <span>Hours</span>
+                  <span class="text-right">Actions</span>
+                </div>
+                <div id="activityLogsContainer" class="ev-logs-container">
+                  <!-- Log rows will be rendered here by JS -->
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <style>
+          /* Modernized Edit Volunteer View Styles */
+          .ev-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          }
+
+          .ev-header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+          }
+          .ev-header-center {
+            flex-grow: 1;
+            gap: 16px;
+          }
+
+          .ev-header-left h1 {
+            font-size: 1.8rem;
+            margin: 0;
+          }
+
+          .ev-action-btn {
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-weight: 600;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+          }
+
+          .ev-action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+          }
+
+          .ev-card {
+            padding-top: 1rem; /* Reduce top padding since form is gone */
+            border: 1px solid rgba(255, 190, 11, 0.4);
+            box-shadow: 0 10px 30px rgba(255, 190, 11, 0.2);
+            background-color: #fff;
+          }
+
+          .ev-logs-header {
+            margin-bottom: 1rem;
+          }
+
+          .ev-logs-column-headers {
+            display: flex;
+            gap: 12px;
+            padding: 0 12px;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+
+          .ev-logs-column-headers span:nth-child(1) { width: 150px; }
+          .ev-logs-column-headers span:nth-child(2) { flex-grow: 1; }
+          .ev-logs-column-headers span:nth-child(3) { width: 80px; }
+          .ev-logs-column-headers span:nth-child(4) {
+            width: 36px; /* Match icon button width */
+            text-align: center;
+          }
+          /* New styles for horizontal activity log editor */
+          .ev-logs-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+
+          .log-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 12px;
+            background-color: #fcfcfc;
+            border: 1px solid #eee;
+            transition: background-color 0.2s ease, box-shadow 0.2s ease;
+          }
+
+          .log-row:hover {
+            background-color: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+          }
+
+          .log-row.log-row-deleted {
+            opacity: 0.5;
+            background-color: #fff5f5;
+            text-decoration: line-through;
+          }
+
+          .log-row .log-input {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 0.9rem;
+          }
+          .log-row .log-input[data-field="date"] {
+            width: 150px; /* Smaller width for date */
+          }
+          .log-row .log-input[data-field="hours"] {
+            width: 80px; /* Smaller width for hours */
+          }
+          .log-row .log-input[data-field="site"] {
+            flex-grow: 1; /* Allow task input to take remaining space */
+          }
+          .log-row .btn-danger-icon {
+            width: 36px; /* Align with the 'Actions' column */
+            flex-shrink: 0;
+          }
+        </style>
+
+        <!-- Styles for Toast Messages -->
+        <style>
+          #messageContainer {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+
+          .toast-message {
+            padding: 14px 20px;
+            border-radius: 12px;
+            color: #fff;
+            font-weight: 600;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            opacity: 0;
+            transform: translateX(100%);
+            animation: slideInToast 0.5s forwards, fadeOutToast 0.5s 4.5s forwards;
+          }
+
+          .toast-message.success { background-color: #28a745; }
+          .toast-message.error { background-color: #dc3545; }
+          .toast-message.info { background-color: #17a2b8; }
+
+          @keyframes slideInToast {
+            to {
+              opacity: 1;
+              transform: translateX(0);
+            }
+          }
+
+          @keyframes fadeOutToast {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(100%); }
+          }
+        </style>
+
+
+        <div class="view-panel" data-view="approvals" id="view-approvals">
+          <header class="page-header">
+            <div class="page-title-block">
+              <h1>Approvals</h1>
+            </div>
+          </header>
+          <section class="approvals-view">
+            <div id="approvalsSection" class="approvals-shell"></div>
+          </section>
+        </div>
+
+        <div class="view-panel" data-view="volunteers" id="view-volunteers">
+          <header class="page-header">
+            <div class="page-title-block">
+              <h1>Volunteer Management</h1>
+            </div>
+          </header>
+          <section class="volunteers-view">
+            <div id="volunteersBoard" class="volunteers-shell">
+              <div class="volunteers-table-wrapper">
+                <table class="volunteers-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Total Hours</th>
+                            <th>Last Activity</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="volunteersTableBody">
+                        <!-- Volunteers will be loaded here -->
+                    </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
     </div>
   </div>
 
   <!-- Fullscreen Edit Hours Modal -->
-  <div id="editHoursModal" class="fullscreen-modal" style="display: none;">
-    <div class="fullscreen-modal-content">
+<!-- Make sure your page container has class="edit-volunteer" somewhere up the tree -->
+
+<!-- Make sure this lives inside a container that has class="edit-volunteer" -->
+<div id="editHoursModal" class="ev-modal-overlay" hidden>
+  <div class="ev-modal" role="dialog" aria-modal="true" aria-labelledby="evEditHoursTitle">
+    <div class="ev-modal-head">
+      <h2 id="evEditHoursTitle"><i class="fas fa-edit"></i> Adjust Volunteer Hours</h2>
+      <button type="button" class="ev-close" onclick="closeEditModal()" aria-label="Close">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <!-- Keep this <form> or <div>; just ensure the label 'for' matches the input 'id' -->
+    <form id="editHoursForm" class="ev-modal-body" onsubmit="return saveHours(event)">
+      <div class="ev-stepper">
+        <button type="button" class="ev-step-btn" aria-label="Decrease hours" onclick="stepHours(-0.5)">−</button>
+
+        <div class="ev-row">
+          <label for="hoursValue" class="ev-label">Total Hours</label>
+          <input
+            id="hoursValue"
+            name="hours"
+            type="number"
+            step="0.5"
+            min="0"
+            class="ev-input"
+            inputmode="decimal"
+            aria-describedby="hoursHelp"
+          />
+          <small id="hoursHelp" class="ev-help">Use +/− or type a value.</small>
+        </div>
+
+        <button type="button" class="ev-step-btn" aria-label="Increase hours" onclick="stepHours(0.5)">+</button>
+      </div>
+    </form>
+
+    <div class="ev-modal-actions">
+      <button type="button" class="ev-btn ev-btn-ghost" onclick="closeEditModal()">Cancel</button>
+      <button type="submit" form="editHoursForm" class="ev-btn ev-btn-primary">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+  <style>
+    /* General Styles */
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: linear-gradient(180deg, #fffaf0, #f8f0e3);
+        margin: 0;
+        padding-bottom: 80px; /* Space for sticky footer */
+        color: #333;
+    }
+
+    .container {
+        max-width: 900px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+    }
+
+    /* Header */
+    .main-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 2rem;
+        background-color: #fff;
+        border-bottom: 1px solid #eee;
+    }
+
+    .header-left .back-link {
+        color: #555;
+        text-decoration: none;
+        font-size: 0.9rem;
+    }
+    .header-left .back-link i {
+        margin-right: 0.5rem;
+    }
+
+    .header-center {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .volunteer-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background-color: #ffc107;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+    }
+
+    .volunteer-name {
+        font-size: 1.5rem;
+        margin: 0;
+    }
+
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .total-hours-badge {
+        background-color: #ffc107;
+        color: #333;
+        padding: 0.4rem 0.8rem;
+        border-radius: 12px;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+
+    .adjust-hours-btn {
+        background: none;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        padding: 0.4rem 0.8rem;
+        cursor: pointer;
+    }
+
+    /* Card */
+    .card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        padding: 2rem;
+    }
+
+    /* Form */
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2rem;
+    }
+
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+        color: #555;
+    }
+
+    .form-group input,
+    .form-group select {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font-size: 1rem;
+    }
+
+    .form-group input[readonly] {
+        background-color: #f5f5f5;
+    }
+
+    .helper-text-inline {
+        font-size: 0.8rem;
+        color: #d9534f;
+        margin-top: 0.25rem;
+    }
+
+    /* Divider & Time Strip */
+    .divider {
+        height: 1px;
+        background-color: #eee;
+        margin: 1.5rem 0;
+    }
+
+    .time-activity-strip {
+        display: flex;
+        justify-content: center;
+    }
+
+    #view-time-entries-link {
+        color: #007bff;
+        text-decoration: none;
+        font-weight: 500;
+    }
+
+    /* Sticky Footer */
+    .sticky-footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background-color: #fff;
+        border-top: 1px solid #eee;
+        padding: 1rem 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 -2px 8px rgba(0,0,0,0.05);
+    }
+
+    .footer-actions {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: 6px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .btn-primary {
+    display: block;
+    width: 100%;
+    padding: 1rem;
+    border-radius: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #ffbe0b 0%, #ffd633 100%);
+    color: #000;
+    border: none;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    font-size: 1.05rem;
+    letter-spacing: 0.5px;
+    margin-top: 1.5rem;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 30px rgba(255, 190, 11, 0.4);
+}
+    
+
+    .btn-ghost {
+        background-color: transparent;
+        border: 1px solid #ccc;
+        color: #555;
+    }
+
+    .btn-danger {
+        background: none;
+        border: none;
+        color: #d9534f;
+        text-decoration: underline;
+    }
+
+    /* Modal */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal-content {
+        background: #fff;
+        padding: 2rem;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 400px;
+        text-align: center;
+        position: relative;
+    }
+
+    .close-modal, .close-drawer {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        font-size: 1.5rem;
+        cursor: pointer;
+    }
+
+    .numeric-stepper {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin: 1.5rem 0;
+    }
+
+    .stepper-btn {
+        width: 40px;
+        height: 40px;
+        font-size: 1.5rem;
+        border: 1px solid #ccc;
+        background: #f5f5f5;
+        cursor: pointer;
+    }
+
+    .stepper-input {
+        width: 80px;
+        text-align: center;
+        font-size: 1.5rem;
+        border: 1px solid #ccc;
+        border-left: none;
+        border-right: none;
+        height: 40px;
+    }
+
+    .modal-actions {
+        margin-top: 1.5rem;
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+    }
+
+    /* Drawer */
+    .drawer-right {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 350px;
+        height: 100%;
+        background: #fff;
+        box-shadow: -4px 0 15px rgba(0,0,0,0.1);
+        transform: translateX(100%);
+        transition: transform 0.3s ease-in-out;
+    }
+
+    .drawer-right.open {
+        transform: translateX(0);
+    }
+
+    .drawer-header {
+        padding: 1rem;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .drawer-content {
+        padding: 1rem;
+    }
+
+    /* Toast */
+    .toast {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        background-color: #333;
+        color: #fff;
+        padding: 1rem 1.5rem;
+        border-radius: 6px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        z-index: 100;
+    }
+    .toast.success { background-color: #28a745; }
+    .toast.error { background-color: #dc3545; }
+  </style>
+
+
+  <!-- Approvals Focus Modal -->
+  <div id="approvalsModal" class="modal-overlay approvals-modal-overlay" style="display: none;">
+    <div class="modal approvals-modal">
       <div class="modal-header">
-        <h2><i class="fas fa-edit"></i> Edit Volunteer Hours</h2>
-        <button class="close-btn" onclick="closeEditModal()">
+        <h3 id="approvalsModalTitle"></h3>
+        <button class="close" data-action="close-approvals-modal" aria-label="Close approvals modal">
           <i class="fas fa-times"></i>
         </button>
       </div>
-      <div id="editHoursContent" class="modal-body">
-        <!-- Edit form will be loaded here -->
-      </div>
-    </div>
-  </div>
-
-  <!-- Google Sheets Export Modal -->
-  <div id="sheetsExportModal" class="modal-overlay" style="display: none;">
-    <div class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3><i class="fas fa-file-excel"></i> Export to Google Sheets</h3>
-          <span class="close" onclick="closeSheetsModal()">
-            <i class="fas fa-times"></i>
-          </span>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label for="sheetsStartDate">Start Date</label>
-            <input type="date" id="sheetsStartDate">
-          </div>
-          <div class="form-group">
-            <label for="sheetsEndDate">End Date</label>
-            <input type="date" id="sheetsEndDate">
-          </div>
-          <div class="modal-footer">
-            <button onclick="generateSheetsData()" class="btn-primary">Generate CSV Download</button>
-            <button onclick="closeSheetsModal()" class="btn-outline">Cancel</button>
-          </div>
-        </div>
-      </div>
+      <div class="modal-body" id="approvalsModalBody"></div>
     </div>
   </div>
 
   <!-- Messages Container -->
   <div id="messageContainer"></div>
 
-  <script>
-    // Firebase configuration
-    const firebaseConfig = {
-      apiKey: "AIzaSyC1kY4dlbg9v38ZkuYVPJGnSulMEouvw58",
-      authDomain: "nexolink-b8eb5.firebaseapp.com",
-      projectId: "nexolink-b8eb5",
-      storageBucket: "nexolink-b8eb5.appspot.com",
-      messagingSenderId: "247675121621",
-      appId: "1:247675121621:web:98772b2e0cfbe8a381175c"
-    };
-
-    // Initialize Firebase
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-
-    let currentAdmin = null;
-    let currentOrgCode = null;
-    let volunteersData = [];
-    let activityData = [];
-    let weeklyChart = null;
-    let volunteersUnsub = null;
-let logsUnsub = null;
-
-    // FIXED: Tab-specific authentication persistence
-    let tabId = Math.random().toString(36).substr(2, 9);
-    let isAuthenticated = false;
-
-    // Check if this is a fresh page load or navigation
-    const isPageRefresh = performance.navigation && performance.navigation.type === 1;
-    const hasAuthState = sessionStorage.getItem(`auth_${tabId}`);
-
-    // Authentication state handler - FIXED
-// ---- REPLACE the existing auth.onAuthStateChanged handler with this ----
-auth.onAuthStateChanged(async (user) => {
-  try {
-    // Only allow automatic dashboard access when this tab has the explicit session flag.
-    const hasTabAuth = sessionStorage.getItem(`auth_${tabId}`) === 'true';
-
-    // If user is signed in AND this tab is explicitly authenticated, proceed.
-    if (user && hasTabAuth) {
-      try {
-        const userDoc = await db.collection('users').doc(user.uid).get();
-        if (userDoc.exists && userDoc.data().role === 'admin') {
-          currentAdmin = userDoc.data();
-          currentOrgCode = currentAdmin.organizationCode;
-          isAuthenticated = true;
-
-          // ensure the tab session flag remains set
-          sessionStorage.setItem(`auth_${tabId}`, 'true');
-
-          // show dashboard and initialize
-          showDashboard();
-          await initializeDashboard();
-          return;
-        } else {
-          // Not an admin or doc missing: force sign out client-side and show auth UI
-          await auth.signOut();
-          sessionStorage.removeItem(`auth_${tabId}`);
-          isAuthenticated = false;
-          showAuth();
-          return;
-        }
-      } catch (innerErr) {
-        console.error('Error checking authentication document:', innerErr);
-        isAuthenticated = false;
-        showAuth();
-        return;
-      }
-    }
-
-    // If we get here: either no user OR user exists but this tab has NO auth flag.
-    // IMPORTANT: we do NOT auto sign-in. Show auth UI and clear any tab-specific flag.
-    sessionStorage.removeItem(`auth_${tabId}`);
-    isAuthenticated = false;
-    showAuth();
-
-    // (Optional) If you prefer to force a full Firebase sign-out in this tab when
-    // there's no tab flag, uncomment the next lines — but note this signs out the
-    // user globally (other tabs will also be signed out):
-    // if (user) {
-    //   await auth.signOut();
-    // }
-  } catch (error) {
-    console.error('auth.onAuthStateChanged error:', error);
-    // Fallback: show auth UI
-    sessionStorage.removeItem(`auth_${tabId}`);
-    isAuthenticated = false;
-    showAuth();
-  }
-});
-
-
-    // Toggle between auth forms
-    function toggleForm(type) {
-      document.getElementById('signInForm').classList.add('hidden');
-      document.getElementById('signupForm').classList.add('hidden');
-      document.getElementById('successState').classList.add('hidden');
-
-      document.getElementById('signInToggle').classList.remove('active');
-      document.getElementById('signupToggle').classList.remove('active');
-
-      document.getElementById(type + 'Form').classList.remove('hidden');
-      document.getElementById(type + 'Toggle').classList.add('active');
-
-      clearMessage();
-    }
-
-    // Generate organization code
-    function generateOrganizationCode() {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 8; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    }
-
-    // Check if organization code is unique
-    async function isOrganizationCodeUnique(code) {
-      try {
-        const querySnapshot = await db.collection('users')
-          .where('organizationCode', '==', code)
-          .where('role', '==', 'admin')
-          .get();
-        return querySnapshot.empty;
-      } catch (error) {
-        console.error('Error checking organization code uniqueness:', error);
-        return false;
-      }
-    }
-
-    // Generate unique organization code
-    async function generateUniqueOrganizationCode() {
-      let code;
-      let isUnique = false;
-      let attempts = 0;
-
-      while (!isUnique && attempts < 10) {
-        code = generateOrganizationCode();
-        isUnique = await isOrganizationCodeUnique(code);
-        attempts++;
-      }
-
-      if (!isUnique) {
-        throw new Error('Unable to generate unique organization code. Please try again.');
-      }
-
-      return code;
-    }
-
-    // Sign up function
-// ---- Replace the existing signup() with this version ----
-async function signup() {
-  const email = document.getElementById('signupEmail').value.trim();
-  const password = document.getElementById('signupPassword').value;
-  const organizationName = document.getElementById('organizationName').value.trim();
-
-  if (!email || !password || !organizationName) {
-    showMessage('Please fill in all fields', 'error');
-    return;
-  }
-
-  if (password.length < 6) {
-    showMessage('Password must be at least 6 characters long', 'error');
-    return;
-  }
-
-  const signupBtn = document.querySelector('#signupForm .btn-primary');
-  signupBtn.disabled = true;
-  signupBtn.textContent = 'Creating Account...';
-
-  try {
-    // show persistent setup message while we create the user and DB records
-    clearAllMessages();
-    showMessage('Please wait — we are currently setting up your organization. This may take a few seconds...', 'info', { persistent: true });
-
-    const organizationCode = await generateUniqueOrganizationCode();
-    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-    const user = userCredential.user;
-
-    await db.collection('users').doc(user.uid).set({
-      uid: user.uid,
-      email: email,
-      role: 'admin',
-      organizationCode: organizationCode,
-      organizationName: organizationName,
-      volunteers: [],
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    // setup finished — clear persistent message and show success
-    clearAllMessages();
-    showMessage('Account created successfully! Please sign in to access the dashboard.', 'success', { duration: 2500 });
-
-    // Show the success state with organization code
-    showSuccessState(organizationCode);
-
-    // IMPORTANT: do NOT auto-auth this tab or set sessionStorage here.
-    // Instead, change the "Continue to Dashboard" button so it takes the user to Sign In.
-    const continueBtn = document.querySelector('#successState .btn-primary');
-    if (continueBtn) {
-      continueBtn.onclick = () => {
-        // Hide success block and show the sign-in form
-        document.getElementById('successState').classList.add('hidden');
-        document.getElementById('signupForm').classList.add('hidden');
-
-        // Make sure sign-in toggle is active & show sign-in form
-        document.getElementById('signInForm').classList.remove('hidden');
-        document.getElementById('signInToggle').classList.add('active');
-        document.getElementById('signupToggle').classList.remove('active');
-
-        // Prefill email and focus password so admin can sign in immediately
-        document.getElementById('signInEmail').value = email;
-        document.getElementById('signInPassword').value = '';
-        document.getElementById('signInPassword').focus();
-
-        clearAllMessages();
-        showMessage('Account created — please sign in with your email and password.', 'info', { duration: 4000 });
-      };
-    } else {
-      // fallback: if button not found, just show auth form and prefill
-      showAuth();
-      document.getElementById('signInEmail').value = email;
-    }
-
-  } catch (error) {
-    console.error('Signup error:', error);
-    clearAllMessages();
-    showMessage('Error: ' + (error.message || error), 'error');
-  } finally {
-    signupBtn.disabled = false;
-    signupBtn.textContent = 'Create Account';
-  }
-}
-
-
-    // Sign in function
-    // Sign in function - FIXED
-    async function signIn() {
-      const email = document.getElementById('signInEmail').value.trim();
-      const password = document.getElementById('signInPassword').value;
-
-      if (!email || !password) {
-        showMessage('Please fill in all fields', 'error');
-        return;
-      }
-
-      const signInBtn = document.querySelector('#signInForm .btn-primary');
-      signInBtn.disabled = true;
-      signInBtn.textContent = 'Signing In...';
-
-      try {
-        showMessage('Signing you in...', 'info');
-
-        const userCredential = await auth.signInWithEmailAndPassword(email, password);
-        const user = userCredential.user;
-
-        const userDoc = await db.collection('users').doc(user.uid).get();
-        if (userDoc.exists) {
-          const userData = userDoc.data();
-
-          if (userData.role !== 'admin') {
-            await auth.signOut();
-            showMessage('Access denied. This portal is for administrators only.', 'error');
-            return;
-          }
-
-          // Set current admin data and organization code
-          currentAdmin = userData;
-          currentOrgCode = currentAdmin.organizationCode;
-          isAuthenticated = true;
-
-          // Set session authentication for this tab only
-          sessionStorage.setItem(`auth_${tabId}`, 'true');
-
-          // Clear the info message and show success
-          clearMessage();
-          showMessage('Sign in successful! Redirecting to dashboard...', 'success');
-
-          // Redirect to dashboard after a short delay
-          setTimeout(() => {
-            showDashboard();
-            initializeDashboard();
-          }, 1000);
-
-        } else {
-          await auth.signOut();
-          showMessage('Admin account not found', 'error');
-        }
-
-      } catch (error) {
-        console.error('Sign in error:', error);
-        let errorMessage = 'Sign in failed. ';
-
-        switch (error.code) {
-          case 'auth/user-not-found':
-            errorMessage += 'No account found with this email.';
-            break;
-          case 'auth/wrong-password':
-            errorMessage += 'Incorrect password.';
-            break;
-          case 'auth/invalid-email':
-            errorMessage += 'Invalid email address.';
-            break;
-          case 'auth/too-many-requests':
-            errorMessage += 'Too many failed attempts. Please try again later.';
-            break;
-          default:
-            errorMessage += error.message;
-        }
-
-        showMessage(errorMessage, 'error');
-      } finally {
-        signInBtn.disabled = false;
-        signInBtn.textContent = 'Sign In';
-      }
-    }
-
-    // Show success state
-    function showSuccessState(organizationCode) {
-      document.getElementById('signInForm').classList.add('hidden');
-      document.getElementById('signupForm').classList.add('hidden');
-      document.getElementById('successState').classList.remove('hidden');
-      document.getElementById('displayOrgCode').textContent = organizationCode;
-      clearMessage();
-    }
-
-    // Show auth section
-    function showAuth() {
-      document.getElementById('authSection').style.display = 'flex';
-      document.getElementById('dashboardSection').style.display = 'none';
-      document.getElementById('logoutBtn').style.display = 'none';
-    }
-
-    // Show dashboard section
-    function showDashboard() {
-      document.getElementById('authSection').style.display = 'none';
-      document.getElementById('dashboardSection').style.display = 'block';
-      document.getElementById('logoutBtn').style.display = 'flex';
-    }
-
-    // Initialize dashboard
-async function initializeDashboard() {
-  try {
-    displayAdminInfo();
-
-    // cleanup any old listeners before attaching new ones
-    if (volunteersUnsub) { try { volunteersUnsub(); } catch (e) {} volunteersUnsub = null; }
-    if (logsUnsub) { try { logsUnsub(); } catch (e) {} logsUnsub = null; }
-
-    // Attach realtime listeners
-    await loadVolunteersData();
-    await loadActivityData();
-
-    // initial stats/chart build (listeners will keep them updated)
-    updateStatistics();
-    await initializeWeeklyChart();
-  } catch (error) {
-    console.error('Error initializing dashboard (realtime):', error);
-    showMessage('Error loading dashboard. Please refresh the page.', 'error');
-  }
-}
-
-
-    // Display admin information
-    function displayAdminInfo() {
-      document.getElementById('userEmail').textContent = currentAdmin.email;
-      document.getElementById('orgName').textContent = currentAdmin.organizationName || 'Organization';
-      document.getElementById('orgCode').textContent = currentOrgCode;
-    }
-
-    // Load volunteers data
-   // Real-time listener for volunteers + logs aggregation
-async function loadVolunteersData() {
-  // Unsubscribe existing listener if present
-  if (volunteersUnsub) {
-    try { volunteersUnsub(); } catch (e) { console.warn('volunteersUnsub error', e); }
-  }
-
-  console.log('Listening for volunteers for org code:', currentOrgCode);
-  const usersQuery = db.collection('users')
-    .where('organizationCode', '==', currentOrgCode)
-    .where('role', '==', 'volunteer');
-
-  volunteersUnsub = usersQuery.onSnapshot(async (usersSnap) => {
-    try {
-      // Build base users map
-      const usersMap = {};
-      usersSnap.forEach(doc => {
-        usersMap[doc.id] = doc.data();
-      });
-
-      // We still need logs aggregation; but those are handled by logs listener (below).
-      // For now, rebuild volunteersData scaffold with whatever we have and merge with volunteerHours if available
-      // Keep volunteersData minimal right now — logs listener will add hours and lastActivity when ready.
-      volunteersData = Object.keys(usersMap).map(uid => {
-        const u = usersMap[uid];
-        const displayName = u.firstName || u.name || u.fullName || u.displayName || u.email?.split('@')[0] || 'Unknown';
-        return {
-          id: uid,
-          firstName: displayName,
-          email: u.email || '',
-          totalHours: 0,
-          lastActivity: null,
-          logs: [],
-          registrationDate: u.createdAt || null
-        };
-      });
-
-      // If there are logs already loaded in activityData, merge them
-      if (activityData && activityData.length > 0) {
-        // rebuild a map of hours/logs by user
-        const volunteerHours = {};
-        activityData.forEach(log => {
-          const userId = log.user_id;
-          const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-          if (!volunteerHours[userId]) volunteerHours[userId] = { totalHours: 0, lastActivity: null, logs: [] };
-          volunteerHours[userId].totalHours += hours;
-          volunteerHours[userId].logs.push(log);
-          if (!volunteerHours[userId].lastActivity || new Date(log.date) > new Date(volunteerHours[userId].lastActivity)) {
-            volunteerHours[userId].lastActivity = log.date;
-          }
-        });
-
-        // merge into volunteersData
-        volunteersData = volunteersData.map(v => {
-          const hoursData = volunteerHours[v.id] || { totalHours: 0, lastActivity: null, logs: [] };
-          return {
-            ...v,
-            totalHours: hoursData.totalHours,
-            lastActivity: hoursData.lastActivity,
-            logs: hoursData.logs
-          };
-        });
-
-        // add volunteers that are only in logs but not in users collection
-        Object.keys(volunteerHours).forEach(uid => {
-          if (!volunteersData.find(v => v.id === uid)) {
-            const logs = volunteerHours[uid].logs;
-            const email = logs[0]?.volunteer_email || logs[0]?.email || 'Unknown';
-            const name = logs[0]?.firstName || logs[0]?.volunteer_name || email.split('@')[0] || 'Unknown';
-            volunteersData.push({
-              id: uid,
-              firstName: name,
-              email: email,
-              totalHours: volunteerHours[uid].totalHours,
-              lastActivity: volunteerHours[uid].lastActivity,
-              logs: logs,
-              registrationDate: null
-            });
-          }
-        });
-      }
-
-      console.log('Realtime volunteersData updated:', volunteersData);
-      displayVolunteers();
-      updateStatistics(); // ensure stats reflect current state
-    } catch (error) {
-      console.error('Error in volunteers onSnapshot handler:', error);
-    }
-  }, (err) => {
-    console.error('volunteers onSnapshot error:', err);
-    showMessage('Error listening for volunteers: ' + err.message, 'error');
-  });
-}
-
-// Real-time listener for activity logs
-async function loadActivityData() {
-  // Unsubscribe existing listener if present
-  if (logsUnsub) {
-    try { logsUnsub(); } catch (e) { console.warn('logsUnsub error', e); }
-  }
-
-  console.log('Listening for volunteer_logs for org code:', currentOrgCode);
-  const logsQuery = db.collection('volunteer_logs')
-    .where('organization_id', '==', currentOrgCode)
-    .orderBy('date', 'desc'); // keep ordering for activity feed
-
-  logsUnsub = logsQuery.onSnapshot((logsSnap) => {
-    try {
-      const newActivity = [];
-      logsSnap.forEach(doc => {
-        newActivity.push({ id: doc.id, ...doc.data() });
-      });
-
-      activityData = newActivity;
-      console.log('Realtime activityData loaded:', activityData.length, 'items');
-
-      // Recalculate volunteersData totals based on new activityData
-      const volunteerHours = {};
-      activityData.forEach(log => {
-        const userId = log.user_id;
-        const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-
-        if (!volunteerHours[userId]) volunteerHours[userId] = { totalHours: 0, lastActivity: null, logs: [] };
-        volunteerHours[userId].totalHours += hours;
-        volunteerHours[userId].logs.push(log);
-
-        if (!volunteerHours[userId].lastActivity || new Date(log.date) > new Date(volunteerHours[userId].lastActivity)) {
-          volunteerHours[userId].lastActivity = log.date;
-        }
-      });
-
-      // Merge hours into volunteersData (or create new volunteer entries if needed)
-      const volunteersMap = {};
-      volunteersData.forEach(v => { volunteersMap[v.id] = v; });
-
-      Object.keys(volunteerHours).forEach(uid => {
-        const h = volunteerHours[uid];
-        if (volunteersMap[uid]) {
-          volunteersMap[uid].totalHours = h.totalHours;
-          volunteersMap[uid].lastActivity = h.lastActivity;
-          volunteersMap[uid].logs = h.logs;
-        } else {
-          // volunteer not in users collection, add placeholder
-          const logs = h.logs;
-          const email = logs[0]?.volunteer_email || logs[0]?.email || 'Unknown';
-          const name = logs[0]?.firstName || logs[0]?.volunteer_name || email.split('@')[0] || 'Unknown';
-          volunteersData.push({
-            id: uid,
-            firstName: name,
-            email: email,
-            totalHours: h.totalHours,
-            lastActivity: h.lastActivity,
-            logs: logs,
-            registrationDate: null
-          });
-        }
-      });
-
-      // Ensure volunteersData contains up-to-date values from volunteersMap
-      volunteersData = volunteersData.map(v => volunteersMap[v.id] ? volunteersMap[v.id] : v);
-
-      // Refresh UI & stats
-      displayVolunteers();
-      updateStatistics();
-      refreshWeeklyChart(); // update chart with latest logs
-
-    } catch (error) {
-      console.error('Error in logs onSnapshot handler:', error);
-    }
-  }, (err) => {
-    console.error('logs onSnapshot error:', err);
-    showMessage('Error listening for activity: ' + err.message, 'error');
-  });
-}
-
-
-    // Update statistics
-    // PATCH 1: Replace the updateStatistics function
-    // Find this function in your code and replace it entirely:
-// PATCH 1: Fix the updateStatistics function
-// Replace the entire updateStatistics function in your code with this:
-
-function updateStatistics() {
-  const totalVolunteers = volunteersData.length;
-  const totalHours = volunteersData.reduce((sum, v) => sum + v.totalHours, 0);
-
-  // FIXED: Get current week boundaries (Sunday to Saturday)
-  const now = new Date();
-  const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
   
-  // Calculate start of current week (Sunday at 00:00:00)
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - currentDay);
-  startOfWeek.setHours(0, 0, 0, 0);
-  
-  // Calculate end of current week (next Sunday at 00:00:00 - exclusive)
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 7);
-  endOfWeek.setHours(0, 0, 0, 0);
-
-  console.log('Statistics - Week boundaries:', {
-    now: now.toISOString(),
-    currentDay: currentDay,
-    startOfWeek: startOfWeek.toISOString(),
-    endOfWeek: endOfWeek.toISOString(),
-    totalLogs: activityData.length
-  });
-
-  // FIXED: Calculate weekly hours with proper date parsing and comparison
-  let weeklyHours = 0;
-  const weeklyActiveSet = new Set();
-  
-  activityData.forEach((log, index) => {
-    // Parse the log date - handle different date formats
-    let logDate;
-    if (log.date) {
-      logDate = new Date(log.date);
-      // Fix invalid dates
-      if (isNaN(logDate.getTime())) {
-        console.warn(`Invalid date in log ${index}:`, log.date);
-        return;
-      }
-    } else {
-      console.warn(`Missing date in log ${index}:`, log);
-      return;
-    }
-    
-    // Check if log is within current week
-    const isInWeek = logDate >= startOfWeek && logDate < endOfWeek;
-    
-    if (isInWeek) {
-      const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-      weeklyHours += hours;
-      weeklyActiveSet.add(log.user_id);
-      
-      console.log(`Statistics - Including log ${index}:`, {
-        date: log.date,
-        parsedDate: logDate.toISOString(),
-        hours: hours,
-        userId: log.user_id,
-        runningTotal: weeklyHours
-      });
-    }
-  });
-
-  const weeklyActive = weeklyActiveSet.size;
-
-  console.log('Final statistics calculated:', {
-    totalVolunteers,
-    totalHours: totalHours.toFixed(1),
-    weeklyHours: weeklyHours.toFixed(1),
-    weeklyActive,
-    weekStartDate: startOfWeek.toLocaleDateString(),
-    weekEndDate: new Date(endOfWeek.getTime() - 1).toLocaleDateString()
-  });
-
-  // Update the display
-  animateNumber('totalVolunteers', totalVolunteers);
-  animateNumber('totalHours', totalHours, 1);
-  animateNumber('weeklyHours', weeklyHours, 1);
-  animateNumber('weeklyActive', weeklyActive);
-}
-
-
-    // Animate number counters
-    function animateNumber(elementId, targetValue, decimals = 0) {
-      const element = document.getElementById(elementId);
-      const startValue = 0;
-      const duration = 1500;
-      const increment = targetValue / (duration / 16);
-      let currentValue = startValue;
-
-      const timer = setInterval(() => {
-        currentValue += increment;
-        if (currentValue >= targetValue) {
-          currentValue = targetValue;
-          clearInterval(timer);
-        }
-        element.textContent = decimals > 0 ? currentValue.toFixed(decimals) : Math.floor(currentValue);
-      }, 16);
-    }
-
-    // FIXED: Initialize weekly bar chart with proper daily aggregation
-    async function initializeWeeklyChart() {
-      const ctx = document.getElementById('weeklyChart').getContext('2d');
-
-      const now = new Date();
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - now.getDay());
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      const weekData = getWeeklyDataFixed(startOfWeek);
-      console.log('Chart week data:', weekData);
-
-      const maxValue = Math.max(...weekData, 1);
-      const yAxisMax = Math.ceil(maxValue * 1.2);
-
-      const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-      gradient.addColorStop(0, 'rgba(255, 190, 11, 0.8)');
-      gradient.addColorStop(1, 'rgba(255, 190, 11, 0.2)');
-
-      if (weeklyChart) {
-        weeklyChart.destroy();
-      }
-
-      weeklyChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-          datasets: [{
-            label: 'Hours',
-            data: weekData,
-            backgroundColor: gradient,
-            borderColor: '#ffbe0b',
-            borderWidth: 2,
-            borderRadius: 8,
-            borderSkipped: false,
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              display: false
-            },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              titleColor: '#ffffff',
-              bodyColor: '#ffffff',
-              borderColor: '#ffbe0b',
-              borderWidth: 2,
-              cornerRadius: 10,
-              callbacks: {
-                label: function (context) {
-                  return 'Hours: ' + context.parsed.y.toFixed(1);
-                }
-              }
-            }
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              max: yAxisMax,
-              grid: {
-                color: 'rgba(255, 190, 11, 0.1)',
-              },
-              ticks: {
-                color: '#666',
-                callback: function (value) {
-                  return value + ' hrs';
-                }
-              }
-            },
-            x: {
-              grid: {
-                display: false
-              },
-              ticks: {
-                color: '#666'
-              }
-            }
-          }
-        }
-      });
-    }
-
-    // FIXED: Get weekly data with proper daily aggregation - REPLACE the existing getWeeklyDataFixed function
-    // PATCH 1: Fix the weekly chart data aggregation
-    // REPLACE the existing getWeeklyDataFixed function with this corrected version:
-function getWeeklyDataFixed(startOfWeek) {
-  const weekData = [0, 0, 0, 0, 0, 0, 0]; // Sunday to Saturday
-  
-  // Calculate end of week
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 7);
-  endOfWeek.setHours(0, 0, 0, 0);
-
-  console.log('Chart - Week boundaries:', {
-    startOfWeek: startOfWeek.toISOString(),
-    endOfWeek: endOfWeek.toISOString()
-  });
-
-  // Process each log
-  activityData.forEach((log, index) => {
-    if (!log.date) {
-      console.warn(`Chart - Missing date in log ${index}:`, log);
-      return;
-    }
-    
-    const logDate = new Date(log.date);
-    if (isNaN(logDate.getTime())) {
-      console.warn(`Chart - Invalid date in log ${index}:`, log.date);
-      return;
-    }
-
-    // Check if log is within this week
-    if (logDate >= startOfWeek && logDate < endOfWeek) {
-      const dayOfWeek = logDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-      const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-      
-      weekData[dayOfWeek] += hours;
-      
-      console.log(`Chart - Log ${index}: ${log.date} -> Day ${dayOfWeek} (${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek]}) +${hours}hrs = ${weekData[dayOfWeek]}hrs`);
-    }
-  });
-
-  console.log('Chart - Final week data:', {
-    Sunday: weekData[0],
-    Monday: weekData[1],
-    Tuesday: weekData[2],
-    Wednesday: weekData[3],
-    Thursday: weekData[4],
-    Friday: weekData[5],
-    Saturday: weekData[6],
-    total: weekData.reduce((sum, day) => sum + day, 0)
-  });
-
-  return weekData;
-}
-
-    // PATCH 2: Add a function to refresh the weekly chart after data changes
-    // ADD this new function:
-
-    async function refreshWeeklyChart() {
-      const now = new Date();
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - now.getDay());
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      const weekData = getWeeklyDataFixed(startOfWeek);
-      console.log('Refreshing chart with data:', weekData);
-
-      if (weeklyChart) {
-        weeklyChart.data.datasets[0].data = weekData;
-
-        // Recalculate Y-axis max
-        const maxValue = Math.max(...weekData, 1);
-        const yAxisMax = Math.ceil(maxValue * 1.2);
-        weeklyChart.options.scales.y.max = yAxisMax;
-
-        weeklyChart.update();
-      }
-    }
-
-    // Display volunteers in table
-    function displayVolunteers() {
-      const tbody = document.getElementById('volunteersTableBody');
-      tbody.innerHTML = '';
-
-      if (volunteersData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: #666;">No volunteers found</td></tr>';
-        return;
-      }
-
-      volunteersData.forEach(volunteer => {
-        const name = volunteer.firstName || 'Unknown';
-        const lastActivity = volunteer.lastActivity ?
-          new Date(volunteer.lastActivity).toLocaleDateString() : 'Never';
-
-        const row = document.createElement('tr');
-        row.innerHTML = `
-                    <td>${name}</td>
-                    <td>${volunteer.email}</td>
-                    <td><span class="hours-badge">${volunteer.totalHours.toFixed(1)} hrs</span></td>
-                    <td>${lastActivity}</td>
-                    <td>
-                        <button onclick="editVolunteerHours('${volunteer.id}')" class="btn-icon btn-edit" title="Edit Hours">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                    </td>
-                `;
-        tbody.appendChild(row);
-      });
-    }
-
-    // Edit volunteer hours (fullscreen)
-    function editVolunteerHours(volunteerId) {
-      const volunteer = volunteersData.find(v => v.id === volunteerId);
-      if (!volunteer) return;
-
-      const modal = document.getElementById('editHoursModal');
-      const content = document.getElementById('editHoursContent');
-
-      const name = volunteer.firstName || volunteer.email;
-
-      content.innerHTML = `
-                <div class="volunteer-header">
-                    <h3>${name}</h3>
-                    <p>${volunteer.email} - Total: ${volunteer.totalHours.toFixed(1)} hours</p>
-                </div>
-                
-                <div class="volunteer-logs">
-                    <div class="logs-header">
-                        <h4>Activity Logs</h4>
-                        <button onclick="addNewLog('${volunteerId}')" class="btn-success">
-                            <i class="fas fa-plus"></i> Add New Log
-                        </button>
-                    </div>
-                    <div id="editableLogsList" class="logs-list">
-                        ${volunteer.logs.length > 0 ? volunteer.logs.map(log => `
-                            <div class="log-item" data-log-id="${log.id}">
-                                <div class="log-inputs">
-                                    <div class="input-group">
-                                        <label>Date</label>
-<input type="date" value="${formatDateToInput(log.date || log.created_at || log.createdAt || log.timestamp)}" data-field="date">
-                                    </div>
-                                    <div class="input-group">
-                                        <label>Volunteering Task</label>
-                                        <input type="text" value="${log.site || ''}" placeholder="Location" data-field="site">
-                                    </div>
-                                    <div class="input-group">
-                                        <label>Hours</label>
-                                        <input type="number" value="${log.hours_contributed || log.hours || 0}" 
-                                               step="0.1" min="0" placeholder="Hours" data-field="hours">
-                                    </div>
-                                    <div class="input-group">
-                                        <label>Actions</label>
-                                        <button onclick="deleteLog('${log.id}', '${volunteerId}')" class="btn-danger">
-                                            <i class="fas fa-trash"></i> Delete
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        `).join('') : '<div class="empty-logs">No activity logs found</div>'}
-                    </div>
-                </div>
-                <div class="modal-actions">
-                    <button onclick="saveVolunteerHours('${volunteerId}')" class="btn-primary">
-                        <i class="fas fa-save"></i> Save All Changes
-                    </button>
-                    <button onclick="closeEditModal()" class="btn-outline">
-                        <i class="fas fa-times"></i> Cancel
-                    </button>
-                </div>
-            `;
-
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
-    }
-
-    // Save volunteer hours changes
-    // Complete saveVolunteerHours function to replace in your code
-// Find the existing saveVolunteerHours function and replace it entirely with this:
-
-async function saveVolunteerHours(volunteerId) {
-  const saveButton = document.querySelector('.modal-actions .btn-primary');
-  const originalButtonText = saveButton.innerHTML;
-
-  // Show loading state
-  saveButton.disabled = true;
-  saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving Changes...';
-
-  try {
-    const logItems = document.querySelectorAll('#editableLogsList .log-item');
-    const updates = [];
-    let hasChanges = false;
-
-    // Process each log item
-    for (const item of logItems) {
-      const logId = item.dataset.logId;
-
-      // Skip new logs that haven't been saved yet
-      if (logId === 'new') {
-        continue;
-      }
-
-      // Skip if no logId (shouldn't happen but safety check)
-      if (!logId) {
-        continue;
-      }
-
-      const inputs = item.querySelectorAll('input');
-      const logData = {};
-      let hasValidData = true;
-
-      // Collect input data
-      inputs.forEach(input => {
-        const field = input.dataset.field;
-        let value = input.value?.trim() || '';
-
-        if (field === 'hours') {
-          value = parseFloat(value) || 0;
-          if (value < 0) {
-            value = 0;
-            input.value = 0;
-          }
-          logData.hours_contributed = value;
-          logData.hours = value;
-        } else if (field === 'date') {
-          if (!value) {
-            hasValidData = false;
-            input.style.borderColor = '#dc3545';
-            return;
-          }
-          logData[field] = value;
-        } else {
-          logData[field] = value;
-        }
-
-        // Reset border color if input was previously marked as error
-        input.style.borderColor = '';
-      });
-
-      // Only update if we have valid data
-      if (hasValidData) {
-        // Add metadata
-        logData.updated_at = firebase.firestore.FieldValue.serverTimestamp();
-        logData.updated_by = currentAdmin.uid;
-
-        updates.push(db.collection('volunteer_logs').doc(logId).update(logData));
-        hasChanges = true;
-
-        console.log(`Queuing update for log ${logId}:`, logData);
-      }
-    }
-
-    // Check if there are any changes to save
-    if (!hasChanges) {
-      showMessage('No changes to save', 'info');
-      return;
-    }
-
-    // Execute all updates
-    console.log(`Executing ${updates.length} updates...`);
-    await Promise.all(updates);
-
-    showMessage(`Successfully updated ${updates.length} log entries`, 'success');
-
-    // Close the modal
-    closeEditModal();
-
-    // Use the new refresh function for better consistency
-    console.log('Refreshing dashboard data...');
-    await refreshWeeklyData();
-    console.log('Dashboard refresh completed');
-
-  } catch (error) {
-    console.error('Error saving volunteer hours:', error);
-
-    // Provide more specific error messages
-    let errorMessage = 'Error saving changes: ';
-    if (error.code === 'permission-denied') {
-      errorMessage += 'You do not have permission to modify this data.';
-    } else if (error.code === 'not-found') {
-      errorMessage += 'One or more log entries could not be found.';
-    } else if (error.code === 'unavailable') {
-      errorMessage += 'Service temporarily unavailable. Please try again.';
-    } else {
-      errorMessage += error.message || 'Unknown error occurred.';
-    }
-
-    showMessage(errorMessage, 'error');
-  } finally {
-    // Reset button state
-    saveButton.disabled = false;
-    saveButton.innerHTML = originalButtonText;
-  }
-}
-// Helper: return a YYYY-MM-DD string for a log's date
-function formatDateToInput(value) {
-  if (!value) return ''; // no date available
-
-  // Firestore Timestamp (compat) has toDate()
-  try {
-    if (typeof value.toDate === 'function') {
-      const d = value.toDate();
-      if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  // If value is an object with created_at/createdAt inside
-  if (value && (value.created_at || value.createdAt)) {
-    return formatDateToInput(value.created_at || value.createdAt);
-  }
-
-  // Fallback: try building Date from string/number
-  const d = new Date(value);
-  if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-
-  return '';
-}
-
-
-    // Add new log entry
-    function addNewLog(volunteerId) {
-      const logsList = document.getElementById('editableLogsList');
-      const newLogDiv = document.createElement('div');
-      newLogDiv.className = 'log-item new-log';
-      newLogDiv.dataset.logId = 'new';
-
-      const today = new Date().toISOString().split('T')[0];
-      newLogDiv.innerHTML = `
-                <div class="log-inputs">
-                    <div class="input-group">
-                        <label>Date</label>
-                        <input type="date" value="${today}" data-field="date">
-                    </div>
-                    <div class="input-group">
-                        <label>Location</label>
-                        <input type="text" placeholder="Location" data-field="site">
-                    </div>
-                    <div class="input-group">
-                        <label>Hours</label>
-                        <input type="number" step="0.1" min="0" placeholder="Hours" data-field="hours">
-                    </div>
-                    <div class="input-group">
-                        <label>Actions</label>
-                        <button onclick="createNewLog('${volunteerId}', this.parentElement.parentElement.parentElement)" class="btn-success">
-                            <i class="fas fa-check"></i> Save
-                        </button>
-                        <button onclick="this.parentElement.parentElement.parentElement.remove()" class="btn-outline">
-                            <i class="fas fa-times"></i> Cancel
-                        </button>
-                    </div>
-                </div>
-            `;
-
-      logsList.appendChild(newLogDiv);
-    }
-
-    // Create new log entry
-    async function createNewLog(volunteerId, logElement) {
-      try {
-        const inputs = logElement.querySelectorAll('input');
-        const logData = {
-          user_id: volunteerId,
-          organization_id: currentOrgCode,
-          created_at: firebase.firestore.FieldValue.serverTimestamp()
-        };
-
-        inputs.forEach(input => {
-          const field = input.dataset.field;
-          let value = input.value;
-
-          if (field === 'hours') {
-            value = parseFloat(value) || 0;
-            logData.hours_contributed = value;
-            logData.hours = value;
-          } else {
-            logData[field] = value;
-          }
-        });
-
-        const docRef = await db.collection('volunteer_logs').add(logData);
-        logElement.dataset.logId = docRef.id;
-        logElement.classList.remove('new-log');
-
-        const actionsDiv = logElement.querySelector('.input-group:last-child');
-        actionsDiv.innerHTML = `
-                    <label>Actions</label>
-                    <button onclick="deleteLog('${docRef.id}', '${volunteerId}')" class="btn-danger">
-                        <i class="fas fa-trash"></i> Delete
-                    </button>
-                `;
-
-        showMessage('New log entry added', 'success');
-
-      } catch (error) {
-        console.error('Error creating log:', error);
-        showMessage('Error creating log entry', 'error');
-      }
-    }
-
-    // Delete log entry
-    async function deleteLog(logId, volunteerId) {
-      if (!confirm('Are you sure you want to delete this log entry?')) return;
-
-      try {
-        await db.collection('volunteer_logs').doc(logId).delete();
-        showMessage('Log entry deleted', 'success');
-        document.querySelector(`[data-log-id="${logId}"]`).remove();
-      } catch (error) {
-        console.error('Error deleting log:', error);
-        showMessage('Error deleting log entry', 'error');
-      }
-    }
-
-    // Close edit modal
-    function closeEditModal() {
-      document.getElementById('editHoursModal').style.display = 'none';
-      document.body.style.overflow = 'auto';
-    }
-
-    // Filter volunteers
-    function filterVolunteers() {
-      const searchTerm = document.getElementById('searchVolunteer').value.toLowerCase();
-      const rows = document.querySelectorAll('#volunteersTableBody tr');
-
-      rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(searchTerm) ? '' : 'none';
-      });
-    }
-
-    // Sort volunteers
-    function sortVolunteers() {
-      const sortBy = document.getElementById('sortBy').value;
-
-      volunteersData.sort((a, b) => {
-        switch (sortBy) {
-          case 'name':
-            const nameA = a.firstName || a.email;
-            const nameB = b.firstName || b.email;
-            return nameA.localeCompare(nameB);
-          case 'hours':
-            return b.totalHours - a.totalHours;
-          case 'recent':
-            const dateA = a.lastActivity ? new Date(a.lastActivity) : new Date(0);
-            const dateB = b.lastActivity ? new Date(b.lastActivity) : new Date(0);
-            return dateB - dateA;
-          default:
-            return 0;
-        }
-      });
-
-      displayVolunteers();
-    }
-
-    // REPLACED: Google Sheets export instead of PDF
-    function downloadSheetsReport() {
-      document.getElementById('sheetsExportModal').style.display = 'flex';
-
-      // Set default dates (this week)
-      const now = new Date();
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - now.getDay());
-      const endOfWeek = new Date(startOfWeek.getTime() + 6 * 24 * 60 * 60 * 1000);
-
-      document.getElementById('sheetsStartDate').value = startOfWeek.toISOString().split('T')[0];
-      document.getElementById('sheetsEndDate').value = endOfWeek.toISOString().split('T')[0];
-    }
-
-    // Close Sheets modal
-    function closeSheetsModal() {
-      document.getElementById('sheetsExportModal').style.display = 'none';
-    }
-
-    // Generate Google Sheets compatible CSV data
-
-    // FIXED: Generate Google Sheets compatible CSV data - REPLACE the existing generateSheetsData function
-    // PATCH 3: Replace the generateSheetsData function
-    // Find this function in your code and replace it entirely:
-
-    async function generateSheetsData() {
-      const startDateInput = document.getElementById('sheetsStartDate').value;
-      const endDateInput = document.getElementById('sheetsEndDate').value;
-
-      if (!startDateInput || !endDateInput) {
-        showMessage('Please select both start and end dates', 'error');
-        return;
-      }
-
-      // FIXED: Proper date range handling
-      const startDate = new Date(startDateInput);
-      startDate.setHours(0, 0, 0, 0); // Start of selected day
-
-      const endDate = new Date(endDateInput);
-      endDate.setHours(23, 59, 59, 999); // End of selected day
-
-      if (startDate > endDate) {
-        showMessage('Start date must be before or equal to end date', 'error');
-        return;
-      }
-
-      console.log('CSV Export - Date range:', {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        startDateInput,
-        endDateInput
-      });
-
-      try {
-        // FIXED: Filter logs with proper date comparison
-        const filteredLogs = activityData.filter(log => {
-          const logDate = new Date(log.date);
-          const isInRange = logDate >= startDate && logDate <= endDate;
-
-          if (isInRange) {
-            console.log('Including in CSV:', {
-              date: log.date,
-              hours: log.hours_contributed || log.hours,
-              logDate: logDate.toISOString()
-            });
-          }
-
-          return isInRange;
-        });
-
-        console.log(`CSV Export - Found ${filteredLogs.length} logs in date range`);
-
-        if (filteredLogs.length === 0) {
-          showMessage('No volunteer activity found for the selected date range', 'error');
-          return;
-        }
-
-        // Generate CSV content
-        let csvContent = "Date,Volunteer Name,Volunteer Email,Volunteering Job,Hours,Organization\n";
-
-        // Sort logs by date, then by volunteer name
-        filteredLogs.sort((a, b) => {
-          const dateCompare = new Date(a.date) - new Date(b.date);
-          if (dateCompare !== 0) return dateCompare;
-
-          const volunteerA = volunteersData.find(v => v.id === a.user_id);
-          const volunteerB = volunteersData.find(v => v.id === b.user_id);
-          const nameA = volunteerA?.firstName || a.firstName || a.volunteer_name || 'Unknown';
-          const nameB = volunteerB?.firstName || b.firstName || b.volunteer_name || 'Unknown';
-
-          return nameA.localeCompare(nameB);
-        });
-
-        // Process each log entry
-        let totalHoursInExport = 0;
-        filteredLogs.forEach(log => {
-          const volunteer = volunteersData.find(v => v.id === log.user_id);
-          const volunteerName = volunteer?.firstName || log.firstName || log.volunteer_name || 'Unknown';
-          const volunteerEmail = volunteer?.email || log.volunteer_email || log.email || 'Unknown';
-          const location = log.site || 'Not specified';
-          const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-          const orgName = currentAdmin.organizationName || 'Organization';
-
-          totalHoursInExport += hours;
-
-          // Escape CSV values
-          const escapeCsv = (str) => {
-            const stringValue = String(str || '');
-            if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-              return '"' + stringValue.replace(/"/g, '""') + '"';
-            }
-            return stringValue;
-          };
-
-          csvContent += `${log.date},${escapeCsv(volunteerName)},${escapeCsv(volunteerEmail)},${escapeCsv(location)},${hours},${escapeCsv(orgName)}\n`;
-        });
-
-        // Create and download CSV file
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-
-        const startDateStr = startDateInput;
-        const endDateStr = endDateInput;
-        link.setAttribute('download', `volunteer-hours-${startDateStr}-to-${endDateStr}.csv`);
-
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        console.log(`CSV Export completed - ${filteredLogs.length} entries, ${totalHoursInExport.toFixed(1)} total hours`);
-
-        showMessage(`CSV exported successfully! ${filteredLogs.length} log entries with ${totalHoursInExport.toFixed(1)} total hours.`, 'success');
-        closeSheetsModal();
-
-      } catch (error) {
-        console.error('Error generating CSV:', error);
-        showMessage('Error generating CSV file: ' + error.message, 'error');
-      }
-    }
-    async function refreshWeeklyData() {
-      console.log('Refreshing weekly data...');
-
-      // Reload all data
-      await loadVolunteersData();
-      await loadActivityData();
-
-      // Update statistics with new data
-      updateStatistics();
-
-      // Refresh the weekly chart
-      await refreshWeeklyChart();
-
-      console.log('Weekly data refresh completed');
-    }
-
-
-    // FIXED: Logout function with tab-specific session clearing
-    function logout() {
-      if (confirm('Are you sure you want to logout?')) {
-        // Clear tab-specific session
-        sessionStorage.removeItem(`auth_${tabId}`);
-        isAuthenticated = false;
-
-        auth.signOut().then(() => {
-          showAuth();
-          clearMessage();
-        }).catch((error) => {
-          showMessage('Error logging out', 'error');
-        });
-      }
-    }
-
-    // Show message helper
-  // ---- REPLACE showMessage with this improved version ----
-function showMessage(message, type = 'info', options = {}) {
-  const container = document.getElementById('messageContainer');
-  if (!container) return;
-
-  // Optionally clear existing messages first
-  if (options.clearExisting) container.innerHTML = '';
-
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `message ${type}`;
-
-  const icon = type === 'success' ? 'fas fa-check-circle' :
-               type === 'error'   ? 'fas fa-exclamation-circle' :
-                                     'fas fa-info-circle';
-
-  messageDiv.innerHTML = `
-    <i class="${icon}"></i>
-    <span>${message}</span>
-    <button onclick="this.parentElement.remove()" class="message-close">
-      <i class="fas fa-times"></i>
-    </button>
-  `;
-
-  container.appendChild(messageDiv);
-
-  // If persistent flag NOT set, auto-remove after duration (default 5s)
-  if (!options.persistent) {
-    const duration = (typeof options.duration === 'number') ? options.duration : 5000;
-    setTimeout(() => { if (messageDiv.parentNode) messageDiv.remove(); }, duration);
-  }
-}
-
-// Helper to clear all messages
-function clearAllMessages() {
-  const container = document.getElementById('messageContainer');
-  if (container) container.innerHTML = '';
-}
-
-
-    // Clear message helper
-    function clearMessage() {
-      document.getElementById('authMessage').innerHTML = '';
-    }
-
-    // Enable Enter key for form submission
-    document.addEventListener('DOMContentLoaded', () => {
-      // Sign in form
-      document.getElementById('signInEmail').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          document.getElementById('signInPassword').focus();
-        }
-      });
-
-      document.getElementById('signInPassword').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          signIn();
-        }
-      });
-
-      // Signup form
-      document.getElementById('signupEmail').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          document.getElementById('signupPassword').focus();
-        }
-      });
-
-      document.getElementById('signupPassword').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          document.getElementById('organizationName').focus();
-        }
-      });
-
-      document.getElementById('organizationName').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          signup();
-        }
-      });
-    });
-
-    // Click outside modal to close
-    window.addEventListener('click', (e) => {
-      const editModal = document.getElementById('editHoursModal');
-      const sheetsModal = document.getElementById('sheetsExportModal');
-
-      if (e.target === editModal) {
-        closeEditModal();
-      }
-      if (e.target === sheetsModal) {
-        closeSheetsModal();
-      }
-    });
-
-    // Escape key to close modals
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        closeEditModal();
-        closeSheetsModal();
-      }
-    });
-
-  </script>
-
   <style>
     :root {
       --accent: #ffbe0b;
@@ -1762,14 +900,1204 @@ function clearAllMessages() {
       scroll-behavior: smooth;
     }
 
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: url('lol.png') center/cover fixed, linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: var(--text-dark);
-      line-height: 1.6;
+    bbody {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: url('bg.png') ;
+  background-size: cover;
+  color: var(--text-dark);
+  line-height: 1.6;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+    nav.navbar {
+      display: flex;
+    }
+
+    .dashboard-shell {
+      padding: 0;
+      width: 100%;
+    }
+
+    .app-shell {
+      display: flex;
       min-height: 100vh;
+      background: #fdfbf7;
+    }
+
+    .sidebar {
+      width: 280px;
+      background: linear-gradient(180deg, #fff7e6 0%, #fef9f1 100%);
+      border-right: 1px solid rgba(0, 0, 0, 0.05);
+      padding: 36px 28px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      box-shadow: 6px 0 30px rgba(107, 81, 31, 0.06);
+    }
+
+    .sidebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: var(--text-dark);
+    }
+
+    .sidebar-logo .logo-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 190, 11, 0.2);
+      color: var(--accent);
+      font-size: 1.1rem;
+    }
+
+    .sidebar-user {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.75);
+      border-radius: 18px;
+      border: 1px solid rgba(255, 190, 11, 0.25);
+    }
+
+    .sidebar-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      background: var(--accent);
+      color: var(--black);
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+    }
+
+    .sidebar-user-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.85rem;
+    }
+
+    .sidebar-email {
+      font-weight: 600;
+      color: var(--text-dark);
+    }
+
+    .sidebar-role {
+      color: var(--text-light);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .sidebar-org {
+      background: rgba(255, 255, 255, 0.85);
+      border-radius: 18px;
+      padding: 20px;
+      border: 1px solid rgba(255, 214, 153, 0.45);
+      display: grid;
+      gap: 6px;
+      font-size: 0.9rem;
+    }
+
+    .org-label {
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      color: rgba(74, 44, 0, 0.55);
+    }
+
+    .sidebar-org strong {
+      font-size: 1.05rem;
+      color: var(--text-dark);
+    }
+
+    .org-code {
+      font-size: 0.8rem;
+      color: var(--text-light);
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      color: rgba(40, 27, 4, 0.72);
+      font-weight: 500;
+      transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+      border: none;
+      background: transparent;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .nav-item:hover {
+      background: rgba(255, 190, 11, 0.16);
+      color: var(--text-dark);
+      transform: translateY(-1px);
+    }
+
+    .nav-item.active {
+      background: linear-gradient(135deg, rgba(255, 190, 11, 0.28) 0%, rgba(255, 190, 11, 0.18) 100%);
+      color: var(--text-dark);
+      box-shadow: inset 0 0 0 1px rgba(255, 190, 11, 0.45);
+    }
+
+    .nav-item--disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+      background: transparent !important;
+      box-shadow: none !important;
+    }
+
+    .logout-btn {
+      margin-top: auto;
+      border: none;
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 14px;
+      padding: 12px 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: rgba(121, 71, 0, 0.85);
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    .sidebar-nav .logout-btn {
+      margin-top: 28px;
+      justify-content: flex-start;
+      width: 100%;
+      border: 1px solid rgba(255, 190, 11, 0.25);
+    }
+
+    .logout-btn:hover {
+      background: rgba(255, 190, 11, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .nav-section {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: rgba(74, 44, 0, 0.45);
+      letter-spacing: 0.08em;
+      margin-top: 12px;
+      padding: 0 14px;
+    }
+
+    .main-area {
+      flex: 1;
+      padding: 48px clamp(28px, 3vw, 56px);
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+      background: #fdfbf7;
+    }
+
+    .view-panel {
+      display: none;
+      flex-direction: column;
+      gap: 32px;
+      width: 100%;
+    }
+
+    .view-panel.active {
+      display: flex;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: clamp(1.8rem, 3vw, 2.4rem);
+      font-weight: 700;
+      color: #3a2600;
+    }
+
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 12px;
+    }
+
+    .filter-toggle {
+      background: rgba(255, 255, 255, 0.8);
+      border-radius: 999px;
+      padding: 4px;
+      display: inline-flex;
+      gap: 4px;
+      border: 1px solid rgba(255, 190, 11, 0.25);
+    }
+
+    .pill {
+      border: none;
+      padding: 8px 18px;
+      border-radius: 999px;
+      background: transparent;
+      font-weight: 600;
+      color: rgba(96, 66, 0, 0.65);
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .pill.active {
+      background: linear-gradient(135deg, #ffbe0b 0%, #ffa62b 100%);
+      color: var(--black);
+      box-shadow: 0 8px 18px rgba(255, 182, 32, 0.25);
+    }
+    
+    .filter-selects {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .filter-chip,
+    .filter-selects select {
+      border-radius: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: rgba(255, 255, 255, 0.8);
+      padding: 10px 16px;
+      font-weight: 500;
+      color: rgba(96, 66, 0, 0.78);
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(80, 55, 0, 0.08);
+    }
+
+    .filter-chip i {
+      margin-right: 8px;
+      color: var(--accent);
+    }
+
+    .filter-selects select {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, rgba(96, 66, 0, 0.45) 50%),
+        linear-gradient(135deg, rgba(96, 66, 0, 0.45) 50%, transparent 50%);
+      background-position: calc(100% - 16px) calc(50% + 4px), calc(100% - 12px) calc(50% + 4px);
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 34px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .btn-icon {
+      border: none;
+      background: rgba(255, 255, 255, 0.85);
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+      box-shadow: 0 10px 20px rgba(255, 190, 11, 0.18);
+      cursor: pointer;
+    }
+
+    /* Animation for rolling fade-in effect on table rows */
+    @keyframes rollIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .animate-roll-in {
+      opacity: 0; /* Start hidden */
+      animation: rollIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    
+    /* New Export Popover Styles */
+    .export-control-wrapper {
       position: relative;
-      overflow-x: hidden;
+    }
+
+    .export-popover {
+      position: absolute;
+      top: calc(100% + 12px);
+      right: 0;
+      width: 320px;
+      background: var(--card-bg);
+      border-radius: 18px;
+      box-shadow: var(--shadow-strong);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(20px) saturate(180%);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      padding: 1.25rem;
+    }
+
+    .popover-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .popover-header h5 {
+      font-size: 1.1rem;
+      margin: 0;
+      color: var(--text-dark);
+    }
+
+    .close-popover {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      color: var(--text-light);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .popover-body .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .popover-body .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .popover-footer .btn-primary {
+      width: 100%;
+      margin-top: 0.5rem;
+    }
+
+    .export-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 14px;
+      padding: 10px 18px;
+      border: 1px solid rgba(255, 190, 11, 0.45);
+      background: rgba(255, 255, 255, 0.9);
+      color: rgba(96, 66, 0, 0.85);
+      cursor: pointer;
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 18px;
+    }
+
+    .metric-card {
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 22px;
+      padding: 22px 24px;      
+      box-shadow: 0 16px 32px rgba(255, 190, 11, 0.18);
+      border: 1px solid rgba(255, 190, 11, 0.25);
+      display: grid;
+      gap: 6px;
+    }
+
+    .metric-value-group {
+      display: flex;
+      align-items: baseline;
+      gap: 0.25ch;
+    }
+
+    .metric-sub-value {
+      font-size: 1.2rem;
+      font-weight: 500;
+      color: rgba(74, 44, 0, 0.45);
+      align-self: flex-end;
+      padding-bottom: 0.2rem;
+    }
+
+
+    .metric-card h2 {
+      margin: 0;
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 700;
+      color: #2d1a00;
+    }
+
+    .metric-label {
+      font-size: 0.9rem;
+      color: rgba(74, 44, 0, 0.55);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .donation-note {
+      font-size: 0.85rem;
+      color: rgba(74, 44, 0, 0.6);
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.94);
+      border-radius: 24px;
+      padding: 24px;      
+      box-shadow: 0 16px 32px rgba(255, 190, 11, 0.18);
+      border: 1px solid rgba(255, 190, 11, 0.18);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .card-header h3 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: #3a2600;
+    }
+
+    .chart-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    #heatmapHeader h3 {
+      display: flex;
+      gap: 0.5ch;
+    }
+
+    .visual-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .chart-wrapper {
+      position: relative;
+      width: 100%; 
+      min-height: 320px;
+    }
+
+    .chart-legend,
+    .donut-legend {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: rgba(74, 44, 0, 0.65);
+    }
+
+    .legend-item::before {
+      content: '';
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .legend-signed::before {
+      background: rgba(255, 190, 11, 0.5);
+    }
+
+    .legend-checked::before {
+      background: #ff9f1c;
+    }
+
+    .top-employees-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 14px;
+    }
+
+    .top-employees-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .employee-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .employee-avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(255, 190, 11, 0.28);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: #784800;
+    }
+
+    .employee-name {
+      font-weight: 600;
+      color: #3a2600;
+    }
+
+    .employee-hours {
+      font-weight: 600;
+      color: #784800;
+    }
+
+    .secondary-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .placeholder {
+      margin: 0;
+      font-size: 0.85rem;
+      color: rgba(74, 44, 0, 0.55);
+    }
+
+    .donut-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 280px;
+      height: 240px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #eventActivityChart {
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    .donut-center {
+      position: absolute;
+      text-align: center;
+      display: grid;
+      gap: 6px;
+    }
+
+    .donut-center strong {
+      font-size: 1.8rem;
+      color: #2d1a00;
+    }
+
+    .donut-center span {
+      font-size: 0.8rem;
+      color: rgba(74, 44, 0, 0.6);
+    }
+
+    .donut-legend {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      margin: 0;
+      padding: 0 8px 8px;
+      list-style: none;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+
+    .legend-dot.engaged {
+      background: #ff9f1c;
+    }
+
+    .legend-dot.inactive {
+      background: rgba(74, 44, 0, 0.25);
+    }
+
+    /* New Heat Calendar Styles */
+    .heatmap-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .heat-calendar {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 8px;
+    }
+
+    .heatmap-expand-prompt {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-light);
+    }
+
+    .heatmap-modal {
+      width: 95vw;
+      max-width: 1200px;
+      height: 90vh;
+      max-height: 700px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .heatmap-modal .modal-body {
+      flex-grow: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .heatmap-modal .heatmap-container {
+      height: 100%;
+    }
+
+    .heatmap-modal .heat-calendar-scroll-wrapper {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .heatmap-modal .heat-calendar {
+      flex-grow: 1;
+      min-height: 300px; /* Ensure it has some height */
+    }
+
+    .heat-calendar-scroll-wrapper {
+      overflow-x: auto;
+      padding-bottom: 10px; /* Space for scrollbar */
+    }
+
+    .heat-month {
+      grid-column: var(--col-start);
+      display: var(--display, block); /* Used for responsive hiding */
+    }
+
+    .heat-months {
+      display: grid;
+      grid-template-columns: 30px repeat(53, 1fr);
+      gap: 3px;
+      font-size: 0.75rem;
+      color: rgba(74, 44, 0, 0.6);
+      padding-left: 33px; /* Align with cells */
+    }
+
+    .heat-legend {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      font-size: 0.8rem;
+      padding-left: 33px; /* Align with cells */
+      color: rgba(74, 44, 0, 0.6);
+      margin-top: 12px;
+    }
+
+    .heat-legend .heat-cell {
+      width: 14px;
+    }
+
+    .heat-body {
+      display: grid;
+      grid-template-columns: 30px 1fr;
+      gap: 8px;
+    }
+    
+    .heat-cells {
+      display: grid; /* FIX: Make min size smaller to allow shrinking */
+      grid-template-columns: repeat(53, minmax(10px, 1fr));
+      grid-auto-flow: column;
+      grid-template-rows: repeat(7, 1fr);
+      gap: 3px;
+    }
+
+    .heat-cell {
+      display: var(--display, block); /* Used for responsive hiding */
+      visibility: var(--visibility, visible); /* Used for future days */
+      aspect-ratio: 1;
+      border-radius: 3px;
+      background-color: rgba(74, 44, 0, 0.06);
+      transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+      outline-offset: 2px;
+      width: 100%;
+    }
+
+    .heat-days {
+      display: grid;
+      grid-template-rows: repeat(7, 1fr);
+      gap: 3px;
+      font-size: 0.7rem;
+      color: rgba(74, 44, 0, 0.5);
+      text-align: right;
+    }
+    .heat-cell:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 12px rgba(255, 190, 11, 0.4);
+      z-index: 10;
+      position: relative;
+    }
+
+    .heat-days div:nth-child(2) { grid-row: 3; }
+    .heat-days div:nth-child(3) { grid-row: 5; }
+
+
+    .heat-cell:focus-visible {
+      outline: 2px dotted var(--accent);
+    }
+
+    /* End Heat Calendar Styles */
+    .donut-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 280px; /* Adjust as needed */
+      height: 240px; /* Adjust as needed */
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .donut-center {
+      position: absolute;
+      text-align: center;
+      display: grid;
+      gap: 6px;
+    }
+
+    .donut-center strong { font-size: 1.8rem; color: #2d1a00; }
+    .donut-center span { font-size: 0.8rem; color: rgba(74, 44, 0, 0.6); }
+    .metric-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      flex-grow: 1;
+      gap: 0.5rem;
+    }
+
+    .metric-display .metric-value-group {
+      justify-content: center;
+    }
+
+    .metric-sub-label {
+      font-size: 0.9rem;
+      color: rgba(74, 44, 0, 0.6);
+      margin-top: -0.5rem;
+    }
+    .donut-legend {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--text-light);
+    }
+
+    .donut-legend li {
+      display: flex;
+      align-items: center;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    .approvals-board {
+      padding: 0;
+      border-radius: 24px;
+      border: none;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .approvals-board .card-header {
+      padding: 0 0 12px;
+    }
+
+    #approvalsSection .card-block {
+      background: rgba(255, 255, 255, 0.94);
+      border-radius: 20px;
+      border: 1px solid rgba(255, 190, 11, 0.18);
+      box-shadow: 0 16px 32px rgba(80, 55, 0, 0.1);
+    }
+
+    .approvals-view,
+    .volunteers-view {
+      width: 100%;
+    }
+
+    .approvals-shell,
+    .volunteers-shell {
+      background: var(--card-bg);
+      border-radius: 24px;
+      border: 1px solid rgba(255, 190, 11, 0.18);
+      box-shadow: 0 20px 40px rgba(80, 55, 0, 0.12);
+      padding: 28px clamp(20px, 2.2vw, 32px);
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      backdrop-filter: blur(20px) saturate(180%);
+    }
+
+    .approvals-toolbar,
+    .volunteers-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+
+    .approvals-toolbar-left,
+    .volunteers-toolbar-left {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: flex-end;
+    }
+
+    .filter-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 160px;
+    }
+
+    .filter-field label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(74, 44, 0, 0.55);
+    }
+
+    .filter-field input[type="text"],
+    .filter-field input[type="date"],
+    .filter-field select {
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: rgba(255, 255, 255, 0.9);
+      font: inherit;
+      color: rgba(74, 44, 0, 0.78);
+      min-height: 44px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .filter-field input:focus,
+    .filter-field select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 190, 11, 0.2);
+    }
+
+    .filter-field--range .date-range {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .filter-field--range span {
+      color: rgba(74, 44, 0, 0.45);
+      font-size: 0.85rem;
+    }
+
+    .approvals-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .approvals-summary .summary-text {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #3a2600;
+    }
+
+    .summary-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .approvals-filters-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 18px;
+      padding: 14px 18px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid rgba(255, 190, 11, 0.2);
+    }
+
+    .approvals-bulk-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .approvals-table-wrapper,
+    .volunteers-table-wrapper {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.95);
+      overflow-x: auto;
+    }
+
+    .approvals-table,
+    .volunteers-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 860px;
+    }
+
+    .approvals-table th,
+    .volunteers-table th {
+      text-align: left;
+      padding: 14px 16px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: rgba(74, 44, 0, 0.6);
+      background: rgba(248, 249, 250, 0.9);
+      border-bottom: 2px solid rgba(255, 190, 11, 0.18);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .approvals-table th.centered-header {
+      text-align: center;
+    }
+
+    .approvals-table td,
+    .volunteers-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(240, 240, 240, 0.6);
+      color: rgba(58, 38, 0, 0.88);
+      vertical-align: middle;
+    }
+
+    .approvals-table tr:last-child td,
+    .volunteers-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .approval-row.status-pending {
+      background: rgba(255, 190, 11, 0.08);
+    }
+
+    .approval-row.status-approved {
+      background: rgba(40, 167, 69, 0.08);
+    }
+
+    .approval-row.status-denied {
+      background: rgba(220, 53, 69, 0.08);
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .status-chip.status-pending {
+      background: rgba(255, 190, 11, 0.22);
+      color: #8f5b00;
+    }
+
+    .status-chip.status-approved {
+      background: rgba(40, 167, 69, 0.2);
+      color: #1c6f37;
+    }
+
+    .status-chip.status-denied {
+      background: rgba(220, 53, 69, 0.2);
+      color: #842029;
+    }
+
+    .approval-row-details {
+      display: none;
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .approval-row-details.expanded {
+      display: table-row;
+    }
+
+    .approval-details-body {
+      display: grid;
+      gap: 12px;
+      color: rgba(74, 44, 0, 0.75);
+      line-height: 1.5;
+    }
+
+    .approval-details-body strong {
+      color: #3a2600;
+    }
+
+    .details-toggle {
+      border: none;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+
+    .approval-row.expanded .details-toggle {
+      transform: rotate(90deg);
+    }
+
+    .host-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .host-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(255, 190, 11, 0.24);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: #784800;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    .approval-select-all {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: rgba(74, 44, 0, 0.55);
+    }
+
+    .volunteers-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .volunteers-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(255, 190, 11, 0.2);
+    }
+
+    .volunteers-summary span {
+      font-weight: 600;
+      color: #3a2600;
+    }
+
+    .volunteer-name-cell {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .volunteer-initial {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(255, 190, 11, 0.24);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: #784800;
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 6px;
+      /* justify-content: flex-end; */ /* Removed to align buttons to the left */
+    }
+
+    .table-actions .btn-icon {
+      width: 32px;
+      height: 32px;
+    }
+
+    .empty-table-row {
+      text-align: center;
+      padding: 2rem;
+      color: rgba(74, 44, 0, 0.5);
+      font-size: 0.9rem;
     }
 
     /* Animated background overlay */
@@ -1896,12 +2224,6 @@ function clearAllMessages() {
       box-shadow: var(--shadow-medium);
     }
 
-    .logout-btn {
-      background: var(--gradient-primary);
-      color: var(--black);
-      box-shadow: var(--shadow-medium);
-    }
-
     /* AUTH SECTION - FIXED: Adjusted top margin to prevent collision with navbar */
     .auth-container {
       display: flex;
@@ -1912,6 +2234,7 @@ function clearAllMessages() {
       /* FIXED: Added top padding for navbar */
       position: relative;
       z-index: 10;
+      background-image: "bg.png";
     }
 
     .auth-card {
@@ -2061,6 +2384,34 @@ function clearAllMessages() {
       }
     }
 
+    .form-group-extra {
+      text-align: right;
+      margin-bottom: 1.5rem;
+    }
+
+    .form-group-extra a {
+      color: var(--text-light);
+      font-size: 0.9rem;
+      text-decoration: none;
+    }
+
+    .form-group-extra a:hover {
+      text-decoration: underline;
+    }
+
+    .forgot-password-link {
+      display: block;
+      text-align: right;
+      margin-bottom: 1.5rem;
+      color: var(--text-light);
+      font-size: 0.9rem;
+      text-decoration: none;
+    }
+
+    .forgot-password-link:hover {
+      text-decoration: underline;
+    }
+
     /* Form groups */
     .form-group {
       margin-bottom: 1.8rem;
@@ -2120,6 +2471,38 @@ function clearAllMessages() {
     input:hover:not(:focus) {
       border-color: rgba(255, 190, 11, 0.6);
       transform: translateY(-1px);
+    }
+
+    #authMessage.auth-message {
+      display: none;
+      margin-top: 1.5rem;
+      border-radius: 12px;
+      padding: 0.85rem 1.1rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      text-align: center;
+    }
+
+    #authMessage.auth-message.show {
+      display: block;
+    }
+
+    #authMessage.auth-message.info {
+      background: rgba(255, 190, 11, 0.15);
+      color: #8f5b00;
+      border: 1px solid rgba(255, 190, 11, 0.35);
+    }
+
+    #authMessage.auth-message.success {
+      background: rgba(40, 167, 69, 0.15);
+      color: #1c6f37;
+      border: 1px solid rgba(40, 167, 69, 0.35);
+    }
+
+    #authMessage.auth-message.error {
+      background: rgba(220, 53, 69, 0.15);
+      color: #842029;
+      border: 1px solid rgba(220, 53, 69, 0.35);
     }
 
     /* Success state */
@@ -2276,6 +2659,146 @@ function clearAllMessages() {
       font-size: 0.85rem;
     }
 
+    /* Dashboard Tabs */
+    .dashboard-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin: 2rem 0 1.5rem;
+      background: rgba(255, 255, 255, 0.55);
+      border-radius: 18px;
+      padding: 0.45rem;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .tab-btn {
+      flex: 1;
+      min-width: 150px;
+      border: none;
+      background: transparent;
+      color: var(--text-light);
+      font-weight: 600;
+      padding: 0.85rem 1.5rem;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .tab-btn i {
+      font-size: 1rem;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-dark);
+      transform: translateY(-1px);
+    }
+
+    .tab-btn.active {
+      background: var(--gradient-primary);
+      color: var(--black);
+      box-shadow: var(--shadow-medium);
+    }
+
+    .tab-panels {
+      position: relative;
+    }
+
+    .tab-panel {
+      display: none;
+      animation: fadeIn 0.5s ease forwards;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Dashboard Tabs */
+    .dashboard-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin: 2rem 0 1.5rem;
+      background: rgba(255, 255, 255, 0.55);
+      border-radius: 18px;
+      padding: 0.45rem;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .tab-btn {
+      flex: 1;
+      min-width: 150px;
+      border: none;
+      background: transparent;
+      color: var(--text-light);
+      font-weight: 600;
+      padding: 0.85rem 1.5rem;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .tab-btn i {
+      font-size: 1rem;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-dark);
+      transform: translateY(-1px);
+    }
+
+    .tab-btn.active {
+      background: var(--gradient-primary);
+      color: var(--black);
+      box-shadow: var(--shadow-medium);
+    }
+
+    .tab-panels {
+      position: relative;
+    }
+
+    .tab-panel {
+      display: none;
+      animation: fadeIn 0.5s ease forwards;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
     /* Statistics Grid */
     .stats-grid {
       display: grid;
@@ -2319,1011 +2842,21 @@ function clearAllMessages() {
       box-shadow: var(--shadow-strong);
     }
 
-    .stat-icon {
-      width: 50px;
-      height: 50px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.3rem;
-      color: white;
+    /* Add this rule to your CSS */
+    .dashboard-shell {
+      display: none; /* Initially hide the dashboard */
     }
 
-    .gradient-blue .stat-icon {
-      background: linear-gradient(135deg, #3498db, #2980b9);
-    }
-
-    .gradient-green .stat-icon {
-      background: linear-gradient(135deg, #2ecc71, #27ae60);
-    }
-
-    .gradient-orange .stat-icon {
-      background: linear-gradient(135deg, #ffbe0b, #f59e0b);
-    }
-
-    .gradient-purple .stat-icon {
-      background: linear-gradient(135deg, #9b59b6, #8e44ad);
-    }
-
-    .stat-content h3 {
-      font-size: 0.9rem;
-      color: var(--text-light);
-      margin-bottom: 5px;
-      font-weight: 500;
-    }
-
-    .stat-number {
-      font-size: 2rem;
-      font-weight: 700;
-      color: var(--text-dark);
-    }
-
-    /* Chart Section */
-    .chart-section {
-      background: var(--card-bg);
-      backdrop-filter: blur(20px) saturate(180%);
-      border-radius: 15px;
-      padding: 25px;
-      margin-bottom: 30px;
-      box-shadow: var(--shadow-medium);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      animation: fadeInUp 0.8s ease 0.6s both;
-    }
-
-    .chart-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 25px;
-      flex-wrap: wrap;
-      gap: 15px;
-    }
-
-    .chart-header h3 {
-      font-size: 1.3rem;
-      color: var(--text-dark);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .chart-controls {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    .chart-container {
-      height: 400px;
-      position: relative;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
-      border-radius: 12px;
-      padding: 20px;
-      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.05);
-    }
-
-    /* Volunteers Section */
-    .volunteers-section {
-      background: var(--card-bg);
-      backdrop-filter: blur(20px) saturate(180%);
-      border-radius: 15px;
-      padding: 25px;
-      margin-bottom: 30px;
-      box-shadow: var(--shadow-medium);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      animation: fadeInUp 0.8s ease 0.7s both;
-    }
-
-    .section-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
-      gap: 15px;
-    }
-
-    .section-header h3 {
-      font-size: 1.3rem;
-      color: var(--text-dark);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .section-controls {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    /* Table */
-    .table-container {
-      overflow-x: auto;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 100%);
-    }
-
-    .data-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .data-table th {
-      background: linear-gradient(135deg, rgba(248, 249, 250, 0.95) 0%, rgba(240, 242, 245, 0.9) 100%);
-      padding: 15px;
-      text-align: left;
-      font-weight: 600;
-      color: var(--text-dark);
-      border-bottom: 2px solid rgba(255, 190, 11, 0.2);
-    }
-
-    .data-table td {
-      padding: 15px;
-      border-bottom: 1px solid rgba(240, 240, 240, 0.5);
-      vertical-align: middle;
-      transition: background-color 0.3s ease;
-    }
-
-    .data-table tr:hover {
-      background: linear-gradient(135deg, rgba(255, 190, 11, 0.08) 0%, rgba(255, 190, 11, 0.05) 100%);
-      transform: scale(1.01);
-    }
-
-    .hours-badge {
-      background: var(--gradient-primary);
-      color: var(--black);
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 0.85rem;
-      font-weight: 600;
-      box-shadow: 0 2px 8px rgba(255, 190, 11, 0.3);
-      display: inline-block;
-      transition: all 0.3s ease;
-    }
-
-    .hours-badge:hover {
-      transform: scale(1.05);
-      box-shadow: 0 4px 12px rgba(255, 190, 11, 0.4);
-    }
-
-    /* Buttons */
-    .btn-primary {
-      background: var(--gradient-primary);
-      color: var(--black);
-      border: none;
-      padding: 12px 24px;
-      border-radius: 50px;
-      cursor: pointer;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      transition: all 0.3s ease;
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      box-shadow: 0 4px 15px rgba(255, 190, 11, 0.3);
-      position: relative;
-      overflow: hidden;
-    }
-
-    .btn-primary::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-      transition: left 0.6s ease;
-    }
-
-    .btn-primary:hover::before {
-      left: 100%;
-    }
-
-    .btn-primary:hover {
-      transform: translateY(-3px) scale(1.05);
-      box-shadow: 0 8px 25px rgba(255, 190, 11, 0.4);
-    }
-
-    .btn-outline {
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.8) 100%);
-      color: var(--text-dark);
-      border: 1px solid rgba(224, 224, 224, 0.5);
-      padding: 12px 24px;
-      border-radius: 50px;
-      cursor: pointer;
-      font-weight: 500;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      transition: all 0.3s ease;
-      font-size: 0.9rem;
-      backdrop-filter: blur(10px);
-    }
-
-    .btn-outline:hover {
-      background: linear-gradient(135deg, rgba(248, 249, 250, 0.95) 0%, rgba(248, 249, 250, 0.9) 100%);
-      border-color: var(--accent);
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-    }
-
-    .btn-success {
-      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-      color: white;
-      border: none;
-      padding: 12px 24px;
-      border-radius: 50px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.3s ease;
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .btn-success:hover {
-      transform: translateY(-3px) scale(1.05);
-      box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
-    }
-
-    .btn-danger {
-      background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-      color: white;
-      border: none;
-      padding: 12px 20px;
-      border-radius: 50px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.3s ease;
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .btn-danger:hover {
-      transform: translateY(-3px) scale(1.05);
-      box-shadow: 0 8px 25px rgba(220, 53, 69, 0.4);
-    }
-
-    .btn-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      border: 1px solid rgba(224, 224, 224, 0.4);
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.8) 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      font-size: 0.9rem;
-      margin-right: 8px;
-      backdrop-filter: blur(10px);
-    }
-
-    .btn-edit:hover {
-      background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
-      color: white;
-      border-color: #3498db;
-      transform: translateY(-2px) scale(1.1);
-      box-shadow: 0 6px 20px rgba(52, 152, 219, 0.3);
-    }
-
-    /* Input Styles */
-    input[type="text"],
-    input[type="date"],
-    input[type="number"],
-    select {
-      padding: 10px 15px;
-      border: 1px solid rgba(224, 224, 224, 0.4);
-      border-radius: 8px;
-      font-size: 0.9rem;
-      transition: all 0.3s ease;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.8) 100%);
-      backdrop-filter: blur(10px);
-    }
-
-    input[type="text"]:focus,
-    input[type="date"]:focus,
-    input[type="number"]:focus,
-    select:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(255, 190, 11, 0.15);
-      transform: translateY(-1px);
-      background: rgba(255, 255, 255, 0.95);
-    }
-
-    /* Fullscreen Modal */
-    .fullscreen-modal {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.9);
-      backdrop-filter: blur(15px);
-      z-index: 2000;
-      opacity: 0;
-      animation: modalFadeIn 0.3s ease forwards;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .fullscreen-modal-content {
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.95) 100%);
-      width: 95vw;
-      height: 95vh;
-      max-width: 1200px;
-      border-radius: 20px;
-      overflow: hidden;
-      backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      box-shadow: var(--shadow-strong);
-      display: flex;
-      flex-direction: column;
-      transform: scale(0.9);
-      animation: fullscreenModalSlideIn 0.4s ease forwards;
-    }
-
-    @keyframes fullscreenModalSlideIn {
-      to {
-        transform: scale(1);
-      }
-    }
-
-    .fullscreen-modal .modal-header {
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.95) 100%);
-      padding: 30px 40px;
-      border-bottom: 1px solid rgba(224, 224, 224, 0.3);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      backdrop-filter: blur(20px);
-      flex-shrink: 0;
-    }
-
-    .fullscreen-modal .modal-header h2 {
-      font-size: 1.8rem;
-      color: var(--text-dark);
-      display: flex;
-      align-items: center;
-      gap: 15px;
-    }
-
-    .close-btn {
-      width: 50px;
-      height: 50px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      color: var(--text-light);
-      border: 1px solid rgba(224, 224, 224, 0.3);
-      font-size: 1.2rem;
-    }
-
-    .close-btn:hover {
-      background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-      color: white;
-      transform: scale(1.1);
-      box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3);
-    }
-
-    .fullscreen-modal .modal-body {
-      padding: 40px;
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    .volunteer-header {
-      margin-bottom: 40px;
-      padding: 30px;
-      background: linear-gradient(135deg, rgba(255, 190, 11, 0.05) 0%, rgba(255, 190, 11, 0.02) 100%);
-      border-radius: 15px;
-      border: 1px solid rgba(255, 190, 11, 0.2);
-    }
-
-    .volunteer-header h3 {
-      font-size: 1.8rem;
-      margin-bottom: 10px;
-      color: var(--text-dark);
-    }
-
-    .volunteer-header p {
-      font-size: 1.1rem;
-      color: var(--text-light);
-    }
-
-    .volunteer-logs {
-      margin-bottom: 40px;
-    }
-
-    .logs-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 30px;
-      flex-wrap: wrap;
-      gap: 20px;
-    }
-
-    .logs-header h4 {
-      font-size: 1.4rem;
-      color: var(--text-dark);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .logs-header h4::before {
-      content: '';
-      width: 4px;
-      height: 25px;
-      background: var(--gradient-primary);
-      border-radius: 2px;
-    }
-
-    .logs-list {
-      display: grid;
-      gap: 20px;
-    }
-
-    .log-item {
-      background: linear-gradient(135deg, rgba(248, 249, 250, 0.9) 0%, rgba(248, 249, 250, 0.7) 100%);
-      border: 1px solid rgba(224, 224, 224, 0.4);
-      border-radius: 15px;
-      padding: 25px;
-      transition: all 0.3s ease;
-      backdrop-filter: blur(10px);
-    }
-
-    .log-item:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-      border-color: rgba(255, 190, 11, 0.3);
-    }
-
-    .log-item.new-log {
-      border-color: #28a745;
-      background: linear-gradient(135deg, rgba(248, 255, 249, 0.9) 0%, rgba(248, 255, 249, 0.7) 100%);
-      box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
-    }
-
-    .log-inputs {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 20px;
-      align-items: end;
-    }
-
-    .input-group {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .input-group label {
-      margin-bottom: 8px;
-      font-weight: 600;
-      color: var(--text-dark);
-      font-size: 0.9rem;
-    }
-
-    .input-group input {
-      padding: 12px 15px;
-      border: 1px solid rgba(224, 224, 224, 0.4);
-      border-radius: 8px;
-      font-size: 0.95rem;
-      transition: all 0.3s ease;
-      background: rgba(255, 255, 255, 0.9);
-    }
-
-    .input-group input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(255, 190, 11, 0.15);
-      transform: translateY(-1px);
-    }
-
-    .empty-logs {
-      text-align: center;
-      padding: 60px 40px;
-      color: var(--text-light);
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
-      border-radius: 12px;
-      border: 2px dashed rgba(255, 190, 11, 0.3);
-      font-size: 1.1rem;
-    }
-
-    .modal-actions {
-      display: flex;
-      justify-content: center;
-      gap: 20px;
-      padding: 30px 0;
-      border-top: 1px solid rgba(224, 224, 224, 0.3);
-      flex-wrap: wrap;
-    }
-
-    /* Modal Overlay */
-    .modal-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(8px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1500;
-      opacity: 0;
-      animation: modalFadeIn 0.3s ease forwards;
-    }
-
-    .modal {
-      width: 90%;
-      max-width: 500px;
-    }
-
-    @keyframes modalFadeIn {
-      to {
-        opacity: 1;
-      }
-    }
-
-    .modal-content {
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.95) 100%);
-      border-radius: 20px;
-      width: 100%;
-      max-height: 80vh;
-      overflow-y: auto;
-      box-shadow: var(--shadow-strong);
-      backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      transform: scale(0.9) translateY(20px);
-      animation: modalSlideIn 0.3s ease 0.1s forwards;
-    }
-
-    @keyframes modalSlideIn {
-      to {
-        transform: scale(1) translateY(0);
-      }
-    }
-
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 25px 30px;
-      border-bottom: 1px solid rgba(224, 224, 224, 0.3);
-      background: linear-gradient(135deg, rgba(255, 190, 11, 0.05) 0%, rgba(255, 190, 11, 0.02) 100%);
-    }
-
-    .modal-header h3 {
-      font-size: 1.3rem;
-      color: var(--text-dark);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .close {
-      width: 35px;
-      height: 35px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      color: var(--text-light);
-      border: 1px solid rgba(224, 224, 224, 0.3);
-    }
-
-    .close:hover {
-      background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-      color: white;
-      transform: scale(1.1);
-      box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3);
-    }
-
-    .modal-body {
-      padding: 30px;
-    }
-
-    .modal-footer {
-      display: flex;
-      justify-content: center;
-      gap: 15px;
-      padding: 20px 30px;
-      border-top: 1px solid rgba(224, 224, 224, 0.3);
-      background: linear-gradient(135deg, rgba(248, 249, 250, 0.8) 0%, rgba(248, 249, 250, 0.6) 100%);
-      border-radius: 0 0 20px 20px;
-    }
-
-    /* Messages */
-    #messageContainer {
-      position: fixed;
-      top: 100px;
-      right: 20px;
-      z-index: 2000;
-      max-width: 400px;
-    }
-
-    .message {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 15px 25px;
-      margin-bottom: 12px;
-      border-radius: 12px;
-      box-shadow: var(--shadow-medium);
-      font-weight: 500;
-      backdrop-filter: blur(15px);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      position: relative;
-      overflow: hidden;
-      transform: translateX(100%);
-      animation: messageSlideIn 0.5s ease forwards;
-    }
-
-    @keyframes messageSlideIn {
-      to {
-        transform: translateX(0);
-      }
-    }
-
-    .message::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-      animation: messageShine 2s ease-in-out;
-    }
-
-    @keyframes messageShine {
-      0% {
-        left: -100%;
-      }
-
-      100% {
-        left: 100%;
-      }
-    }
-
-    .message.success {
-      background: linear-gradient(135deg, rgba(209, 231, 221, 0.95) 0%, rgba(209, 231, 221, 0.8) 100%);
-      color: #0f5132;
-      border-left: 4px solid #198754;
-    }
-
-    .message.error {
-      background: linear-gradient(135deg, rgba(248, 215, 218, 0.95) 0%, rgba(248, 215, 218, 0.8) 100%);
-      color: #842029;
-      border-left: 4px solid #dc3545;
-    }
-
-    .message.info {
-      background: linear-gradient(135deg, rgba(255, 243, 205, 0.95) 0%, rgba(255, 243, 205, 0.8) 100%);
-      color: #664d03;
-      border-left: 4px solid var(--accent);
-    }
-
-    .message-close {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 4px;
-      transition: all 0.3s ease;
-      color: inherit;
-      opacity: 0.7;
-    }
-
-    .message-close:hover {
-      background: rgba(0, 0, 0, 0.1);
-      opacity: 1;
-      transform: scale(1.1);
-    }
-
-    /* Responsive Design */
-    @media (max-width: 768px) {
-      .navbar {
-        padding: 0.8rem 1rem;
-      }
-
-      .navbar-brand .logo {
-        font-size: 1.5rem;
-      }
-
-      .navbar-nav {
-        gap: 1rem;
-      }
-
-      .navbar-nav .nav-link {
-        padding: 0.4rem 0.8rem;
-        font-size: 0.9rem;
-      }
-
-      .auth-container {
-        padding: 100px 1rem 1rem;
-        /* FIXED: Reduced top padding for mobile */
-      }
-
-      .auth-card {
-        padding: 2rem 1.5rem;
-        border-radius: 20px;
-      }
-
-      .auth-header h1 {
-        font-size: 2rem;
-      }
-
-      .toggle-buttons {
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-
-      .toggle-buttons button {
-        padding: 0.8rem 1.5rem;
-      }
-
-      .container {
-        padding: 80px 15px 20px;
-      }
-
-      .header {
-        flex-direction: column;
-        gap: 15px;
-        text-align: center;
-      }
-
-      .stats-grid {
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-      }
-
-      .chart-header,
-      .section-header,
-      .logs-header {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 15px;
-      }
-
-      .chart-controls,
-      .section-controls {
-        justify-content: center;
-      }
-
-      .fullscreen-modal-content {
-        width: 98vw;
-        height: 98vh;
-        border-radius: 15px;
-      }
-
-      .fullscreen-modal .modal-header {
-        padding: 20px;
-      }
-
-      .fullscreen-modal .modal-header h2 {
-        font-size: 1.4rem;
-      }
-
-      .fullscreen-modal .modal-body {
-        padding: 20px;
-      }
-
-      .log-inputs {
-        grid-template-columns: 1fr;
-        gap: 15px;
-      }
-
-      .modal-actions {
-        flex-direction: column;
-        align-items: center;
-      }
-
-      .modal {
-        width: 95%;
-        max-width: none;
-      }
-
-      .modal-content {
-        margin: 10px;
-      }
-
-      #messageContainer {
-        right: 10px;
-        left: 10px;
-        max-width: none;
-      }
-    }
-
-    /* Custom scrollbar */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: rgba(248, 249, 250, 0.8);
-      border-radius: 4px;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: var(--gradient-primary);
-      border-radius: 4px;
-      transition: all 0.3s ease;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--accent-dark);
-      transform: scale(1.1);
-    }
-
-    /* Loading states */
-    .loading {
-      position: relative;
-      pointer-events: none;
-      opacity: 0.7;
-    }
-
-    .loading::after {
-      content: '';
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 20px;
-      height: 20px;
-      border: 2px solid rgba(255, 190, 11, 0.3);
-      border-top: 2px solid var(--accent);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-
-    @keyframes spin {
-      0% {
-        transform: translate(-50%, -50%) rotate(0deg);
-      }
-
-      100% {
-        transform: translate(-50%, -50%) rotate(360deg);
-      }
-    }
-
-    /* Focus indicators for accessibility */
-    button:focus-visible,
-    input:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-      box-shadow: 0 0 0 4px rgba(255, 190, 11, 0.2);
-    }
-
-    /* Reduced motion for accessibility */
-    @media (prefers-reduced-motion: reduce) {
-
-      *,
-      *::before,
-      *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-      }
-    }
-
-    /* Enhanced hover effects */
-    .org-card:hover,
-    .stat-card:hover {
-      transform: translateY(-5px) scale(1.02);
-      box-shadow: var(--shadow-strong);
-    }
-
-    /* Enhanced visual feedback */
-    .btn-primary:active,
-    .btn-success:active,
-    .btn-danger:active {
-      transform: translateY(-1px) scale(0.98);
-    }
-
-    .btn-outline:active {
-      transform: translateY(0) scale(0.98);
-    }
-
-    /* Improved table interactions */
-    .data-table tr {
-      transition: all 0.3s ease;
-    }
-
-    .data-table tr:hover td {
-      background: linear-gradient(135deg, rgba(255, 190, 11, 0.08) 0%, rgba(255, 190, 11, 0.05) 100%);
-    }
-
-    /* Better form validation styles */
-    input.error {
-      border-color: #dc3545;
-      box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.15);
-    }
-
-    input.success {
-      border-color: #28a745;
-      box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.15);
-    }
-
-    /* Enhanced empty states */
-    .empty-logs::before {
-      content: '📋';
-      font-size: 3rem;
-      display: block;
-      margin-bottom: 20px;
-      opacity: 0.5;
-    }
-
-    /* Improved loading animations */
-    .chart-container.loading::after {
-      content: '';
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 40px;
-      height: 40px;
-      border: 3px solid rgba(255, 190, 11, 0.3);
-      border-top: 3px solid var(--accent);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-
-    /* Enhanced success animations */
-    @keyframes successBounce {
-
-      0%,
-      20%,
-      50%,
-      80%,
-      100% {
-        transform: translateY(0);
-      }
-
-      40% {
-        transform: translateY(-10px);
-      }
-
-      60% {
-        transform: translateY(-5px);
-      }
-    }
-
-    .success-icon {
-      animation: successBounce 2s ease-in-out infinite;
+    .dashboard-shell.active {
+      display: block; /* Show it when the class is added */
     }
   </style>
+  
+  <footer class="ev-sticky-footer" id="editVolunteerViewFooter" style="display: none;"></footer>
+
+
+
+  <script type="module" src="/js/main.js"></script>
 </body>
 
 </html>

@@ -5,224 +5,351 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>NexoLink — Connect. Volunteer. Impact.</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
     :root {
       --accent: #ffbe0b;
-      --white-85: rgba(255,255,255,0.85);
+      --accent-dark: #e6a700;
+      --accent-light: #ffd633;
+      --white-85: rgba(255, 255, 255, 0.85);
       --black: #000;
+      --text-dark: #3a2600;
+      --text-light: #666;
+      --card-bg: rgba(255, 255, 255, 0.9);
+      --shadow-medium: 0 12px 40px rgba(0, 0, 0, 0.15);
+      --shadow-strong: 0 20px 60px rgba(0, 0, 0, 0.25);
+      --gradient-primary: linear-gradient(135deg, #ffbe0b 0%, #ffd633 100%);
     }
+
     * { margin:0; padding:0; box-sizing:border-box; }
     html { scroll-behavior: smooth; }
     body {
-      font-family:'Inter',sans-serif;
-      background: url('lol.png') no-repeat center/cover fixed;
-      color: var(--black);
+      font-family:'Inter',sans-serif;      
+      color: var(--text-dark);
       line-height:1.6;
+      min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
+      background: url('bg.png') no-repeat center center fixed;
+      background-size: cover;
+      -webkit-background-size: cover;
+      -moz-background-size: cover;
+      -o-background-size: cover;
     }
+
+    /* Animated background overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background:
+        radial-gradient(circle at 20% 80%, rgba(255, 190, 11, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(255, 214, 51, 0.08) 0%, transparent 50%);
+      animation: backgroundFloat 15s ease-in-out infinite;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    @keyframes backgroundFloat {
+      0%, 100% { opacity: 0.8; transform: translateY(0px); }
+      50% { opacity: 1; transform: translateY(-10px); }
+    }
+
     a { text-decoration:none; color:inherit; }
 
     /* NAVBAR */
     .navbar {
-      position:fixed; top:0; left:0; right:0;
-      background: var(--white-85); backdrop-filter: blur(8px);
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      position: fixed; top:0; left:0; right:0;
+      background: var(--white-85);
+      backdrop-filter: blur(15px) saturate(180%);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
       padding:1rem 2rem;
       display:flex; align-items:center; justify-content:space-between;
       z-index:1000;
-      animation: slideDown 0.6s ease-out;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      animation: slideDown 0.8s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .navbar .logo { font-size:1.75rem; font-weight:800; }
-    .navbar .nav-links {
-      display:flex; gap:1rem;
+
+    .navbar-brand .logo {
+      font-size:1.75rem; font-weight:800;
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
-    .navbar .nav-links a {
-      padding:.5rem; font-weight:600;
-      transition: color .2s, transform .2s;
-    }
-    .navbar .nav-links a:hover {
+
+    .navbar-brand .logo i {
+      font-size: 1.8rem;
       color: var(--accent);
+    }
+
+    .navbar-nav {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .navbar-nav .nav-link {
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      color: var(--black);
+      text-decoration: none;
+      border-radius: 25px;
+      position: relative;
+      overflow: hidden;
+      border: none;
+      background: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .navbar-nav .nav-link:hover {
+      color: var(--black);
       transform: translateY(-2px);
+      box-shadow: var(--shadow-medium);
+    }
+
+    .logout-btn {
+      background: var(--gradient-primary);
+      color: var(--black);
+      box-shadow: var(--shadow-medium);
+    }
+
+    .navbar-nav .nav-link::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: var(--gradient-primary);
+      transition: left 0.3s ease;
+      z-index: -1;
+      border-radius: 25px;
+    }
+
+    .navbar-nav .nav-link:hover::before {
+      left: 0;
+    }
+
+    .navbar-nav .nav-link:hover {
+      color: var(--black);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-medium);
     }
 
     @keyframes slideDown {
-      from { transform: translateY(-100%); }
-      to   { transform: translateY(0);     }
+      from { transform: translateY(-100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
     }
 
     /* HERO */
     .hero {
       height:100vh;
-      display:flex; align-items:center; justify-content:center;
-      padding:0 1rem;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      text-align: center;
+      padding: 0 2rem;
     }
     .hero-content {
-      background: var(--white-85);
-      border-radius:12px;
-      padding:3rem 2rem;
-      box-shadow:0 4px 20px rgba(0,0,0,0.1);
-      text-align:center;
-      max-width:700px;
-      opacity:0; transform:translateY(30px);
-      animation: fadeIn 1s ease-out forwards 0.3s;
+      max-width:900px;
+      opacity:0; transform:translateY(30px); 
+      background: var(--card-bg);
+      padding: clamp(2rem, 5vw, 4rem);
+      border-radius: 24px;
+      box-shadow: var(--shadow-strong);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      animation: fadeIn 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards 0.3s;
     }
     .hero h1 {
-      font-size:3rem; margin-bottom:1rem; font-weight:800;
+      font-size:clamp(2.5rem, 6vw, 4.5rem); margin-bottom:1rem; font-weight:800;
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -2px;
     }
     .hero p {
-      font-size:1.15rem; margin-bottom:2rem; opacity:.9;
+      font-size:clamp(1rem, 2vw, 1.2rem); margin-bottom:2.5rem;
+      color: var(--text-dark);
+      opacity: 0.8;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
     }
     .btn {
       display:inline-block;
-      padding:.75rem 2rem;
+      padding:1rem 2.5rem;
       margin:0 .5rem;
-      border-radius:30px;
+      border-radius:40px;
       font-weight:600;
       cursor:pointer;
       transition: transform .2s, box-shadow .2s;
     }
     .btn-primary {
-      background: var(--accent);
+      background: var(--gradient-primary);
       color: var(--black);
       border:none;
-    }
-    .btn-secondary {
-      background:transparent;
-      border:2px solid var(--black);
-      color: var(--black);
+      box-shadow: var(--shadow-medium);
     }
     .btn:hover {
       transform: translateY(-3px);
-      box-shadow:0 8px 20px rgba(0,0,0,0.15);
+      box-shadow: 0 12px 35px rgba(255, 190, 11, 0.4);
     }
-
     @keyframes fadeIn {
       to { opacity:1; transform:translateY(0); }
     }
 
     /* SHARED SECTION WRAPPER */
     .section-wrapper {
-      margin:6rem auto; padding:4rem 2rem;
-      max-width:1100px;
-      background: var(--white-85);
-      border-radius:12px;
-      box-shadow:0 4px 20px rgba(0,0,0,0.1);
+      width: 90vw;
+      max-width: 1100px;
+      margin: 8rem auto;
+      padding: clamp(3rem, 6vh, 5rem) clamp(1.5rem, 5vw, 3.5rem);
+      background: var(--card-bg);
+      border-radius:24px;
+      box-shadow: var(--shadow-strong);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.3);
       opacity:0; transform:translateY(30px);
-      transition: all .6s ease-out;
+      transition: opacity .8s ease, transform .8s ease;
     }
     .section-wrapper.visible {
       opacity:1; transform:translateY(0);
     }
-
-    /* ABOUT */
-    .about h2 {
-      font-size:2.5rem; font-weight:800; margin-bottom:1rem;
+    .section-header { text-align:center; margin-bottom:4rem; }
+    .section-header h2 {
+      font-size:2.8rem; font-weight:800; margin-bottom:.5rem;
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    .about p {
-      max-width:750px; margin:0 auto; opacity:.9; line-height:1.7;
-    }
+    .section-header p { opacity:.8; max-width: 700px; margin: 0 auto; }
 
-    /* FEATURES */
-    .features .section-header { text-align:center; margin-bottom:3rem; }
-    .features h2 { font-size:2.5rem; font-weight:800; margin-bottom:.5rem; }
-    .features p { opacity:.9; }
+    /* FEATURES GRID */
     .features-grid {
       display:grid;
-      grid-template-columns:repeat(auto-fit, minmax(260px,1fr));
-      gap:2rem;
+      grid-template-columns:repeat(auto-fit, minmax(300px,1fr));
+      gap:2.5rem;
     }
     .feature-card {
-      background:#fff; padding:2rem; border-radius:12px;
-      box-shadow:0 4px 20px rgba(0,0,0,0.1);
-      text-align:center; transition:transform .3s, box-shadow .3s;
+      background: rgba(255,255,255,0.7); padding:2.5rem; border-radius:20px;
+      box-shadow: var(--shadow-medium);
+      border: 1px solid rgba(255,255,255,0.5);
+      transition:transform .3s, box-shadow .3s;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
     }
     .feature-card:hover {
       transform:translateY(-5px);
-      box-shadow:0 12px 30px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-strong);
     }
-    .feature-icon { width:50px; height:50px; margin:0 auto 1rem; }
-    .feature-icon svg { width:100%; height:100%; fill:var(--accent); }
-    .feature-card h3 { font-size:1.25rem; margin-bottom:.5rem; font-weight:700; }
-    .feature-card p { opacity:.9; line-height:1.6; }
-
-    /* HOW IT WORKS */
-    .how-it-works .section-header { text-align:center; margin-bottom:3rem; }
-    .steps {
-      display:grid;
-      grid-template-columns:repeat(auto-fit, minmax(200px,1fr));
-      gap:2rem;
+    .feature-icon {
+      font-size: 2rem;
+      color: var(--accent-dark);
+      width: 60px;
+      height: 60px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,190,11,0.15);
+      margin-bottom: 0.5rem;
     }
-    .step { text-align:center; }
-    .step-number {
-      width:60px; height:60px;
-      margin:0 auto 1rem;
-      display:flex; align-items:center; justify-content:center;
-      font-size:1.5rem; font-weight:700;
-      color:var(--accent);
-      border:2px solid var(--accent);
-      border-radius:50%;
-    }
-    .step h3 { font-size:1.2rem; margin-bottom:.5rem; font-weight:600; }
-    .step p { opacity:.9; line-height:1.5; }
+    .feature-card h3 { font-size:1.4rem; font-weight:700; color: var(--text-dark); }
+    .feature-card p { opacity:.8; line-height:1.6; }
 
     /* APP PREVIEW */
     .app-preview .preview-content {
       display:grid;
       grid-template-columns:1fr 1fr;
-      gap:3rem; align-items:center;
+      gap:4rem; align-items:center;
     }
     .preview-text h2 {
-      font-size:2.5rem; font-weight:800; margin-bottom:1rem;
+      font-size:2.8rem; font-weight:800; margin-bottom:1.5rem;
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
     .preview-text p { opacity:.9; margin-bottom:1.5rem; line-height:1.6; }
     .download-buttons {
-      display:flex; gap:1rem; flex-wrap:wrap; justify-content:center;
+      display:flex; gap:1rem; flex-wrap:wrap;
     }
     .download-btn {
       display:flex; align-items:center; gap:.5rem;
-      padding:.75rem 1.5rem; border-radius:8px;
-      background:#fff; color:#000;
-      box-shadow:0 4px 12px rgba(0,0,0,0.1);
+      padding:1rem 1.75rem; border-radius:12px;
+      background:rgba(255,255,255,0.8); color:#000;
+      box-shadow: var(--shadow-medium);
       transition:transform .2s, box-shadow .2s;
+      font-weight: 600;
     }
     .download-btn:hover {
       transform:translateY(-3px);
-      box-shadow:0 8px 20px rgba(0,0,0,0.15);
+      box-shadow: var(--shadow-strong);
     }
-    .download-btn svg { width:24px; height:24px; fill:#000; }
+    .download-btn i { font-size: 1.5rem; }
     .phone-mockup {
-      width:260px; height:520px; margin:0 auto;
-      background:#fff; border-radius:30px;
-      box-shadow:0 4px 20px rgba(0,0,0,0.1);
+      width:300px; height:600px; margin:0 auto;
+      background: #111; border-radius:40px;
+      box-shadow: var(--shadow-strong);
       overflow:hidden; position:relative;
+      padding: 14px;
+      border: 2px solid #444;
+      animation: phoneFloat 5s ease-in-out infinite alternate;
+    }
+    @keyframes phoneFloat {
+      from { transform: translateY(-10px) rotate(-2deg); }
+      to { transform: translateY(10px) rotate(2deg); }
     }
     .phone-screen {
-      position:absolute; inset:20px;
-      background:#f0f0f0; border-radius:20px;
-      display:flex; align-items:center; justify-content:center;
-      font-size:1.2rem; font-weight:600; color:#000;
-        background: url("lo.png") no-repeat center center;
-  background-size: contain;
+      width: 100%; height: 100%;
+      border-radius:30px;
+      background: url("lo.png") no-repeat center center;
+      background-size: cover;
     }
 
     /* FOOTER */
     footer {
-      background: var(--white-85); backdrop-filter: blur(8px);
-      padding:3rem 1rem 2rem; text-align:center; margin-top:4rem;
+      width: 90vw;
+      max-width: 1100px;
+      margin: 4rem auto;
+      padding: clamp(2rem, 4vh, 3rem);
+      background: var(--card-bg);
+      border-radius: 24px;
+      box-shadow: var(--shadow-strong);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      text-align: center;
     }
     footer .links {
       display:flex; gap:1.5rem; justify-content:center;
-      flex-wrap:wrap; margin-bottom:1rem;
+      flex-wrap:wrap; margin-bottom:2rem;
     }
-    footer a { color:var(--black); opacity:.8; transition:opacity .2s; }
-    footer a:hover { opacity:1; }
-    footer small { opacity:.7; }
+    footer a { color:var(--text-dark); opacity:.8; transition:opacity .2s, color .2s; font-weight: 600; }
+    footer a:hover { opacity:1; color: var(--accent-dark); }
+    footer small { opacity:.7; color: var(--text-light); }
 
     /* RESPONSIVE */
     @media (max-width:768px) {
-      .nav-links { display:none; }
-      .hero h1 { font-size:2.5rem; }
-      .app-preview .preview-content { grid-template-columns:1fr; text-align:center; }
-      .phone-mockup { width:200px; height:400px; }
+      .navbar .nav-links { display:none; }
+      .hero { height: auto; padding: 10rem 1rem 4rem; }
+      .section-wrapper { margin: 4rem auto; padding: 3rem 1.5rem; }
+      .section-header h2 { font-size: 2.2rem; }
+      .app-preview .preview-content { grid-template-columns:1fr; text-align:center; gap: 4rem; }
+      .download-buttons { justify-content: center; }
+      .phone-mockup { width:240px; height:480px; }
     }
   </style>
 </head>
@@ -230,107 +357,74 @@
 
   <!-- NAVBAR -->
   <nav class="navbar">
-    <div class="logo">NexoLink</div>
-    <div class="nav-links">
-      <a href="#about">About</a>
-      <a href="#features">Features</a>
-      <a href="#how-it-works">How It Works</a>
-      <a href="#download">Get App</a>
-      <a href="privacy_policy.html">Privacy Policy</a>
-      <a href="signup.html">Admin</a>
+    <div class="navbar-brand">
+      <div class="logo">
+        <i class="fas fa-chart-line"></i>
+        <span>NexoLink</span>
+      </div>
+    </div>
+    <div class="navbar-nav">
+      <a href="#features" class="nav-link">Features</a>
+      <a href="#app-preview" class="nav-link">Get App</a>
+      <a href="privacy_policy.html" class="nav-link">Privacy Policy</a>
+      <a href="signup.html" class="nav-link">Admin</a>
     </div>
   </nav>
 
   <!-- HERO -->
-  <section class="hero">
+  <header class="hero">
     <div class="hero-content">
-      <h1>NexoLink</h1>
-      <p>Your gateway to meaningful volunteer connections.</p>
+      <h1>Connect. Volunteer. Impact.</h1>
+      <p>NexoLink is a purpose-driven volunteer-matching platform built to empower individuals and organizations to create meaningful community impact. Our mission is to lower the barriers to service by connecting passionate volunteers with opportunities that align with their interests, skills, and schedules.</p>
       <div>
-        <a href="#download" class="btn btn-primary">Get Started</a>
-        <a href="#features" class="btn btn-secondary">Learn More</a>
+        <a href="#app-preview" class="btn btn-primary">Get The App</a>
       </div>
     </div>
-  </section>
-
-  <!-- ABOUT -->
-  <section class="section-wrapper about" id="about">
-    <h2>About NexoLink</h2>
-    <p>We bridge passionate volunteers with impactful opportunities. Our platform empowers you to make a real difference, while helping organizations find dedicated community members.</p>
-  </section>
+  </header>
 
   <!-- FEATURES -->
   <section class="section-wrapper features" id="features">
     <div class="section-header">
-      <h2>Our Features</h2>
-      <p>Tools to discover, schedule, and track your volunteer journey.</p>
+      <h2>An Ecosystem of Giving</h2>
+      <p>By bringing together causes across animal care, environmental conservation, family support, education, and healthcare, NexoLink fosters a diverse ecosystem where every hour volunteered translates into tangible social benefit.</p>
     </div>
     <div class="features-grid">
       <div class="feature-card">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24"><path d="M9.5 14C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <i class="fas fa-users"></i>
         </div>
-        <h3>Smart Matching</h3>
-        <p>AI-driven suggestions aligned with your skills and interests.</p>
+        <h3>For Volunteers</h3>
+        <p>Filter opportunities by cause, distance, and time commitment with our dynamic radius slider and map view. Track your service hours through an in-app log that generates verifiable reports for schools and employers.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14l7-7h9c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+          <i class="fas fa-building-user"></i>
         </div>
-        <h3>Easy Scheduling</h3>
-        <p>Sync events with your calendar and get timely reminders.</p>
+        <h3>For Organizations</h3>
+        <p>Enjoy an admin portal with real-time dashboards, pending-approval workflows, and “approve all” bulk actions. Streamline attendance with automated QR-code check-in/out for events.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24"><path d="M12 2L2 20h20L12 2z"/></svg>
+          <i class="fas fa-heart"></i>
         </div>
-        <h3>Impact Tracking</h3>
-        <p>Visualize your volunteer hours and earn achievement badges.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- HOW IT WORKS -->
-  <section class="section-wrapper how-it-works" id="how-it-works">
-    <div class="section-header">
-      <h2>How It Works</h2>
-      <p>Get started in three simple steps</p>
-    </div>
-    <div class="steps">
-      <div class="step">
-        <div class="step-number">1</div>
-        <h3>Create Profile</h3>
-        <p>Sign up and tell us your interests.</p>
-      </div>
-      <div class="step">
-        <div class="step-number">2</div>
-        <h3>Discover</h3>
-        <p>Browse curated volunteer opportunities.</p>
-      </div>
-      <div class="step">
-        <div class="step-number">3</div>
-        <h3>Make an Impact</h3>
-        <p>Apply, attend events, and track your journey.</p>
+        <h3>For Change</h3>
+        <p>We believe that when volunteers are equipped with the right tools and recognition, they become lifelong champions for change. NexoLink exists to make that journey intuitive, rewarding, and measurable.</p>
       </div>
     </div>
   </section>
 
   <!-- APP PREVIEW -->
-  <section class="section-wrapper app-preview-container" id="download">
-    <div class="app-preview container">
+  <section class="section-wrapper app-preview-container" id="app-preview">
+    <div class="app-preview">
       <div class="preview-content">
         <div class="preview-text">
-          <h2>Take NexoLink Anywhere</h2>
-          <p>Our mobile app keeps you connected on-the-go—check in to events, log hours, and stay engaged.</p>
+          <h2>Designed for Growth &amp; Sustainability</h2>
+          <p>Under the hood, NexoLink combines a sleek, mobile-first interface with powerful search and mapping capabilities. Our modular React Native codebase and Firebase-backed infrastructure ensure the experience is secure, scalable, and always improving.</p>
           <div class="download-buttons">
             <a href="https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone" class="download-btn">
-              <svg viewBox="0 0 24 24"><path d="M17,19H7V5H17M17,1H7C5.89,1 5,1.89 5,3V21C5,22.11 5.89,23 7,23H17C18.11,23 19,22.11 19,21V3C19,1.89 18.11,1 17,1Z"/></svg>
-              iOS
+              <i class="fab fa-apple"></i>
+              <span>Download on the App Store</span>
             </a>
-            <!-- <a href="#" class="download-btn">
-              <svg viewBox="0 0 24 24"><path d="M6.76,4.16L5.35,2.75L2.34,5.76L3.75,7.17L6.76,4.16M17.24,4.16L20.25,7.17L21.66,5.76L18.65,2.75L17.24,4.16M12,5A7,7 0 0,0 5,12H7A5,5 0 0,1 12,7V5Z"/></svg>
-              Android
-            </a> -->
           </div>
         </div>
         <div class="phone-mockup">
@@ -343,25 +437,21 @@
   <!-- FOOTER -->
   <footer>
     <div class="links">
-      <a href="#about">About</a>
+      <a href="index.html">Home</a>
       <a href="#features">Features</a>
-      <a href="#how-it-works">How It Works</a>
-      <a href="#download">Mobile App</a>
       <a href="privacy_policy.html">Privacy Policy</a>
-   
+      <a href="signup.html">Admin Portal</a>
     </div>
     <small>&copy; 2025 NexoLink. All rights reserved.</small>
   </footer>
 
   <script>
-    // Reveal section wrappers on scroll
     document.addEventListener('DOMContentLoaded', () => {
       const sections = document.querySelectorAll('.section-wrapper');
       const io = new IntersectionObserver((entries) => {
         entries.forEach(e => {
           if (e.isIntersecting) {
             e.target.classList.add('visible');
-            io.unobserve(e.target);
           }
         });
       }, { threshold: 0.2 });
