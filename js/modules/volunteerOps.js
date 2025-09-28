@@ -194,7 +194,12 @@ export function syncVolunteerHoursFromActivity(activityLogs, baseVolunteers = ap
 
     const v = map.get(userId);
     const hours = parseFloat(log.hours_contributed ?? log.hours ?? 0) || 0;
-    v.totalHours += hours;
+    // FIX: Only add hours to the total if the log is approved.
+    const status = (log.approve || 'pending').toLowerCase();
+    if (status === 'approved' || status === 'accepted') {
+      v.totalHours += hours;
+    }
+
     v.logs.push(log);
 
     if (log.date) {
@@ -615,6 +620,7 @@ function renderActivityLogs(logs) {
   }
 
   container.innerHTML = logs.map((log) => createLogRow(log)).join('');
+  // No event listeners needed for the new select dropdown.
   // Trigger the rolling fade-in animation for the new rows
   triggerListAnimation('#activityLogsContainer .log-row');
 }
@@ -623,20 +629,25 @@ function createLogRow(log = {}) {
   const logId = log.id || `new-${Date.now()}`;
   const date = log.date ? formatDateToInput(log.date) : new Date().toISOString().split('T')[0];
   const site = log.site || '';
-  const hours = log.hours_contributed ?? log.hours ?? 0;
+  const hours = log.hours_contributed ?? log.hours ?? '0';
+  const status = log.approve || 'pending';
+  
+  let statusClass = '';
+  if (status === 'denied') statusClass = 'log-row-denied';
+  else if (status === 'approved' || status === 'accepted') statusClass = 'log-row-approved';
+  else if (status === 'pending') statusClass = 'log-row-pending';
+
 
   return `
-    <div class="log-row" data-log-id="${logId}">
+    <div class="log-row ${statusClass}" data-log-id="${logId}">
       <input type="date" data-field="date" value="${date}" class="log-input" title="Activity Date">
       <input type="text" data-field="site" value="${site}" placeholder="Volunteering Task" class="log-input">
       <input type="number" data-field="hours" value="${hours}" step="0.5" min="0" class="log-input">
-      <button 
-        type="button" 
-        class="btn-icon btn-danger-icon" 
-        title="Mark for Deletion" 
-        onclick="const row = this.closest('.log-row'); const task = row.querySelector('[data-field=&quot;site&quot;]').value || 'this task'; if (confirm('Are you sure you want to delete the log for \'' + task + '\'?')) { row.classList.toggle('log-row-deleted'); }">
-        <i class="fas fa-trash"></i>
-      </button>
+      <select data-field="status" class="log-input" title="Approval Status">
+        <option value="approved" ${status === 'approved' || status === 'accepted' ? 'selected' : ''}>Approved</option>
+        <option value="pending" ${status === 'pending' ? 'selected' : ''}>Pending</option>
+        <option value="denied" ${status === 'denied' ? 'selected' : ''}>Denied</option>
+      </select>
     </div>
   `;
 }
@@ -670,20 +681,14 @@ async function handleSaveVolunteer() {
 
   logRows.forEach((row) => {
     const logId = row.dataset.logId;
-    const isNew = String(logId).startsWith('new-');
-    const isDeleted = row.classList.contains('log-row-deleted');
-
-    if (isDeleted && !isNew) {
-      deletions.push(deleteDoc(doc(db, 'volunteer_logs', logId)));
-      return;
-    }
-    if (isDeleted && isNew) return;
+    const isNew = logId.startsWith('new-');
 
     const logData = {
       date: row.querySelector('[data-field="date"]').value,
       site: row.querySelector('[data-field="site"]').value,
       hours: parseFloat(row.querySelector('[data-field="hours"]').value) || 0,
       hours_contributed: parseFloat(row.querySelector('[data-field="hours"]').value) || 0,
+      approve: row.querySelector('[data-field="status"]').value,
       user_id: volunteerId,
       firstName: volunteer.firstName, // Add volunteer's name to new logs
       email: volunteer.email, // Add volunteer's email to new logs
@@ -697,9 +702,14 @@ async function handleSaveVolunteer() {
     }
   });
 
+  // FIX: Await all promises to ensure all operations (updates, creations, deletions) complete.
+  // The previous implementation was not correctly awaiting the array of promises.
   await Promise.all([...updates, ...creations, ...deletions]);
+
+  // FIX: Re-render the view after saving to reflect all changes immediately.
+  // This ensures that status changes (like 'denied') and hour totals are updated on the screen.
+  await showEditVolunteerView(volunteerId);
   showMessage('Activity logs saved successfully.', 'success');
-  // setActiveView('volunteers'); // Removed to stay on the page after save. This provides a better user experience.
 }
 
 async function handleDeleteVolunteer() {
@@ -740,11 +750,10 @@ export async function showEditVolunteerView(volunteerId) {
   setTextContent('editVolunteerName', volunteer.firstName || volunteer.email);
   setTextContent('editVolunteerAvatar', computeInitials(volunteer.firstName, volunteer.email));
 
-  const total = volunteerLogs.reduce(
-    (sum, log) => sum + (log.hours_contributed ?? log.hours ?? 0),
-    0
-  );
-  setTextContent('editVolunteerTotalHours', `${total.toFixed(1)} hrs`);
+  // FIX: Use the pre-calculated totalHours from the main volunteer object.
+  // The previous logic was incorrectly recalculating the total here, ignoring approval status.
+  // This ensures the total displayed is always the sum of approved hours.
+  setTextContent('editVolunteerTotalHours', `${(volunteer.totalHours || 0).toFixed(1)} hrs`);
 
   // Populate read-only form fields (leave as-is if your form differs)
   const form = document.getElementById('editVolunteerForm');

@@ -349,9 +349,9 @@
 
           .ev-logs-column-headers span:nth-child(1) { width: 150px; }
           .ev-logs-column-headers span:nth-child(2) { flex-grow: 1; }
-          .ev-logs-column-headers span:nth-child(3) { width: 80px; }
+          .ev-logs-column-headers span:nth-child(3) { width: 100px; }
           .ev-logs-column-headers span:nth-child(4) {
-            width: 36px; /* Match icon button width */
+            width: 120px; /* Match icon button width */
             text-align: center;
           }
           /* New styles for horizontal activity log editor */
@@ -377,10 +377,20 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.05);
           }
 
-          .log-row.log-row-deleted {
+          .log-row.log-row-denied .log-input:not([data-field="status"]) {
             opacity: 0.5;
             background-color: #fff5f5;
-            text-decoration: line-through;
+            text-decoration: line-through; /* FIX: Apply strikethrough to denied inputs */
+          }
+
+          .log-row.log-row-approved {
+            background-color: #f6fff5;
+            border-color: #d4edda;
+          }
+
+          .log-row.log-row-pending {
+            background-color: #fffbf0;
+            border-color: #ffeeba;
           }
 
           .log-row .log-input {
@@ -393,10 +403,13 @@
             width: 150px; /* Smaller width for date */
           }
           .log-row .log-input[data-field="hours"] {
-            width: 80px; /* Smaller width for hours */
+            width: 100px; /* Smaller width for hours */
           }
           .log-row .log-input[data-field="site"] {
             flex-grow: 1; /* Allow task input to take remaining space */
+          }
+          .log-row .log-input[data-field="status"] {
+            width: 120px;
           }
           .log-row .btn-danger-icon {
             width: 36px; /* Align with the 'Actions' column */
