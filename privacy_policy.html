@@ -8,99 +8,207 @@
   <style>
     :root {
       --accent: #ffbe0b;
-      --white-85: rgba(255,255,255,0.85);
+      --accent-dark: #e6a700;
+      --accent-light: #ffd633;
+      --white-85: rgba(255, 255, 255, 0.85);
       --black: #000;
-      --bg: #f9f9f9;
+      --text-dark: #3a2600;
+      --text-light: #666;
+      --card-bg: rgba(255, 255, 255, 0.95);
+      --shadow-medium: 0 12px 40px rgba(0, 0, 0, 0.15);
+      --shadow-strong: 0 20px 60px rgba(0, 0, 0, 0.25);
+      --gradient-primary: linear-gradient(135deg, #ffbe0b 0%, #ffd633 100%);
     }
+
     * { margin:0; padding:0; box-sizing:border-box; }
     html { scroll-behavior: smooth; }
     body {
-      font-family:'Inter',sans-serif;
-      background: var(--bg);
-      color: var(--black);
+      font-family:'Inter',sans-serif;      
+      color: var(--text-dark);
       line-height:1.6;
-      background: url('lol.png') no-repeat center/cover fixed;
+      min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
+      background: url('bg.png') no-repeat center center fixed;
+      background-size: cover;
+      -webkit-background-size: cover;
+      -moz-background-size: cover;
+      -o-background-size: cover;
     }
+
+    /* Animated background overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background:
+        radial-gradient(circle at 20% 80%, rgba(255, 190, 11, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(255, 214, 51, 0.08) 0%, transparent 50%);
+      animation: backgroundFloat 15s ease-in-out infinite;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    @keyframes backgroundFloat {
+      0%, 100% { opacity: 0.8; transform: translateY(0px); }
+      50% { opacity: 1; transform: translateY(-10px); }
+    }
+
     a { text-decoration:none; color:inherit; }
 
-    /* NAVBAR */
+    /* NAVBAR from signup.html */
     .navbar {
       position: fixed; top:0; left:0; right:0;
-      background: var(--white-85); backdrop-filter: blur(8px);
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      background: var(--white-85);
+      backdrop-filter: blur(15px) saturate(180%);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
       padding:1rem 2rem;
       display:flex; align-items:center; justify-content:space-between;
       z-index:1000;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      animation: slideDown 0.8s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .navbar .logo {
+
+    @keyframes slideDown {
+      from { transform: translateY(-100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .navbar-brand .logo {
       font-size:1.75rem; font-weight:800;
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
-    .navbar .nav-links {
-      display:flex; gap:1rem;
-    }
-    .navbar .nav-links a {
-      padding:.5rem; font-weight:600;
-      transition: color .2s, transform .2s;
-    }
-    .navbar .nav-links a:hover {
+
+    .navbar-brand .logo i {
+      font-size: 1.8rem;
       color: var(--accent);
+    }
+
+    .navbar-nav {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .navbar-nav .nav-link {
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      color: var(--black);
+      text-decoration: none;
+      border-radius: 25px;
+      position: relative;
+      overflow: hidden;
+      border: none;
+      background: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .navbar-nav .nav-link::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: var(--gradient-primary);
+      transition: left 0.3s ease;
+      z-index: -1;
+      border-radius: 25px;
+    }
+
+    .navbar-nav .nav-link:hover::before { left: 0; }
+
+    .navbar-nav .nav-link:hover {
+      color: var(--black);
       transform: translateY(-2px);
+      box-shadow: var(--shadow-medium);
     }
 
     /* CONTAINER */
     .container {
-      max-width: 800px;
-      margin: 6rem auto 3rem;
-      padding: 2rem;
-      background: var(--white-85);
-      border-radius: 12px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+      width: 90vw; /* Use 90% of the viewport width */
+      max-width: 960px; /* But don't exceed 960px on large screens */
+      margin: 8rem auto 4rem; /* Increased top margin for navbar */
+      padding: clamp(2rem, 5vh, 3rem) clamp(1.5rem, 5vw, 3.5rem); /* Responsive padding */
+      background: var(--card-bg);
+      border-radius: 24px;
+      box-shadow: var(--shadow-strong);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      position: relative;
+      z-index: 10;
     }
 
     h1 {
       font-size:2.5rem; font-weight:800;
       margin-bottom: .5rem;
-      color: var(--accent);
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
     .effective-date {
       font-size: 1rem;
-      color: #555;
+      color: var(--text-light);
       margin-bottom: 2rem;
+      font-weight: 500;
     }
     .privacy-content p {
       margin-bottom:1.5rem;
+      color: var(--text-dark);
+      opacity: 0.9;
     }
     .privacy-content h2 {
       font-size:1.5rem; font-weight:600;
       margin-top:2rem; margin-bottom:1rem;
-      color: var(--black);
+      color: var(--text-dark);
     }
     .contact-us {
       margin-top: 3rem;
       padding-top: 1rem;
-      border-top: 1px solid rgba(0,0,0,0.1);
+      border-top: 1px solid rgba(255, 190, 11, 0.2);
     }
     .contact-us h2 {
       font-size:1.5rem; font-weight:600;
       margin-bottom:1rem;
     }
     .contact-us a {
-      color: var(--accent);
+      color: var(--accent-dark);
       font-weight:600;
+      text-decoration: underline;
+      text-decoration-color: rgba(255, 190, 11, 0.5);
+      transition: color 0.2s;
+    }
+    .contact-us a:hover {
+      color: var(--accent);
     }
     .back-link {
       display: inline-block;
       margin-top: 2rem;
-      padding: .75rem 1.5rem;
-      background: var(--accent);
+      padding: 1rem 2rem;
+      background: var(--gradient-primary);
       color: var(--black);
-      border-radius: 30px;
+      border-radius: 40px;
       font-weight:600;
       transition: transform .2s, box-shadow .2s;
+      box-shadow: var(--shadow-medium);
     }
     .back-link:hover {
-      transform: translateY(-2px);
-      box-shadow:0 8px 20px rgba(0,0,0,0.15);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 35px rgba(255, 190, 11, 0.4);
     }
   </style>
 </head>
@@ -108,11 +216,16 @@
 
   <!-- NAVBAR -->
   <nav class="navbar">
-    <div class="logo">NexoLink</div>
-    <div class="nav-links">
-      <a href="index.html">Home</a>
-      <a href="privacy_policy.html">Privacy Policy</a>
-      <a href="signup.html">Admin</a>
+    <div class="navbar-brand">
+      <div class="logo">
+        <i class="fas fa-chart-line"></i>
+        <span>NexoLink</span>
+      </div>
+    </div>
+    <div class="navbar-nav">
+      <a href="index.html" class="nav-link">Home</a>
+      <a href="privacy_policy.html" class="nav-link">Privacy Policy</a>
+      <a href="signup.html" class="nav-link">Admin</a>
     </div>
   </nav>
 
