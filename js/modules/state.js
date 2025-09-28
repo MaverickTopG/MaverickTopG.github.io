@@ -7,6 +7,7 @@ export const appState = {
   activityData: [],
   volunteersUnsub: null,
   logsUnsub: null,
+  editingVolunteerUnsub: null,
   weeklyChart: null,
   chartWeekOffset: 0,
   trendChart: null,

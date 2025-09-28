@@ -105,11 +105,14 @@ export async function initializeDashboard() {
       refreshAnalytics();
     });
 
-    registerActivityUpdateHandler(() => {
+    registerActivityUpdateHandler((source) => {
       renderAttendanceChart();
       renderEventActivityChart();
       renderCalendarHeatmap();
       refreshAnalytics();
+      if (source !== 'approval') {
+        renderApprovalQueue();
+      }
     });
 
     resetRealtimeListeners();
