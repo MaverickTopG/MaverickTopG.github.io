@@ -18,6 +18,7 @@ import {
 import { appState } from './state.js';
 import { showMessage, setTextContent } from './ui.js';
 import { setActiveView } from './dashboard.js';
+import { triggerListAnimation } from './ui.js';
 
 let volunteersUpdateHandler = () => {};
 
@@ -31,7 +32,12 @@ export function notifyVolunteersUpdate() {
 
 export function initVolunteerEditView() {
   const backBtn = document.getElementById('backToVolunteersBtn');
-  if (backBtn) backBtn.addEventListener('click', () => setActiveView('volunteers'));
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      if (appState.editingVolunteerUnsub) appState.editingVolunteerUnsub();
+      setActiveView('volunteers');
+    });
+  }
 
   const cancelBtn = document.getElementById('cancelEditBtn');
   if (cancelBtn) cancelBtn.addEventListener('click', () => setActiveView('volunteers'));
@@ -221,8 +227,6 @@ export function syncVolunteerHoursFromActivity(activityLogs, baseVolunteers = ap
 /* ------------------------------------------
    Table & Export
 -------------------------------------------*/
-import { triggerListAnimation } from './ui.js';
-
 export function displayVolunteers() { // This function is also exported as renderVolunteersPanel
   const tbody = document.getElementById('volunteersTableBody');
   if (!tbody) return;
@@ -640,9 +644,9 @@ function createLogRow(log = {}) {
 
   return `
     <div class="log-row ${statusClass}" data-log-id="${logId}">
-      <input type="date" data-field="date" value="${date}" class="log-input" title="Activity Date">
-      <input type="text" data-field="site" value="${site}" placeholder="Volunteering Task" class="log-input">
-      <input type="number" data-field="hours" value="${hours}" step="0.5" min="0" class="log-input">
+      <input type="date" data-field="date" value="${date}" class="log-input" title="Activity Date" readonly>
+      <input type="text" data-field="site" value="${site}" placeholder="Volunteering Task" class="log-input" readonly>
+      <input type="number" data-field="hours" value="${hours}" step="0.5" min="0" class="log-input" readonly>
       <select data-field="status" class="log-input" title="Approval Status">
         <option value="approved" ${status === 'approved' || status === 'accepted' ? 'selected' : ''}>Approved</option>
         <option value="pending" ${status === 'pending' ? 'selected' : ''}>Pending</option>
@@ -650,13 +654,6 @@ function createLogRow(log = {}) {
       </select>
     </div>
   `;
-}
-
-function handleAddNewLog() {
-  const container = document.getElementById('activityLogsContainer');
-  if (!container) return;
-  if (container.querySelector('.empty-state')) container.innerHTML = '';
-  container.insertAdjacentHTML('beforeend', createLogRow());
 }
 
 /* ------------------------------------------
@@ -676,8 +673,8 @@ async function handleSaveVolunteer() {
 
   const logRows = logsContainer.querySelectorAll('.log-row');
   const updates = [];
-  const creations = [];
-  const deletions = [];
+
+  // 1. Process creations and updates
 
   logRows.forEach((row) => {
     const logId = row.dataset.logId;
@@ -695,21 +692,29 @@ async function handleSaveVolunteer() {
       organization_id: appState.currentOrgCode,
     };
 
-    if (isNew) {
-      creations.push(addDoc(collection(db, 'volunteer_logs'), { ...logData, created_at: serverTimestamp() }));
-    } else {
+    if (!isNew) {
       updates.push(updateDoc(doc(db, 'volunteer_logs', logId), logData));
     }
   });
 
+  // 2. Execute all promises
+
   // FIX: Await all promises to ensure all operations (updates, creations, deletions) complete.
   // The previous implementation was not correctly awaiting the array of promises.
-  await Promise.all([...updates, ...creations, ...deletions]);
+  await Promise.all(updates);
 
-  // FIX: Re-render the view after saving to reflect all changes immediately.
-  // This ensures that status changes (like 'denied') and hour totals are updated on the screen.
-  await showEditVolunteerView(volunteerId);
-  showMessage('Activity logs saved successfully.', 'success');
+  // FIX: After saving, manually trigger a sync of volunteer hours from all activity logs.
+  // This ensures that changes to approved hours are immediately reflected in the volunteer's total.
+  // The live listener on its own does not trigger this global recalculation.
+  syncVolunteerHoursFromActivity(appState.activityData);
+  notifyVolunteersUpdate();
+
+  const changeCount = updates.length;
+  if (changeCount > 0) {
+    showMessage('Activity logs saved successfully.', 'success');
+  } else {
+    showMessage('No changes to save.', 'info');
+  }
 }
 
 async function handleDeleteVolunteer() {
@@ -721,30 +726,34 @@ async function handleDeleteVolunteer() {
    Entry: open the per-volunteer editor view
 -------------------------------------------*/
 export async function showEditVolunteerView(volunteerId) {
+  // Detach any previous listener
+  if (appState.editingVolunteerUnsub) {
+    appState.editingVolunteerUnsub();
+    appState.editingVolunteerUnsub = null;
+  }
+
   const volunteer = appState.volunteersData.find((v) => v.id === volunteerId);
   if (!volunteer) {
     showMessage('Could not find volunteer to edit.', 'error');
     return;
   }
 
-  // Fetch logs for this volunteer (NO orderBy -> no composite index needed)
+  appState.editingVolunteerId = volunteerId;
+
+  // Set up a live listener for this volunteer's logs
   const logsQueryRef = query(
     collection(db, 'volunteer_logs'),
     where('user_id', '==', volunteerId),
     where('organization_id', '==', appState.currentOrgCode)
   );
-  const logsSnapshot = await getDocs(logsQueryRef);
-  const volunteerLogs = [];
-  logsSnapshot.forEach((d) => volunteerLogs.push({ id: d.id, ...d.data() }));
 
-  // Sort client-side by created_at (desc), fallback to date/createdAt
-  volunteerLogs.sort(
-    (a, b) =>
-      tsToMillis(b.created_at || b.date || b.createdAt) -
-      tsToMillis(a.created_at || a.date || a.createdAt)
-  );
+  appState.editingVolunteerUnsub = onSnapshot(logsQueryRef, (snapshot) => {
+    const volunteerLogs = [];
+    snapshot.forEach((d) => volunteerLogs.push({ id: d.id, ...d.data() }));
+    volunteerLogs.sort((a, b) => tsToMillis(b.created_at || b.date || b.createdAt) - tsToMillis(a.created_at || a.date || a.createdAt));
 
-  appState.editingVolunteerId = volunteerId;
+    renderActivityLogs(volunteerLogs);
+  });
 
   // Header
   setTextContent('editVolunteerName', volunteer.firstName || volunteer.email);
@@ -775,12 +784,12 @@ export async function showEditVolunteerView(volunteerId) {
     }
   }
 
-  // Render logs in the inline editor panel
-  renderActivityLogs(volunteerLogs);
-
   // Wire controls
-  const addLogBtn = document.getElementById('addNewLogBtn');
-  if (addLogBtn) addLogBtn.onclick = handleAddNewLog;
+  const addLogBtn = document.getElementById('addNewLogBtn'); // This button is now removed from the UI
+  if (addLogBtn) {
+    addLogBtn.onclick = null;
+    addLogBtn.style.display = 'none';
+  }
 
   const deleteBtn = document.getElementById('deleteVolunteerBtn');
   if (deleteBtn) deleteBtn.dataset.volunteerId = volunteerId;

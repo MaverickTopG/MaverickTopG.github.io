@@ -481,7 +481,7 @@ async function updateApproval(logId, status, note = '', options = {}) {
     applyLocalApprovalUpdate(logId, dbStatus, note, historyEntry);
     approvalsState.expandedIds.delete(logId);
 
-    if (!options.silent) {
+    if (options.silent !== true) {
       const messageLabel = normalizedStatus === 'approved'
         ? 'approved'
         : normalizedStatus === 'denied'

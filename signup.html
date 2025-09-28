@@ -273,6 +273,9 @@
               <div class="ev-logs-section">
                 <div class="ev-logs-header">
                   <h3>Activity Logs</h3>
+                  <button id="addNewLogBtn" class="btn-success ev-action-btn" style="display: none;">
+                    <i class="fas fa-plus"></i> Add New Log
+                  </button>
                 </div>
                 <div class="ev-logs-column-headers">
                   <span>Date</span>
@@ -386,6 +389,11 @@
           .log-row.log-row-approved {
             background-color: #f6fff5;
             border-color: #d4edda;
+          }
+
+          .log-row .log-input[readonly] {
+            background-color: #f8f9fa;
+            cursor: not-allowed;
           }
 
           .log-row.log-row-pending {

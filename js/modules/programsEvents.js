@@ -6,8 +6,8 @@ import { notifyVolunteersUpdate, syncVolunteerHoursFromActivity } from './volunt
 
 let activityUpdateHandler = () => {};
 
-export function registerActivityUpdateHandler(handler) {
-  activityUpdateHandler = typeof handler === 'function' ? handler : () => {};
+export function registerActivityUpdateHandler(handler) { // handler can now accept a source
+  activityUpdateHandler = typeof handler === 'function' ? handler : () => {}; 
 }
 
 function notifyActivityUpdate() {
