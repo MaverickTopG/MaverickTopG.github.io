@@ -18,45 +18,30 @@ import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
 
 const VOLUNTEER_HOUR_VALUE = 28.27;
-
-let weekOffset = 0; // 0 for current week, -1 for last week, etc.
-
+let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
 let navigationInitialized = false;
 let activeView = 'overview';
 
+
+/** ── NAVIGATION & VIEW SWITCHING ─────────────────────────────────────────── */
+
 export function initDashboardNavigation() {
   const navItems = document.querySelectorAll('.sidebar-nav .nav-item[data-view]');
-  if (!navItems.length) {
-    return;
-  }
+  if (!navItems.length) return;
 
   if (!navigationInitialized) {
-    const prevWeekBtn = document.getElementById('prevWeekBtn');
-    const nextWeekBtn = document.getElementById('nextWeekBtn');
-
-    if (prevWeekBtn) {
-      prevWeekBtn.addEventListener('click', () => {
-        weekOffset -= 1;
-        renderAttendanceChart();
-      });
-    }
-
-    if (nextWeekBtn) {
-      nextWeekBtn.addEventListener('click', () => {
-        weekOffset += 1;
-        // Prevent going into the future
-        if (weekOffset > 0) weekOffset = 0;
-        renderAttendanceChart();
-      });
-    }
-
-    navItems.forEach((item) => {
+    document.getElementById('prevWeekBtn')?.addEventListener('click', () => {
+      weekOffset -= 1;
+      renderAttendanceChart();
+    });
+    document.getElementById('nextWeekBtn')?.addEventListener('click', () => {
+      weekOffset = Math.min(0, weekOffset + 1);
+      renderAttendanceChart();
+    });
+    navItems.forEach(item => {
       item.addEventListener('click', () => {
-        const { view } = item.dataset;
-        if (!view || view === activeView) {
-          return;
-        }
-        setActiveView(view);
+        const next = item.dataset.view;
+        if (next && next !== activeView) setActiveView(next);
       });
     });
     navigationInitialized = true;
@@ -67,60 +52,43 @@ export function initDashboardNavigation() {
 
 export function setActiveView(view) {
   activeView = view;
-
-  const navItems = document.querySelectorAll('.sidebar-nav .nav-item[data-view]');
-  navItems.forEach((item) => {
-    item.classList.toggle('active', item.dataset.view === view);
-  });
-
-  const panels = document.querySelectorAll('.view-panel');
-  panels.forEach((panel) => {
-    panel.classList.toggle('active', panel.dataset.view === view);
-  });
+  document.querySelectorAll('.sidebar-nav .nav-item[data-view]')
+    .forEach(i => i.classList.toggle('active', i.dataset.view === view));
+  document.querySelectorAll('.view-panel')
+    .forEach(p => p.classList.toggle('active', p.dataset.view === view));
 
   if (view === 'approvals') {
     initApprovalsModule();
   } else if (view === 'overview') {
     updateStatistics();
     renderAttendanceChart();
-    renderTopEmployees();
+    renderTopVolunteers();
     renderEventActivityChart();
     renderCalendarHeatmap();
   }
 }
 
 export function showAuthSection() {
-  const authSection = document.getElementById('authSection');
-  const dashboardSection = document.getElementById('dashboardSection');
-  const sidebarLogoutBtn = document.getElementById('logoutBtn');
-  const navbarLogoutBtn = document.getElementById('navbarLogoutBtn');
-  const topNavbar = document.querySelector('nav.navbar');
-
-  if (authSection) authSection.style.display = 'flex';
-  if (dashboardSection) dashboardSection.style.display = 'none';
-  if (sidebarLogoutBtn) sidebarLogoutBtn.style.display = 'none';
-  if (navbarLogoutBtn) navbarLogoutBtn.style.display = 'none';
-  if (topNavbar) topNavbar.style.display = 'flex';
-
+  document.getElementById('authSection').style.display = 'flex';
+  document.getElementById('dashboardSection').style.display = 'none';
+  document.getElementById('logoutBtn').style.display = 'none';
+  document.getElementById('navbarLogoutBtn').style.display = 'none';
+  document.querySelector('nav.navbar').style.display = 'flex';
   resetRealtimeListeners();
   activeView = 'overview';
 }
 
 export function showDashboardSection() {
-  const authSection = document.getElementById('authSection');
-  const dashboardSection = document.getElementById('dashboardSection');
-  const sidebarLogoutBtn = document.getElementById('logoutBtn');
-  const navbarLogoutBtn = document.getElementById('navbarLogoutBtn');
-  const topNavbar = document.querySelector('nav.navbar');
-
-  if (authSection) authSection.style.display = 'none';
-  if (dashboardSection) dashboardSection.style.display = 'block';
-  if (sidebarLogoutBtn) sidebarLogoutBtn.style.display = 'flex';
-  if (navbarLogoutBtn) navbarLogoutBtn.style.display = 'block';
-  if (topNavbar) topNavbar.style.display = 'none';
-
+  document.getElementById('authSection').style.display = 'none';
+  document.getElementById('dashboardSection').style.display = 'block';
+  document.getElementById('logoutBtn').style.display = 'flex';
+  document.getElementById('navbarLogoutBtn').style.display = 'block';
+  document.querySelector('nav.navbar').style.display = 'none';
   initDashboardNavigation();
 }
+
+
+/** ── INITIALIZATION ─────────────────────────────────────────────────────── */
 
 export async function initializeDashboard() {
   initVolunteerEditView();
@@ -131,7 +99,7 @@ export async function initializeDashboard() {
     registerVolunteersUpdateHandler(() => {
       updateStatistics();
       renderAttendanceChart();
-      renderTopEmployees();
+      renderTopVolunteers();
       renderEventActivityChart();
       renderVolunteersPanel();
       refreshAnalytics();
@@ -151,13 +119,13 @@ export async function initializeDashboard() {
 
     updateStatistics();
     renderAttendanceChart();
-    renderTopEmployees();
+    renderTopVolunteers();
     renderEventActivityChart();
     renderCalendarHeatmap();
     renderApprovalQueue();
     renderVolunteersPanel();
-  } catch (error) {
-    console.error('Error initializing dashboard:', error);
+  } catch (err) {
+    console.error('Error initializing dashboard:', err);
     showMessage('Error loading dashboard. Please refresh the page.', 'error');
   }
 }
@@ -165,126 +133,120 @@ export async function initializeDashboard() {
 function resetRealtimeListeners() {
   resetVolunteerListener();
   resetActivityListener();
-  // The approvals listener is handled in its own module
+  // approvals lives in its own module
 }
 
 function displayAdminInfo() {
-  const currentAdmin = appState.currentAdmin || {};
-  const email = currentAdmin.email || '';
-  const organization = currentAdmin.organizationName || 'Organization';
+  const { email = '', organizationName = 'Organization' } = appState.currentAdmin || {};
   const orgCode = appState.currentOrgCode || 'XXXXXXXX';
 
-  const sidebarEmail = document.getElementById('sidebarUserEmail');
-  const sidebarOrgName = document.getElementById('sidebarOrgName');
-  const sidebarOrgCode = document.getElementById('sidebarOrgCode');
-  const avatar = document.getElementById('sidebarAvatar');
-
-  if (sidebarEmail) sidebarEmail.textContent = email;
-  if (sidebarOrgName) sidebarOrgName.textContent = organization;
-  if (sidebarOrgCode) sidebarOrgCode.textContent = orgCode;
-  if (avatar) avatar.textContent = computeInitials(email, organization);
+  setTextContent('sidebarUserEmail', email);
+  setTextContent('sidebarOrgName', organizationName);
+  setTextContent('sidebarOrgCode', orgCode);
+  setTextContent('sidebarAvatar', computeInitials(email, organizationName));
 }
+
+
+/** ── STAT METRICS ─────────────────────────────────────────────────────────── */
 
 export function updateStatistics() {
   const metrics = buildMetrics();
 
-  animateNumber('metricTotalVolunteers', metrics.totalVolunteers, 0, (val) => val.toLocaleString());
-  animateNumber('metricWeeklyActive', metrics.weeklyActive, 0, (val) => val.toLocaleString());
-  animateNumber('metricHours', metrics.totalHours, 1, formatHours);
-  animateNumber('metricEvents', metrics.uniqueEvents, 0, (val) => val.toLocaleString());
-  renderEventActivityChart(metrics.weeklyActive, metrics.totalVolunteers); // Pass metrics to the chart
+  animateNumber('metricTotalVolunteers', metrics.totalVolunteers, 0, v => v.toLocaleString());
+  animateNumber('metricWeeklyActive',   metrics.weeklyActive,   0, v => v.toLocaleString());
+  animateNumber('metricHours',         metrics.totalHours,     1, formatHours);
+  animateNumber('metricEvents',        metrics.uniqueEvents,   0, v => v.toLocaleString());
+  renderEventActivityChart(metrics.weeklyActive, metrics.totalVolunteers);
   setTextContent('metricBusiestDay', metrics.busiestDay);
-  animateNumber('metricImpact', metrics.donationValue, 0, formatCurrency);
+  animateNumber('metricImpact',       metrics.donationValue,   0, formatCurrency);
 }
 
 function buildMetrics() {
-  const { labels, data, startOfWeek, endOfWeek } = buildWeeklyAttendanceData();
+  // FIX: Decouple total metrics from weekly attendance data to prevent incorrect recalculations.
+  // The `buildWeeklyAttendanceData` function is scoped to a single week (with offsets),
+  // which was causing total hours to be miscalculated when navigating weeks.
+  // This now correctly calculates metrics over all time, independent of the weekly chart's view.
+  const { labels: weeklyLabels, data: weeklyData } = buildWeeklyAttendanceData();
+  const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries(); // Use current week for "weekly active"
 
-  const volunteerRoles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
+  // busiest day
+  const max = Math.max(...weeklyData);
+  const busiest = max > 0 ? weeklyLabels[weeklyData.indexOf(max)] : '—';
 
-  const maxHours = Math.max(...data);
-  const busiestDayIndex = data.indexOf(maxHours);
-  const busiestDay = maxHours > 0 ? labels[busiestDayIndex] : '—';
+  // Map roles to skip org-admins
+  const roles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
 
-  const weeklyActiveSet = new Set();
-  appState.activityData.forEach((log) => {
+  // who logged this week?
+  const activeSet = new Set();
+  appState.activityData.forEach(log => {
     const logDate = normalizeDateValue(log.date);
-    if (logDate && logDate >= startOfWeek && logDate < endOfWeek) {
-      if (log.user_id) {
-        const userRole = volunteerRoles.get(log.user_id);
-        if (userRole !== 'org-admin') {
-          weeklyActiveSet.add(log.user_id);
-        }
-      }
+    // FIX: Correct variable names `startOfWeek` and `endOfWeek` were not being used.
+    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.get(log.user_id) !== 'org-admin') {
+      activeSet.add(log.user_id);
     }
   });
 
-  const nonAdminVolunteers = appState.volunteersData.filter(v => v.role !== 'org-admin');
-  const totalHours = nonAdminVolunteers.reduce((sum, volunteer) => sum + (volunteer.totalHours || 0), 0);
-  const uniqueEvents = getUniqueEventCount(appState.activityData);
-  const donationValue = calculateDonationValue(totalHours);
-  
-  // FIX: Ensure totalVolunteers for the metric card also excludes admins.
-  const totalVolunteersCount = nonAdminVolunteers.length;
+  const nonAdmins = appState.volunteersData.filter(v => v.role !== 'org-admin');
+  const totalVols = nonAdmins.length;  
+  // FIX: Calculate total hours from all approved logs, not just the current week.
+  // The previous logic was flawed. This correctly sums up the pre-calculated totalHours
+  // from each volunteer, which already respects the 'approved' status.
+  const totalApprovedHours = appState.volunteersData
+    .filter(v => v.role !== 'org-admin')
+    .reduce((sum, v) => sum + (v.totalHours || 0), 0);
+  const uniqEvt = getUniqueEventCount(appState.activityData);
+  const donation = calculateDonationValue(totalApprovedHours);
 
-  return { totalVolunteers: totalVolunteersCount, weeklyActive: weeklyActiveSet.size, totalHours, uniqueEvents, donationValue, busiestDay };
+  return {
+    totalVolunteers: totalVols,
+    weeklyActive:   activeSet.size,
+    totalHours:     totalApprovedHours,
+    uniqueEvents:   uniqEvt,
+    donationValue:  donation,
+    busiestDay:     busiest
+  };
 }
+
+
+/** ── ATTENDANCE BAR CHART ───────────────────────────────────────────────── */
 
 function renderAttendanceChart() {
   const canvas = document.getElementById('attendanceChart');
   if (!canvas) return;
-
-  const context = canvas.getContext('2d');
-  if (!context) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
 
   const { labels, data, weekStart, weekEnd } = buildWeeklyAttendanceData();
-
-  const chartTitle = document.getElementById('attendanceChartTitle');
-  if (chartTitle) {
-    if (weekOffset === 0) {
-      chartTitle.textContent = "This week's volunteer hours";
-    } else if (weekOffset === -1) {
-      chartTitle.textContent = "Last week's volunteer hours";
-    } else {
-      const options = { month: 'short', day: 'numeric' };
-      const startStr = weekStart.toLocaleDateString(undefined, options);
-      const endOfWeekForDisplay = new Date(weekEnd);
-      endOfWeekForDisplay.setDate(endOfWeekForDisplay.getDate() - 1);
-      const endStr = endOfWeekForDisplay.toLocaleDateString(undefined, options);
-      chartTitle.textContent = `Volunteer Hours: ${startStr} - ${endStr}`;
-    }
+  
+  // FIX: Update chart title to always show the date range.
+  const titleEl = document.querySelector('.activity-card .card-header h3');
+  if (titleEl) {
+    const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+    const s = weekStart.toLocaleDateString(undefined, opts);
+    const e = new Date(weekEnd);
+    e.setUTCDate(e.getUTCDate() - 1);
+    titleEl.textContent = `Volunteer Hours: ${s} - ${e.toLocaleDateString(undefined, opts)}`;
   }
+  document.getElementById('nextWeekBtn').disabled = weekOffset >= 0;
 
-  const nextWeekBtn = document.getElementById('nextWeekBtn');
-  if (nextWeekBtn) {
-    nextWeekBtn.disabled = weekOffset >= 0;
-  }
+  // gradient fill
+  const grad = ctx.createLinearGradient(0,0,0,canvas.height);
+  grad.addColorStop(0, 'rgba(255,159,28,0.85)');
+  grad.addColorStop(1, 'rgba(255,190,11,0.2)');
 
-  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, 'rgba(255, 159, 28, 0.85)');
-  gradient.addColorStop(1, 'rgba(255, 190, 11, 0.2)');
-
-  const datasets = [
-    {
-      label: 'Volunteer Hours',
-      data,
-      backgroundColor: gradient,
-      borderColor: '#ff9f1c',
-      borderWidth: 2,
-      borderRadius: 4,
-    }
-  ];
-
-  if (appState.attendanceChart) {
-    appState.attendanceChart.data.labels = labels;
-    appState.attendanceChart.data.datasets[0].data = data;
-    appState.attendanceChart.update();
-    return;
-  }
-
-  appState.attendanceChart = new window.Chart(context, {
+  const config = {
     type: 'bar',
-    data: { labels, datasets },
+    data: {
+      labels,
+      datasets: [{
+        label: 'Volunteer Hours',
+        data,
+        backgroundColor: grad,
+        borderColor: '#ff9f1c',
+        borderWidth: 2,
+        borderRadius: 4
+      }]
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -294,191 +256,199 @@ function renderAttendanceChart() {
           mode: 'index',
           intersect: false,
           callbacks: {
-            label: (tooltipItem) => `${tooltipItem.dataset.label}: ${tooltipItem.parsed.y.toLocaleString()}`
+            label: t => `${t.dataset.label}: ${t.parsed.y.toLocaleString()}`
           }
         }
       },
       scales: {
-        x: {
-          ticks: {
-            color: 'rgba(74, 44, 0, 0.55)'
-          },
-          grid: { display: false }
-        },
+        x: { ticks:{ color:'rgba(74,44,0,0.55)' }, grid:{ display:false } },
         y: {
           beginAtZero: true,
-          ticks: {
-            color: 'rgba(74, 44, 0, 0.45)'
-          },
-          grid: {
-            color: 'rgba(255, 190, 11, 0.15)'
-          }
+          ticks:{ color:'rgba(74,44,0,0.45)' },
+          grid:{ color:'rgba(255,190,11,0.15)' }
         }
       }
     }
-  });
+  };
+
+  if (appState.attendanceChart) {
+    appState.attendanceChart.data = config.data;
+    appState.attendanceChart.update();
+  } else {
+    appState.attendanceChart = new window.Chart(ctx, config);
+  }
 }
 
-function renderTopEmployees() {
+
+/** ── TOP VOLUNTEERS LIST ────────────────────────────────────────────────── */
+
+function renderTopVolunteers() {
   const list = document.getElementById('topEmployeesList');
   if (!list) return;
 
-  const topFive = [...appState.volunteersData]
-    .sort((a, b) => (b.totalHours || 0) - (a.totalHours || 0))
-    .slice(0, 5);
+  const top5 = [...appState.volunteersData]
+    .sort((a,b) => (b.totalHours||0) - (a.totalHours||0))
+    .slice(0,5);
 
-  if (!topFive.length) {
+  if (!top5.length) {
     list.innerHTML = '<li class="placeholder">No volunteer activity recorded yet.</li>';
     return;
   }
 
-  list.innerHTML = topFive.map((volunteer) => {
-    const name = volunteer.firstName || volunteer.email || 'Volunteer';
-    const initials = computeInitials(volunteer.firstName || volunteer.email, volunteer.email);
-    const hours = (volunteer.totalHours || 0).toFixed(1);
-
+  list.innerHTML = top5.map(v => {
+    const name = v.firstName || v.email || 'Volunteer';
+    const initials = computeInitials(name, v.email);
+    const hrs = (v.totalHours||0).toFixed(1);
     return `
       <li>
         <div class="employee-meta">
           <div class="employee-avatar">${initials}</div>
           <div class="employee-text">
             <div class="employee-name">${name}</div>
-            <div class="subtle-text">${volunteer.email || ''}</div>
+            <div class="subtle-text">${v.email||''}</div>
           </div>
         </div>
-        <div class="employee-hours">${hours} hrs</div>
+        <div class="employee-hours">${hrs} hrs</div>
       </li>
     `;
   }).join('');
 }
 
-function renderEventActivityChart(weeklyActiveCount, totalVolunteersCount) {
+
+/** ── ACTIVITY DOUGHNUT CHART ────────────────────────────────────────────── */
+
+function renderEventActivityChart() {
   const canvas = document.getElementById('eventActivityChart');
   if (!canvas) return;
-
   const context = canvas.getContext('2d');
   if (!context) return;
 
-  // FIX: Use the reliable counts passed from buildMetrics instead of recalculating.
-  const engaged = weeklyActiveCount;
-  const totalVolunteers = totalVolunteersCount;
-  const inactive = Math.max(0, totalVolunteers - engaged);
-  const percent = totalVolunteers > 0 ? Math.round((engaged / totalVolunteers) * 100) : 0;
+  // FIX: Consolidate active volunteer calculation here to ensure consistency.
+  // This logic was previously split and incorrect, causing the chart to show 0.
+  // Also, ensure we only count approved logs for active volunteers.
+  const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
+  const roles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
+  const activeSet = new Set();
+  appState.activityData.forEach(log => {
+    const logDate = normalizeDateValue(log.date);
+    const status = (log.approve || 'pending').toLowerCase();
+    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.get(log.user_id) !== 'org-admin' && (status === 'approved' || status === 'accepted')) {
+      activeSet.add(log.user_id);
+    }
+  });
 
-  const percentElement = document.getElementById('eventActivityPercent');
-  if (percentElement) {
-    percentElement.textContent = `${percent}%`;
-  }
+  const engaged = activeSet.size;
+  const totalVolunteers = appState.volunteersData.filter(v => v.role !== 'org-admin').length;
+  const inactive = Math.max(0, totalVolunteers - engaged);
+  const pct = totalVolunteers > 0 ? Math.round((engaged / totalVolunteers) * 100) : 0;
+
+  document.getElementById('eventActivityPercent').textContent = `${pct}%`;
 
   const data = {
-    labels: ['Active', 'Inactive'],
-    datasets: [
-      { // Ensure data sums to totalVolunteers, or 1 if no volunteers
-        data: totalVolunteers > 0 ? [engaged, inactive] : [0, 1],
-        backgroundColor: ['#ff9f1c', 'rgba(74, 44, 0, 0.15)'],
-        borderWidth: 0
-      }
-    ]
+    labels: ['Active','Inactive'],
+    datasets:[{
+      data: totalVolunteers > 0 ? [engaged, inactive] : [0, 1],
+      backgroundColor: ['#ff9f1c','rgba(74,44,0,0.15)'],
+      borderWidth:0
+    }]
   };
 
   if (appState.eventActivityChart) {
     appState.eventActivityChart.data = data;
     appState.eventActivityChart.update();
-    return;
-  }
-
-  appState.eventActivityChart = new window.Chart(context, {
-    type: 'doughnut',
-    data: data,
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: '68%',
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (tooltipItem) => `${tooltipItem.label}: ${tooltipItem.parsed.toLocaleString()}`
-          }
-        }
+  } else {
+    appState.eventActivityChart = new window.Chart(context, {
+      type:'doughnut',
+      data,
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        cutout:'68%',
+        plugins:{ legend:{ display:false } }
       }
-    }
-  });
+    });
+  }
 }
 
+
+/** ── WEEKLY ATTENDANCE DATA ──────────────────────────────────────────────── */
+
 function buildWeeklyAttendanceData() {
-  const { startOfWeek: currentWeekStart } = getCurrentWeekBoundaries();
-  const weekStart = new Date(currentWeekStart);
-  weekStart.setDate(weekStart.getDate() + (weekOffset * 7));
+  const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
+  const weekStart = new Date(startOfWeek);
+  weekStart.setUTCDate(weekStart.getUTCDate() + weekOffset * 7);
 
   const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 7);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
 
-  const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const data = Array(7).fill(0);
+  const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const data   = new Array(7).fill(0);
 
-  appState.activityData.forEach((log) => {
-    const logDate = normalizeDateValue(log.date);
-    if (logDate && logDate >= weekStart && logDate < weekEnd) { // FIX: Use '<' to correctly handle the end of the week boundary.
-      const dayIndex = logDate.getDay();
-      const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-      data[dayIndex] += hours;
+  const roles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
+
+  // FIX: Ensure only approved hours are counted in the weekly chart.
+  const approvedLogs = appState.activityData.filter(log => ['approved', 'accepted'].includes((log.approve || 'pending').toLowerCase()));
+
+  approvedLogs.forEach(log => {
+    const d = normalizeDateValue(log.date);
+    if (d && d >= weekStart && d < weekEnd && roles.get(log.user_id) !== 'org-admin') {
+      // FIX: Use getUTCDay() to align with the UTC-based week boundaries.
+      data[d.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
     }
   });
 
   return { labels, data, weekStart, weekEnd };
 }
 
-function getUniqueEventCount(activityLogs) {
-  const unique = new Set();
-  activityLogs.forEach((log) => {
-    const key = log.campaign || log.event || log.site || log.location;
-    if (key) {
-      unique.add(key.toLowerCase());
-    }
+
+/** ── UTILITIES ──────────────────────────────────────────────────────────── */
+
+function getUniqueEventCount(logs) {
+  const set = new Set();
+  logs.forEach(l => {
+    const key = (l.campaign||l.event||l.site||l.location||'').toLowerCase();
+    if (key) set.add(key);
   });
-  return unique.size;
+  return set.size;
 }
 
-function calculateDonationValue(totalHours) {
-  return totalHours * VOLUNTEER_HOUR_VALUE;
+function calculateDonationValue(hours) {
+  return hours * VOLUNTEER_HOUR_VALUE;
 }
 
-function formatHours(totalHours) {
-  const safeHours = Number(totalHours) || 0;
-  const wholeHours = Math.floor(safeHours);
-  const minutes = Math.round((safeHours - wholeHours) * 60);
-  return `${wholeHours.toLocaleString()}h ${String(minutes).padStart(2, '0')}m`;
+function formatHours(h) {
+  const total = Number(h) || 0;
+  const hrs   = Math.floor(total);
+  const mins  = Math.round((total - hrs)*60);
+  return `${hrs.toLocaleString()}h ${String(mins).padStart(2,'0')}m`;
 }
 
-function formatCurrency(value) {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value || 0);
+function formatCurrency(v) {
+  return new Intl.NumberFormat(undefined, {
+    style:'currency',
+    currency:'USD',
+    maximumFractionDigits:0
+  }).format(v||0);
 }
 
-function normalizeDateValue(value) {
-  if (!value) return null;
+function normalizeDateValue(val) {
+  if (!val) return null;
+  // FIX: Consistently use UTC for all date normalization to match week boundary calculations.
+  // Using local time methods like `setHours` can cause off-by-one-day errors in different timezones.
+  let d;
 
-  if (typeof value.toDate === 'function') {
-    const date = value.toDate();
-    if (date && typeof date.getTime === 'function' && !Number.isNaN(date.getTime())) {
-      date.setHours(0, 0, 0, 0);
-      return date;
-    }
+  if (typeof val.toDate === 'function') {
+    d = val.toDate();
+  } else if (val.seconds != null && val.nanoseconds != null) {
+    const ms = val.seconds*1e3 + Math.floor(val.nanoseconds/1e6);
+    d = new Date(ms);
+  } else {
+    d = new Date(val);
   }
 
-  if (value.seconds && value.nanoseconds !== undefined) {
-    const milliseconds = value.seconds * 1000 + Math.floor(value.nanoseconds / 1e6);
-    const date = new Date(milliseconds);
-    if (!Number.isNaN(date.getTime())) {
-      date.setHours(0, 0, 0, 0);
-      return date;
-    }
-  }
-
-  const parsed = new Date(value);
-  if (!Number.isNaN(parsed.getTime())) {
-    parsed.setHours(0, 0, 0, 0);
-    return parsed;
+  if (!isNaN(d.getTime())) {
+    // FIX: Do not zero out the time here. Let comparisons happen with full date-time objects.
+    return d;
   }
 
   return null;

@@ -63,16 +63,15 @@ export function loadActivityData() {
 
 export function getCurrentWeekBoundaries(referenceDate = new Date()) {
   const now = new Date(referenceDate); // Use the provided date or today
-  // FIX: Use UTC methods to avoid timezone-related off-by-one errors.
-  const dayOfWeek = now.getUTCDay(); // 0 for Sunday, 1 for Monday, etc.
-  const diff = now.getUTCDate() - dayOfWeek;
+  // FIX: Ensure Sunday is correctly handled as the start of the new week.
+  const dayOfWeek = now.getUTCDay(); // 0 for Sunday
+  const diff = now.getUTCDate() - dayOfWeek; // This correctly finds the last Sunday.
 
   const startOfWeek = new Date(now.setUTCDate(diff));
   startOfWeek.setUTCHours(0, 0, 0, 0);
 
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 7);
-  endOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek.getTime());
+  endOfWeek.setUTCDate(startOfWeek.getUTCDate() + 7);
 
   return { startOfWeek, endOfWeek };
 }
