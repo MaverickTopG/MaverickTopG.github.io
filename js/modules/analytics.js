@@ -40,11 +40,6 @@ export function initAnalytics() {
     }
   });
 
-  const expandBtn = document.getElementById('expandHeatmapBtn');
-  if (expandBtn) {
-    expandBtn.addEventListener('click', openHeatmapModal);
-  }
-
   const closeBtn = document.getElementById('closeHeatmapModal');
   if (closeBtn) {
     closeBtn.addEventListener('click', closeHeatmapModal);
@@ -223,17 +218,11 @@ export function renderCalendarHeatmap(direction = 0) {
 
   const maxValue = Math.max(...dailyTotals.values(), 0);
   const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
-  const totalWeeks = 53; // Always show 53 weeks for a full year layout
-
   if (totalDays <= 0) {
     container.innerHTML = '<div class="heatmap-grid"><div class="empty-state">No data to display for this month.</div></div>';
     return;
   }
 
-  let html = '<div class="heat-calendar-scroll-wrapper"><div class="heat-calendar">';
-
-  // Month labels row
-  html += '<div class="heat-months">';
   const monthLabels = new Map();
   let lastMonth = -2;
   for (let i = 0; i < totalDays; i++) {
@@ -241,35 +230,33 @@ export function renderCalendarHeatmap(direction = 0) {
     date.setDate(startDate.getDate() + i);
     const month = date.getMonth();
     if (month !== lastMonth && !monthLabels.has(month)) {
-      const weekIndex = Math.floor((i + startDate.getDay()) / 7);
       monthLabels.set(month, {
-        month: date.toLocaleDateString(undefined, { month: 'short' }),
-        col: i
+        label: date.toLocaleDateString(undefined, { month: 'short' }),
+        column: i
       });
       lastMonth = month;
     }
   }
 
-  monthLabels.forEach((label, monthIndex) => {
-    html += `<div class="heat-month" data-month="${monthIndex}" style="--col-start: ${label.col + 1};">${label.month}</div>`;
+  let calendarHtml = '<div class="heat-calendar-scroll-wrapper"><div class="heat-calendar">';
+  calendarHtml += '<div class="heat-months">';
+  monthLabels.forEach((data, monthIndex) => {
+    calendarHtml += `<div class="heat-month" data-month="${monthIndex}" style="--col-start: ${data.column + 1};">${data.label}</div>`;
   });
-  html += '</div>';
+  calendarHtml += '</div>';
 
-  // Main grid with day labels and cells
-  html += '<div class="heat-body">';
-  html += '<div class="heat-days"><div>Mon</div><div>Wed</div><div>Fri</div></div>';
+  calendarHtml += '<div class="heat-body">';
+  calendarHtml += '<div class="heat-days"><div>Mon</div><div>Wed</div><div>Fri</div></div>';
+  calendarHtml += '<div class="heat-cells">';
 
-  html += '<div class="heat-cells">';
-  // Add spacer cells for the first day of the year
   for (let i = 0; i < startDate.getDay(); i++) {
-    html += `<div class="heat-cell" style="visibility: hidden;"></div>`;
+    calendarHtml += '<div class="heat-cell" style="visibility: hidden;"></div>';
   }
 
   for (let i = 0; i < totalDays; i++) {
     const cellDate = new Date(startDate);
     cellDate.setDate(startDate.getDate() + i);
     const isFuture = cellDate > today;
-
     const dateKey = formatDateKey(cellDate);
     const value = dailyTotals.get(dateKey) || 0;
     const intensity = maxValue > 0 ? value / maxValue : 0;
@@ -277,18 +264,32 @@ export function renderCalendarHeatmap(direction = 0) {
     const title = `${cellDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} — ${value.toFixed(1)} hrs`;
     const monthIndex = cellDate.getMonth();
 
-    html += `<div class="heat-cell" data-month="${monthIndex}" style="background-color: ${isFuture ? 'transparent' : color}; visibility: ${isFuture ? 'hidden' : 'visible'}" title="${title}" aria-label="${title}"></div>`;
+    calendarHtml += `<div class="heat-cell" data-month="${monthIndex}" style="background-color: ${isFuture ? 'transparent' : color}; visibility: ${isFuture ? 'hidden' : 'visible'}" title="${title}" aria-label="${title}"></div>`;
   }
-  html += '</div></div>';
 
-  // Legend
-  html += `<div class="heat-legend">
+  calendarHtml += '</div></div></div></div>';
+
+  const legendHtml = `<div class="heat-legend">
     <span>Less</span>
-    <div class="heat-cell" style="background-color: ${heatmapColor(0.01)};"></div><div class="heat-cell" style="background-color: ${heatmapColor(0.25)};"></div><div class="heat-cell" style="background-color: ${heatmapColor(0.5)};"></div><div class="heat-cell" style="background-color: ${heatmapColor(0.75)};"></div><div class="heat-cell" style="background-color: ${heatmapColor(1)};"></div>
-    <span>More</span></div>`;
-  container.innerHTML = html;
+    <div class="heat-cell" style="background-color: ${heatmapColor(0.01)};"></div>
+    <div class="heat-cell" style="background-color: ${heatmapColor(0.25)};"></div>
+    <div class="heat-cell" style="background-color: ${heatmapColor(0.5)};"></div>
+    <div class="heat-cell" style="background-color: ${heatmapColor(0.75)};"></div>
+    <div class="heat-cell" style="background-color: ${heatmapColor(1)};"></div>
+    <span>More</span>
+  </div>`;
 
-  container.innerHTML = html + '</div>'; // Close scroll wrapper
+  container.innerHTML = calendarHtml + legendHtml;
+
+  if (!container.dataset.modalBound) {
+    container.addEventListener('dblclick', (event) => {
+      if (event.target.closest('.heat-calendar')) {
+        openHeatmapModal();
+      }
+    });
+    container.dataset.modalBound = 'true';
+  }
+
   appState.heatmapDataCache = { dailyTotals, eventTotals, timezone };
 }
 
