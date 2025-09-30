@@ -180,24 +180,34 @@ export function renderCalendarHeatmap(direction = 0) {
   if (direction !== 0) {
     // This logic is now handled by the year selector
   }
+  
+  const today = new Date();
+  const MS_DAY = 1000 * 60 * 60 * 24;
+  const normalizedToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const currentYear = today.getFullYear();
+  const requestedYear = appState.analyticsState.heatmapYear || currentYear;
+  const displayYear = Math.min(requestedYear, currentYear);
+  if (displayYear !== requestedYear) {
+    appState.analyticsState.heatmapYear = displayYear;
+  }
+
+  const startDate = new Date(displayYear, 0, 1);
+  const endDate = new Date(displayYear, 11, 31);
+  const dataCutoff = displayYear >= currentYear ? normalizedToday : endDate;
+  const leadingOffset = ((startDate.getDay() + 6) % 7);
+  const totalDays = Math.floor((endDate - startDate) / MS_DAY) + 1;
+  const trailingOffset = (7 - ((leadingOffset + totalDays) % 7)) % 7;
 
   const availableYears = getAvailableYears();
   updateYearSelector(availableYears);
-  
-  const today = new Date();
-  const normalizedToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const displayYear = appState.analyticsState.heatmapYear || today.getFullYear();
-  const startDate = new Date(displayYear, 0, 1);
-  const endDate = new Date(displayYear, 11, 31);
-  const gridEndDate = displayYear === today.getFullYear() ? normalizedToday : endDate;
 
   const dailyTotals = new Map();
   const eventTotals = new Map();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
   const cursor = new Date(startDate);
-  // Create keys for all days up to the rendered end date
-  while (cursor <= gridEndDate) {
+  // Create keys for all days in the display year
+  while (cursor <= endDate) {
     dailyTotals.set(formatDateKey(cursor), 0);
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -206,7 +216,7 @@ export function renderCalendarHeatmap(direction = 0) {
     if (!log.date) return;
     const logDate = parseDate(log.date);
     if (!logDate) return;
-    if (logDate > gridEndDate) return;
+    if (logDate > dataCutoff) return;
     const key = formatDateKey(logDate);
     if (!dailyTotals.has(key)) return;
 
@@ -220,25 +230,20 @@ export function renderCalendarHeatmap(direction = 0) {
   });
 
   const maxValue = Math.max(...dailyTotals.values(), 0);
-  const totalDays = Math.floor((gridEndDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
   if (totalDays <= 0) {
     container.innerHTML = '<div class="heatmap-grid"><div class="empty-state">No data to display for this month.</div></div>';
     return;
   }
 
   const monthLabels = new Map();
-  let lastMonth = -2;
-  for (let i = 0; i < totalDays; i++) {
-    const date = new Date(startDate);
-    date.setDate(startDate.getDate() + i);
-    const month = date.getMonth();
-    if (month !== lastMonth && !monthLabels.has(month)) {
-      monthLabels.set(month, {
-        label: date.toLocaleDateString(undefined, { month: 'short' }),
-        column: i
-      });
-      lastMonth = month;
-    }
+  for (let month = 0; month < 12; month++) {
+    const monthStart = new Date(displayYear, month, 1);
+    const dayIndex = Math.floor((monthStart - startDate) / MS_DAY);
+    const weekIndex = Math.floor((leadingOffset + dayIndex) / 7);
+    monthLabels.set(month, {
+      label: monthStart.toLocaleDateString(undefined, { month: 'short' }),
+      column: 2 + weekIndex
+    });
   }
 
   let calendarHtml = '<div class="heat-calendar-scroll-wrapper"><div class="heat-calendar">';
@@ -252,22 +257,35 @@ export function renderCalendarHeatmap(direction = 0) {
   calendarHtml += '<div class="heat-days"><div>Mon</div><div>Wed</div><div>Fri</div></div>';
   calendarHtml += '<div class="heat-cells">';
 
-  for (let i = 0; i < startDate.getDay(); i++) {
+  for (let i = 0; i < leadingOffset; i++) {
     calendarHtml += '<div class="heat-cell" style="visibility: hidden;"></div>';
   }
 
   for (let i = 0; i < totalDays; i++) {
     const cellDate = new Date(startDate);
     cellDate.setDate(startDate.getDate() + i);
-    const isFuture = displayYear === today.getFullYear() && cellDate > normalizedToday;
+    const isFuture = displayYear > currentYear || (displayYear === currentYear && cellDate > normalizedToday);
     const dateKey = formatDateKey(cellDate);
-    const value = dailyTotals.get(dateKey) || 0;
-    const intensity = maxValue > 0 ? value / maxValue : 0;
+    const rawValue = dailyTotals.get(dateKey) || 0;
+    const value = isFuture ? 0 : rawValue;
+    const isEmpty = value <= 0;
+    const intensity = isFuture || isEmpty ? 0 : (maxValue > 0 ? value / maxValue : 0);
     const color = heatmapColor(intensity);
-    const title = `${cellDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} — ${value.toFixed(1)} hrs`;
+    const dateLabel = cellDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const title = isFuture
+      ? `${dateLabel} — No activity yet`
+      : isEmpty
+        ? `${dateLabel} — 0 hrs logged`
+        : `${dateLabel} — ${value.toFixed(1)} hrs`;
     const monthIndex = cellDate.getMonth();
 
-    calendarHtml += `<div class="heat-cell" data-month="${monthIndex}" style="background-color: ${isFuture ? 'transparent' : color}; visibility: ${isFuture ? 'hidden' : 'visible'}" title="${title}" aria-label="${title}"></div>`;
+    const cellClasses = `heat-cell${isFuture ? ' heat-cell--future' : ''}${isEmpty ? ' heat-cell--empty' : ''}`;
+    const cellStyle = (isFuture || isEmpty) ? '' : `background-color: ${color};`;
+    calendarHtml += `<div class="${cellClasses}" data-month="${monthIndex}" style="${cellStyle}" title="${title}" aria-label="${title}"></div>`;
+  }
+
+  for (let i = 0; i < trailingOffset; i++) {
+    calendarHtml += '<div class="heat-cell" style="visibility: hidden;"></div>';
   }
 
   calendarHtml += '</div></div></div></div>';
@@ -297,11 +315,15 @@ export function renderCalendarHeatmap(direction = 0) {
 }
 
 function getAvailableYears() {
-  const years = new Set();
+  const currentYear = new Date().getFullYear();
+  const years = new Set([currentYear]);
   appState.activityData.forEach(log => {
     const date = parseDate(log.date);
     if (date) {
-      years.add(date.getFullYear());
+      const year = date.getFullYear();
+      if (year <= currentYear) {
+        years.add(year);
+      }
     }
   });
   return Array.from(years).sort((a, b) => b - a);
@@ -311,8 +333,9 @@ function updateYearSelector(years) {
   const select = document.getElementById('heatmapYearSelect');
   if (!select) return;
 
-  const currentYear = appState.analyticsState.heatmapYear || new Date().getFullYear();
-  select.innerHTML = years.map(year => `<option value="${year}" ${year === currentYear ? 'selected' : ''}>Year: ${year}</option>`).join('');
+  const todayYear = new Date().getFullYear();
+  const selectedYear = Math.min(appState.analyticsState.heatmapYear || todayYear, todayYear);
+  select.innerHTML = years.map(year => `<option value="${year}" ${year === selectedYear ? 'selected' : ''}>Year: ${year}</option>`).join('');
 }
 
 function openHeatmapModal() {
