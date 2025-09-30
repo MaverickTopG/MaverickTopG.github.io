@@ -7,6 +7,7 @@
   <title>NexoLink - Admin Portal</title>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 
@@ -33,73 +34,112 @@
 
   <!-- Authentication Section -->
   <div id="authSection" class="auth-container">
-    <div class="auth-card">
-      <div class="auth-header">
-        <h1>Admin Portal</h1>
-        <p>Secure access for administrators</p>
-      </div>
+    <div class="auth-layout">
+      <div class="auth-hero">
+        <span class="auth-badge"><i class="fas fa-shield-halved"></i> Secure admin access</span>
+        <h1>Sign in to orchestrate your <span>volunteer universe</span>.</h1>
+        <p>Glassmorphic dashboards, real-time approvals, and recognition flows are a login away. Keep every hour accountable and every celebration timely.</p>
 
-      <!-- Toggle Buttons -->
-      <div class="toggle-buttons">
-        <button id="signInToggle" class="active" onclick="toggleForm('signIn')">Sign In</button>
-        <button id="signupToggle" onclick="toggleForm('signup')">Create Account</button>
-      </div>
-
-      <!-- Sign In Form -->
-      <div id="signInForm" class="auth-form">
-        <div class="form-group">
-          <label for="signInEmail">Email Address</label>
-          <input type="email" id="signInEmail" placeholder="Enter your email" autocomplete="email">
-        </div>
-        <div class="form-group">
-          <label for="signInPassword">Password</label>
-          <input type="password" id="signInPassword" placeholder="Enter your password" autocomplete="current-password">
-        </div>
-        <a href="#" id="forgotPasswordLink" class="forgot-password-link">Forgot Password?</a>
-        <button type="button" class="btn-primary" id="signInBtn"><span>Sign In</span></button>
-      </div>
-
-      <!-- Signup Form -->
-      <div id="signupForm" class="auth-form hidden">
-        <div class="form-group">
-          <label for="signupEmail">Email Address</label>
-          <input type="email" id="signupEmail" placeholder="Enter your email" autocomplete="email">
-        </div>
-        <div class="form-group">
-          <label for="signupPassword">Password</label>
-          <input type="password" id="signupPassword" placeholder="Create password (min 6 characters)"
-            autocomplete="new-password">
-        </div>
-        <div class="form-group">
-          <label for="organizationName">Organization Name</label>
-          <input type="text" id="organizationName" placeholder="Enter your organization name"
-            autocomplete="organization">
-        </div>
-        <button type="button" class="btn-primary" id="signupBtn"><span>Create Account</span></button>
-      </div>
-
-      <!-- Success State -->
-      <div id="successState" class="auth-form hidden">
-        <div class="success-state">
-          <div class="success-icon">
-            <svg viewBox="0 0 24 24">
-              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
-            </svg>
+        <div class="auth-floating-cards">
+          <div class="auth-floating-card auth-floating-card--one">
+            <strong>4.9★</strong>
+            <small>Admin satisfaction</small>
+            <span><i class="fas fa-face-smile-beam"></i> Loved for clarity</span>
           </div>
-          <h3>Account Created Successfully!</h3>
-          <div class="org-code-display">
-            <p><strong>Your Organization Code:</strong></p>
-            <span id="displayOrgCode" class="org-code"></span>
-            <p style="font-size: 0.9rem; color: var(--text-light); margin-top: 1rem;">
-              Share this code with volunteers to register under your organization.
-            </p>
+          <div class="auth-floating-card auth-floating-card--two">
+            <strong>92%</strong>
+            <small>Logs auto-verified</small>
+            <span><i class="fas fa-wand-magic-sparkles"></i> Smart rules engaged</span>
           </div>
-          <button type="button" class="btn-primary"><span>Continue to Dashboard</span></button>
+        </div>
+
+        <div class="auth-mosaic">
+          <article class="auth-tile">
+            <div class="auth-tile-icon"><i class="fas fa-chart-line"></i></div>
+            <h3>Volunteer pulse</h3>
+            <p>Surface live stats the moment you land in the dashboard.</p>
+          </article>
+          <article class="auth-tile">
+            <div class="auth-tile-icon"><i class="fas fa-user-lock"></i></div>
+            <h3>Role-based control</h3>
+            <p>Only your team sees the data tied to your organization.</p>
+          </article>
+          <article class="auth-tile">
+            <div class="auth-tile-icon"><i class="fas fa-trophy"></i></div>
+            <h3>Celebrate faster</h3>
+            <p>Approve logs, trigger kudos, and keep momentum glowing.</p>
+          </article>
         </div>
       </div>
 
-      <!-- Messages -->
-      <div id="authMessage" class="auth-message"></div>
+      <div class="auth-card">
+        <div class="auth-header">
+          <h2>Welcome back</h2>
+          <p>Secure access for administrators</p>
+        </div>
+
+        <!-- Toggle Buttons -->
+        <div class="toggle-buttons">
+          <button id="signInToggle" class="active" onclick="toggleForm('signIn')">Sign In</button>
+          <button id="signupToggle" onclick="toggleForm('signup')">Create Account</button>
+        </div>
+
+        <!-- Sign In Form -->
+        <div id="signInForm" class="auth-form">
+          <div class="form-group">
+            <label for="signInEmail">Email Address</label>
+            <input type="email" id="signInEmail" placeholder="Enter your email" autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label for="signInPassword">Password</label>
+            <input type="password" id="signInPassword" placeholder="Enter your password" autocomplete="current-password">
+          </div>
+          <a href="#" id="forgotPasswordLink" class="forgot-password-link">Forgot Password?</a>
+          <button type="button" class="btn-primary" id="signInBtn"><span>Sign In</span></button>
+        </div>
+
+        <!-- Signup Form -->
+        <div id="signupForm" class="auth-form hidden">
+          <div class="form-group">
+            <label for="signupEmail">Email Address</label>
+            <input type="email" id="signupEmail" placeholder="Enter your email" autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label for="signupPassword">Password</label>
+            <input type="password" id="signupPassword" placeholder="Create password (min 6 characters)"
+              autocomplete="new-password">
+          </div>
+          <div class="form-group">
+            <label for="organizationName">Organization Name</label>
+            <input type="text" id="organizationName" placeholder="Enter your organization name"
+              autocomplete="organization">
+          </div>
+          <button type="button" class="btn-primary" id="signupBtn"><span>Create Account</span></button>
+        </div>
+
+        <!-- Success State -->
+        <div id="successState" class="auth-form hidden">
+          <div class="success-state">
+            <div class="success-icon">
+              <svg viewBox="0 0 24 24">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+              </svg>
+            </div>
+            <h3>Account Created Successfully!</h3>
+            <div class="org-code-display">
+              <p><strong>Your Organization Code:</strong></p>
+              <span id="displayOrgCode" class="org-code"></span>
+              <p class="success-note">
+                Share this code with volunteers to register under your organization.
+              </p>
+            </div>
+            <button type="button" class="btn-primary"><span>Continue to Dashboard</span></button>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="authMessage" class="auth-message"></div>
+      </div>
     </div>
   </div>
 
@@ -557,11 +597,15 @@
   <style>
     /* General Styles */
     body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        background: linear-gradient(180deg, #fffaf0, #f8f0e3);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        background: linear-gradient(145deg, #fffdf8 0%, var(--cream) 45%, #fff2de 100%);
+        color: var(--text-dark);
+        line-height: 1.6;
         margin: 0;
         padding-bottom: 80px; /* Space for sticky footer */
-        color: #333;
+        min-height: 100vh;
+        position: relative;
+        overflow-x: hidden;
     }
 
     .container {
@@ -905,21 +949,31 @@
   
   <style>
     :root {
-      --accent: #ffbe0b;
-      --accent-dark: #e6a700;
-      --accent-light: #ffd633;
+      --cream: #fffaf1;
+      --cream-soft: #ffe8d6;
+      --text-dark: #362208;
+      --text-light: rgba(54, 34, 8, 0.7);
+      --text-muted: rgba(54, 34, 8, 0.65);
+      --accent: #ffb347;
+      --accent-dark: #f0a100;
+      --accent-light: rgba(255, 179, 71, 0.4);
+      --accent-secondary: #ff8b6b;
+      --accent-rose: #ff6fb2;
       --white-85: rgba(255, 255, 255, 0.85);
       --white-90: rgba(255, 255, 255, 0.9);
-      --black: #000;
-      --text-dark: #333;
-      --text-light: #666;
-      --card-bg: rgba(255, 255, 255, 0.95);
-      --input-bg: #fff;
-      --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.12);
-      --shadow-medium: 0 12px 40px rgba(0, 0, 0, 0.15);
-      --shadow-strong: 0 20px 60px rgba(0, 0, 0, 0.25);
-      --gradient-primary: linear-gradient(135deg, #ffbe0b 0%, #ffd633 100%);
-      --gradient-glow: linear-gradient(135deg, rgba(255, 190, 11, 0.3) 0%, rgba(255, 214, 51, 0.3) 100%);
+      --black: #221400;
+      --card-bg: rgba(255, 255, 255, 0.78);
+      --input-bg: rgba(255, 255, 255, 0.88);
+      --glass: rgba(255, 255, 255, 0.7);
+      --glass-strong: rgba(255, 255, 255, 0.82);
+      --border-glass: rgba(255, 255, 255, 0.52);
+      --shadow-soft: 0 22px 45px rgba(116, 76, 0, 0.16);
+      --shadow-medium: 0 38px 90px rgba(98, 64, 0, 0.2);
+      --shadow-strong: 0 55px 130px rgba(84, 52, 0, 0.24);
+      --gradient-primary: linear-gradient(135deg, #ffb347 0%, #ffd970 100%);
+      --gradient-glow: linear-gradient(135deg, rgba(255, 179, 71, 0.28) 0%, rgba(255, 214, 170, 0.32) 100%);
+      --gradient-aurora: radial-gradient(circle at 30% 20%, rgba(255, 145, 122, 0.4), transparent 60%),
+        radial-gradient(circle at 70% 80%, rgba(255, 111, 178, 0.35), transparent 65%);
     }
 
     * {
@@ -930,21 +984,6 @@
 
     html {
       scroll-behavior: smooth;
-    }
-
-    bbody {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: url('bg.png') ;
-  background-size: cover;
-  color: var(--text-dark);
-  line-height: 1.6;
-  min-height: 100vh;
-  position: relative;
-  overflow-x: hidden;
-}
-
-    nav.navbar {
-      display: flex;
     }
 
     .dashboard-shell {
@@ -2124,68 +2163,67 @@
     }
 
     /* Animated background overlay */
-    body::before {
+    body::before,
+    body::after {
       content: '';
       position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background:
-        radial-gradient(circle at 20% 80%, rgba(255, 190, 11, 0.1) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(255, 214, 51, 0.08) 0%, transparent 50%),
-        linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0.05) 100%);
-      animation: backgroundFloat 15s ease-in-out infinite;
+      inset: -140px;
+      z-index: -2;
       pointer-events: none;
-      z-index: 0;
+      background: var(--gradient-aurora),
+        radial-gradient(circle at 18% 78%, rgba(255, 198, 120, 0.24), transparent 60%),
+        linear-gradient(135deg, rgba(255, 244, 218, 0.4), rgba(255, 227, 195, 0.28));
+      animation: canvasPulse 22s ease-in-out infinite alternate;
     }
 
-    @keyframes backgroundFloat {
+    body::after {
+      inset: auto;
+      top: 48vh;
+      left: -120px;
+      right: -120px;
+      bottom: -180px;
+      background: radial-gradient(circle at 82% 24%, rgba(255, 111, 178, 0.28), transparent 58%),
+        radial-gradient(circle at 22% 90%, rgba(255, 179, 71, 0.32), transparent 60%),
+        linear-gradient(135deg, rgba(255, 244, 218, 0.35), rgba(255, 236, 205, 0.24));
+      animation: canvasDrift 26s ease-in-out infinite alternate;
+    }
 
-      0%,
-      100% {
-        opacity: 0.8;
-        transform: translateY(0px);
-      }
+    @keyframes canvasPulse {
+      0% { transform: scale(1) translateY(0); opacity: 0.9; }
+      100% { transform: scale(1.04) translateY(-12px); opacity: 1; }
+    }
 
-      50% {
-        opacity: 1;
-        transform: translateY(-10px);
-      }
+    @keyframes canvasDrift {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(28px, -34px) scale(1.02); }
     }
 
     /* NAVBAR */
     .navbar {
-      position: fixed;
+      position: sticky;
       top: 0;
-      left: 0;
-      right: 0;
-      background: var(--white-85);
-      backdrop-filter: blur(15px) saturate(180%);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-      padding: 1rem 2rem;
+      z-index: 20;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      z-index: 1000;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-      animation: slideDown 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+      padding: 1rem clamp(1.5rem, 4vw, 3rem);
+      margin: 1.5rem auto 0;
+      width: min(1100px, 92vw);
+      backdrop-filter: blur(18px) saturate(180%);
+      background: var(--glass);
+      border: 1px solid var(--border-glass);
+      border-radius: 24px;
+      box-shadow: var(--shadow-soft);
+      animation: fadeSlide 0.8s ease-out;
     }
 
-    @keyframes slideDown {
-      from {
-        transform: translateY(-100%);
-        opacity: 0;
-      }
-
-      to {
-        transform: translateY(0);
-        opacity: 1;
-      }
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateY(-20px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     .navbar-brand .logo {
-      font-size: 1.75rem;
+      font-size: 1.6rem;
       font-weight: 800;
       background: var(--gradient-primary);
       -webkit-background-clip: text;
@@ -2197,21 +2235,22 @@
     }
 
     .navbar-brand .logo i {
-      font-size: 1.8rem;
-      color: var(--accent);
+      font-size: 1.7rem;
+      color: #ff9b5f;
+      filter: drop-shadow(0 6px 12px rgba(255, 155, 95, 0.35));
     }
 
     .navbar-nav {
       display: flex;
       align-items: center;
-      gap: 1.25rem;
+      gap: 1rem;
     }
 
     .navbar-nav .nav-link {
       padding: 0.55rem 1.1rem;
       font-weight: 600;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      color: var(--black);
+      color: var(--text-dark);
       text-decoration: none;
       border-radius: 999px;
       position: relative;
@@ -2227,51 +2266,265 @@
     .navbar-nav .nav-link::before {
       content: '';
       position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
-      height: 100%;
-      background: var(--gradient-primary);
-      transition: left 0.3s ease;
-      z-index: -1;
+      inset: 0;
       border-radius: 999px;
+      background: var(--gradient-primary);
+      transform: translateX(-100%);
+      transition: transform 0.3s ease;
+      z-index: -1;
     }
 
     .navbar-nav .nav-link:hover::before,
     .navbar-nav .nav-link.active::before {
-      left: 0;
+      transform: translateX(0);
     }
 
     .navbar-nav .nav-link:hover,
     .navbar-nav .nav-link.active {
-      color: var(--black);
+      color: #2a1b05;
       transform: translateY(-2px);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .navbar .logout-btn {
+      margin-top: 0;
+      padding: 0.6rem 1.2rem;
+      border-radius: 999px;
+      background: var(--gradient-primary);
+      color: #221400;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .navbar .logout-btn:hover {
+      background: var(--gradient-primary);
       box-shadow: var(--shadow-medium);
     }
 
-    /* AUTH SECTION - FIXED: Adjusted top margin to prevent collision with navbar */
     .auth-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      padding: 120px 2rem 2rem;
-      /* FIXED: Added top padding for navbar */
       position: relative;
-      z-index: 10;
-      background-image: "bg.png";
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: calc(100vh - 80px);
+      padding: clamp(120px, 18vh, 160px) 1.5rem 4rem;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    .auth-container::before,
+    .auth-container::after {
+      content: '';
+      position: absolute;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .auth-container::before {
+      inset: -28% -18% -12% -18%;
+      background: var(--gradient-aurora),
+        radial-gradient(circle at 20% 80%, rgba(255, 198, 120, 0.22), transparent 60%),
+        linear-gradient(135deg, rgba(255, 244, 218, 0.55), rgba(255, 227, 195, 0.28));
+      animation: authCanvasDrift 26s ease-in-out infinite alternate;
+    }
+
+    .auth-container::after {
+      inset: -32% -12% -24% -12%;
+      background: radial-gradient(circle at 78% 22%, rgba(255, 179, 71, 0.28), transparent 60%),
+        radial-gradient(circle at 30% 92%, rgba(255, 111, 178, 0.22), transparent 62%);
+      animation: authCanvasPulse 22s ease-in-out infinite alternate;
+    }
+
+    @keyframes authCanvasDrift {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(30px, -40px) scale(1.03); }
+    }
+
+    @keyframes authCanvasPulse {
+      0%, 100% { opacity: 0.75; }
+      50% { opacity: 1; }
+    }
+
+    .auth-layout {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(320px, 420px);
+      gap: clamp(2rem, 6vw, 4rem);
+      align-items: center;
+      width: min(1100px, 92vw);
+    }
+
+    .auth-hero {
+      display: grid;
+      gap: 1.6rem;
+      color: var(--text-dark);
+    }
+
+    .auth-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.45rem 1.1rem;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      background: rgba(255, 190, 11, 0.18);
+      color: rgba(46, 31, 0, 0.85);
+      box-shadow: 0 10px 25px rgba(255, 190, 11, 0.16);
+      animation: floatY 6s ease-in-out infinite;
+      width: fit-content;
+    }
+
+    .auth-hero h1 {
+      font-size: clamp(2.8rem, 5.8vw, 3.9rem);
+      line-height: 1.05;
+      font-weight: 820;
+      letter-spacing: -0.05em;
+    }
+
+    .auth-hero h1 span {
+      background: var(--gradient-primary);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .auth-hero p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 520px;
+    }
+
+    .auth-floating-cards {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .auth-floating-card {
+      position: relative;
+      display: grid;
+      gap: 0.35rem;
+      padding: 1.05rem 1.25rem;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid var(--border-glass);
+      box-shadow: 0 26px 60px rgba(104, 62, 0, 0.18);
+      backdrop-filter: blur(18px);
+      min-width: 190px;
+      animation: authOrbit 7.5s ease-in-out infinite;
+    }
+
+    .auth-floating-card strong {
+      font-size: 1.4rem;
+      font-weight: 750;
+    }
+
+    .auth-floating-card small {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .auth-floating-card span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: rgba(54, 34, 8, 0.75);
+    }
+
+    .auth-floating-card span i {
+      color: var(--accent-secondary);
+    }
+
+    .auth-floating-card::after {
+      content: '';
+      position: absolute;
+      inset: -12px;
+      border-radius: 24px;
+      background: rgba(255, 179, 71, 0.18);
+      filter: blur(32px);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      z-index: -1;
+    }
+
+    .auth-floating-card:hover::after {
+      opacity: 1;
+    }
+
+    .auth-floating-card--one { animation-delay: 0s; }
+    .auth-floating-card--two { animation-delay: 1.2s; }
+
+    @keyframes authOrbit {
+      0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+      50% { transform: translate3d(8px, -16px, 0) rotate(1.6deg); }
+    }
+
+    .auth-mosaic {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+
+    .auth-tile {
+      position: relative;
+      padding: 1.4rem;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid var(--border-glass);
+      box-shadow: 0 24px 60px rgba(110, 70, 0, 0.16);
+      backdrop-filter: blur(16px);
+      display: grid;
+      gap: 0.55rem;
+      animation: authCardSwing 6.2s ease-in-out infinite;
+    }
+
+    .auth-tile:nth-child(2n) { animation-delay: 1s; }
+    .auth-tile:nth-child(3n) { animation-delay: 1.8s; }
+
+    @keyframes authCardSwing {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-8px) rotate(0.6deg); }
+    }
+
+    .auth-tile-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 139, 107, 0.22);
+      color: #2e1f00;
+      font-size: 1.1rem;
+    }
+
+    .auth-tile h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    .auth-tile p {
+      font-size: 0.92rem;
+      color: var(--text-muted);
     }
 
     .auth-card {
       width: 100%;
-      max-width: 450px;
-      background: var(--card-bg);
-      border-radius: 24px;
-      padding: 3rem 2.5rem;
-      box-shadow: var(--shadow-strong);
-      backdrop-filter: blur(20px) saturate(180%);
-      border: 1px solid rgba(255, 255, 255, 0.3);
+      max-width: 420px;
+      justify-self: center;
+      background: var(--glass-strong);
+      border-radius: 28px;
+      padding: clamp(2.5rem, 4vw, 3rem) clamp(2rem, 4vw, 2.5rem);
+      box-shadow: var(--shadow-medium);
+      backdrop-filter: blur(24px);
+      border: 1px solid var(--border-glass);
       animation: containerEntry 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      display: grid;
+      gap: 2rem;
     }
 
     @keyframes containerEntry {
@@ -2294,12 +2547,13 @@
     }
 
     .auth-header {
-      text-align: center;
-      margin-bottom: 2.5rem;
+      display: grid;
+      gap: 0.6rem;
+      text-align: left;
     }
 
-    .auth-header h1 {
-      font-size: 2.5rem;
+    .auth-header h2 {
+      font-size: 2.2rem;
       font-weight: 800;
       background: var(--gradient-primary);
       -webkit-background-clip: text;
@@ -2320,8 +2574,8 @@
     }
 
     .auth-header p {
-      color: var(--text-light);
-      font-size: 1.1rem;
+      color: var(--text-muted);
+      font-size: 1rem;
       font-weight: 500;
     }
 
@@ -2586,6 +2840,62 @@
       letter-spacing: 2px;
       display: inline-block;
       margin: 0.5rem 0;
+    }
+
+    .success-note {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      margin-top: 1rem;
+    }
+
+    @media (max-width: 960px) {
+      .auth-container {
+        padding: 120px 1.5rem 3.5rem;
+      }
+
+      .auth-layout {
+        grid-template-columns: 1fr;
+        gap: 3rem;
+      }
+
+      .auth-hero {
+        text-align: center;
+        justify-items: center;
+      }
+
+      .auth-hero p {
+        max-width: 100%;
+      }
+
+      .auth-floating-card {
+        display: none;
+      }
+
+      .auth-mosaic {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+
+      .auth-header {
+        text-align: center;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .auth-container {
+        padding: 110px 1.25rem 3rem;
+      }
+
+      .auth-card {
+        padding: 2.2rem 1.6rem;
+      }
+
+      .toggle-buttons {
+        gap: 0.35rem;
+      }
+
+      .toggle-buttons button {
+        padding: 0.85rem 1.2rem;
+      }
     }
 
     /* DASHBOARD SECTION */
