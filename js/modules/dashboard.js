@@ -74,6 +74,7 @@ export function showAuthSection() {
   document.getElementById('logoutBtn').style.display = 'none';
   document.getElementById('navbarLogoutBtn').style.display = 'none';
   document.querySelector('nav.navbar').style.display = 'flex';
+  document.body.classList.add('has-aurora');
   resetRealtimeListeners();
   activeView = 'overview';
 }
@@ -84,6 +85,7 @@ export function showDashboardSection() {
   document.getElementById('logoutBtn').style.display = 'flex';
   document.getElementById('navbarLogoutBtn').style.display = 'block';
   document.querySelector('nav.navbar').style.display = 'none';
+  document.body.classList.remove('has-aurora');
   initDashboardNavigation();
 }
 

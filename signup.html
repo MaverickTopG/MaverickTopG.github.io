@@ -11,7 +11,7 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 
-<body>
+<body class="has-aurora">
   <!-- Top Navigation Bar -->
   <nav class="navbar">
     <div class="navbar-brand">
@@ -2175,7 +2175,30 @@
       font-size: 0.9rem;
     }
 
-    /* Animated background overlay removed */
+    body.has-aurora::before,
+    body.has-aurora::after {
+      content: '';
+      position: fixed;
+      inset: -140px;
+      z-index: -2;
+      pointer-events: none;
+      background: var(--gradient-aurora),
+        radial-gradient(circle at 18% 78%, rgba(255, 198, 120, 0.24), transparent 60%),
+        linear-gradient(135deg, rgba(255, 244, 218, 0.4), rgba(255, 227, 195, 0.28));
+      animation: authCanvasPulse 22s ease-in-out infinite alternate;
+    }
+
+    body.has-aurora::after {
+      inset: auto;
+      top: 48vh;
+      left: -120px;
+      right: -120px;
+      bottom: -180px;
+      background: radial-gradient(circle at 82% 24%, rgba(255, 111, 178, 0.28), transparent 58%),
+        radial-gradient(circle at 22% 90%, rgba(255, 179, 71, 0.32), transparent 60%),
+        linear-gradient(135deg, rgba(255, 244, 218, 0.35), rgba(255, 236, 205, 0.24));
+      animation: authCanvasDrift 26s ease-in-out infinite alternate;
+    }
 
     /* NAVBAR */
     .navbar {
