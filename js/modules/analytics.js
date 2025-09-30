@@ -185,17 +185,19 @@ export function renderCalendarHeatmap(direction = 0) {
   updateYearSelector(availableYears);
   
   const today = new Date();
+  const normalizedToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const displayYear = appState.analyticsState.heatmapYear || today.getFullYear();
   const startDate = new Date(displayYear, 0, 1);
   const endDate = new Date(displayYear, 11, 31);
+  const gridEndDate = displayYear === today.getFullYear() ? normalizedToday : endDate;
 
   const dailyTotals = new Map();
   const eventTotals = new Map();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
   const cursor = new Date(startDate);
-  // Create keys for all days in the year
-  while (cursor <= endDate) {
+  // Create keys for all days up to the rendered end date
+  while (cursor <= gridEndDate) {
     dailyTotals.set(formatDateKey(cursor), 0);
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -204,6 +206,7 @@ export function renderCalendarHeatmap(direction = 0) {
     if (!log.date) return;
     const logDate = parseDate(log.date);
     if (!logDate) return;
+    if (logDate > gridEndDate) return;
     const key = formatDateKey(logDate);
     if (!dailyTotals.has(key)) return;
 
@@ -217,7 +220,7 @@ export function renderCalendarHeatmap(direction = 0) {
   });
 
   const maxValue = Math.max(...dailyTotals.values(), 0);
-  const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+  const totalDays = Math.floor((gridEndDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
   if (totalDays <= 0) {
     container.innerHTML = '<div class="heatmap-grid"><div class="empty-state">No data to display for this month.</div></div>';
     return;
@@ -256,7 +259,7 @@ export function renderCalendarHeatmap(direction = 0) {
   for (let i = 0; i < totalDays; i++) {
     const cellDate = new Date(startDate);
     cellDate.setDate(startDate.getDate() + i);
-    const isFuture = cellDate > today;
+    const isFuture = displayYear === today.getFullYear() && cellDate > normalizedToday;
     const dateKey = formatDateKey(cellDate);
     const value = dailyTotals.get(dateKey) || 0;
     const intensity = maxValue > 0 ? value / maxValue : 0;

@@ -27,6 +27,8 @@
       --gradient-soft: linear-gradient(160deg, rgba(255, 187, 112, 0.58) 0%, rgba(255, 231, 190, 0.44) 100%);
       --gradient-aurora: radial-gradient(circle at 30% 20%, rgba(255, 145, 122, 0.52), transparent 60%),
         radial-gradient(circle at 70% 80%, rgba(255, 111, 178, 0.4), transparent 65%);
+      --section-gap: clamp(3rem, 7vh, 6rem);
+      --section-padding: clamp(2.4rem, 6vh, 4rem);
     }
 
     * {
@@ -176,17 +178,18 @@
 
     main {
       width: min(1100px, 92vw);
-      margin: 0 auto 6rem;
+      margin: 0 auto clamp(4rem, 8vh, 6rem);
       display: grid;
-      gap: clamp(4rem, 7vw, 6rem);
+      gap: var(--section-gap);
     }
 
     .hero {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: clamp(2.5rem, 6vw, 3.8rem);
+      gap: clamp(2.5rem, 4vw, 3.8rem);
       align-items: center;
-      padding-top: clamp(1rem, 6vh, 2rem);
+      padding: clamp(2rem, 8vh, 5rem) 0 clamp(1.5rem, 6vh, 3rem);
+      min-height: clamp(540px, 82vh, 720px);
     }
 
     .hero-intro {
@@ -240,8 +243,8 @@
     .hero-showcase {
       position: relative;
       display: grid;
-      gap: 1.3rem;
-      min-height: 480px;
+      gap: clamp(1.3rem, 3vh, 1.9rem);
+      min-height: clamp(480px, 62vh, 600px);
     }
 
     .halo {
@@ -385,8 +388,8 @@
 
     .section-shell {
       display: grid;
-      gap: 2.5rem;
-      padding: clamp(2.8rem, 5vw, 3.8rem);
+      gap: clamp(2rem, 5vh, 3rem);
+      padding: var(--section-padding);
       border-radius: 28px;
       background: rgba(255, 255, 255, 0.72);
       border: 1px solid var(--border-glass);
@@ -598,8 +601,8 @@
     .cta-section {
       text-align: center;
       display: grid;
-      gap: 1.2rem;
-      padding: clamp(2.8rem, 6vw, 3.4rem);
+      gap: clamp(1.2rem, 2.5vh, 1.6rem);
+      padding: var(--section-padding);
       border-radius: 28px;
       background: rgba(255, 255, 255, 0.8);
       border: 1px solid rgba(255, 255, 255, 0.55);
@@ -656,10 +659,10 @@
     }
 
     footer {
-      margin: 2rem auto 4rem;
+      margin: clamp(2rem, 5vh, 3rem) auto clamp(3rem, 6vh, 4rem);
       width: min(1100px, 92vw);
       text-align: center;
-      padding: 2.4rem;
+      padding: clamp(2rem, 4vh, 2.6rem);
       border-radius: 24px;
       background: rgba(255, 255, 255, 0.72);
       border: 1px solid rgba(255, 255, 255, 0.45);
@@ -733,6 +736,24 @@
 
       .accordion-body {
         padding: 0 1.5rem 1.5rem;
+      }
+    }
+
+    @media (min-height: 900px) {
+      :root {
+        --section-gap: clamp(3.5rem, 8vh, 7rem);
+        --section-padding: clamp(2.8rem, 7vh, 4.6rem);
+      }
+
+      .hero-showcase {
+        min-height: clamp(500px, 64vh, 640px);
+      }
+
+      .mosaic-card,
+      .summary-card,
+      details,
+      .compliance-card {
+        padding: clamp(1.8rem, 4vh, 2.4rem);
       }
     }
   </style>
