@@ -16,6 +16,7 @@ import {
 } from './programsEvents.js';
 import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
+import { hideBillingGate } from './billing.js';
 
 const VOLUNTEER_HOUR_VALUE = 28.27;
 let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
@@ -74,6 +75,7 @@ export function showAuthSection() {
   document.getElementById('logoutBtn').style.display = 'none';
   document.getElementById('navbarLogoutBtn').style.display = 'none';
   document.querySelector('nav.navbar').style.display = 'flex';
+  hideBillingGate();
   document.body.classList.add('has-aurora');
   resetRealtimeListeners();
   activeView = 'overview';
@@ -85,6 +87,7 @@ export function showDashboardSection() {
   document.getElementById('logoutBtn').style.display = 'flex';
   document.getElementById('navbarLogoutBtn').style.display = 'block';
   document.querySelector('nav.navbar').style.display = 'none';
+  hideBillingGate();
   document.body.classList.remove('has-aurora');
   initDashboardNavigation();
 }

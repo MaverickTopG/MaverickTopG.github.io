@@ -100,21 +100,76 @@
 
         <!-- Signup Form -->
         <div id="signupForm" class="auth-form hidden">
-          <div class="form-group">
-            <label for="signupEmail">Email Address</label>
-            <input type="email" id="signupEmail" placeholder="Enter your email" autocomplete="email">
+          <div id="signupPlanGate" class="signup-plan-gate">
+            <div class="signup-plan-intro">
+              <span class="signup-plan-tag"><i class="fas fa-crown"></i> Step 1</span>
+              <h3>Choose your billing plan</h3>
+              <p>Subscription unlocks the admin toolkit for your organization. Annual billing saves you $10.</p>
+            </div>
+            <div class="signup-plan-grid">
+              <article class="signup-plan-card" data-plan="monthly">
+                <div class="signup-plan-card__header">
+                  <span class="signup-plan-label">Monthly</span>
+                  <h4 class="signup-plan-price">$5<span>/month</span></h4>
+                </div>
+                <ul class="signup-plan-features">
+                  <li><i class="fas fa-check"></i> Full admin portal access</li>
+                  <li><i class="fas fa-check"></i> Unlimited volunteers & logs</li>
+                  <li><i class="fas fa-check"></i> Automated analytics & exports</li>
+                </ul>
+                <button
+                  type="button"
+                  class="btn-primary plan-checkout"
+                  data-checkout-plan="monthly"
+                  data-price-id="price_monthly_placeholder"
+                >Start Monthly</button>
+                <small class="signup-plan-note">Manage or cancel anytime via Stripe.</small>
+              </article>
+
+              <article class="signup-plan-card signup-plan-card--featured" data-plan="yearly">
+                <div class="signup-plan-card__header">
+                  <span class="signup-plan-label">Yearly</span>
+                  <span class="signup-plan-badge">Save $10</span>
+                  <h4 class="signup-plan-price">$50<span>/year</span></h4>
+                </div>
+                <ul class="signup-plan-features">
+                  <li><i class="fas fa-check"></i> Everything in Monthly</li>
+                  <li><i class="fas fa-check"></i> Priority roadmap requests</li>
+                  <li><i class="fas fa-check"></i> Annual compliance report bundle</li>
+                </ul>
+                <button
+                  type="button"
+                  class="btn-primary plan-checkout"
+                  data-checkout-plan="yearly"
+                  data-price-id="price_yearly_placeholder"
+                >Start Yearly</button>
+                <small class="signup-plan-note">Two months free compared to monthly.</small>
+              </article>
+            </div>
+            <p class="signup-plan-help">
+              Checkout handled securely by Stripe. Return here after payment to finish setting up your admin account.
+            </p>
           </div>
-          <div class="form-group">
-            <label for="signupPassword">Password</label>
-            <input type="password" id="signupPassword" placeholder="Create password (min 6 characters)"
-              autocomplete="new-password">
+
+          <div id="signupFields" class="signup-fields" style="display: none;">
+            <span class="signup-fields-tag"><i class="fas fa-user-plus"></i> Step 2</span>
+            <h3>Create your admin credentials</h3>
+            <div class="form-group">
+              <label for="signupEmail">Email Address</label>
+              <input type="email" id="signupEmail" placeholder="Enter your email" autocomplete="email">
+            </div>
+            <div class="form-group">
+              <label for="signupPassword">Password</label>
+              <input type="password" id="signupPassword" placeholder="Create password (min 6 characters)"
+                autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label for="organizationName">Organization Name</label>
+              <input type="text" id="organizationName" placeholder="Enter your organization name"
+                autocomplete="organization">
+            </div>
+            <button type="button" class="btn-primary" id="signupBtn" disabled><span>Create Account</span></button>
           </div>
-          <div class="form-group">
-            <label for="organizationName">Organization Name</label>
-            <input type="text" id="organizationName" placeholder="Enter your organization name"
-              autocomplete="organization">
-          </div>
-          <button type="button" class="btn-primary" id="signupBtn"><span>Create Account</span></button>
         </div>
 
         <!-- Success State -->
@@ -139,6 +194,66 @@
 
         <!-- Messages -->
         <div id="authMessage" class="auth-message"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="billingGate" class="billing-gate" style="display: none;">
+    <div class="billing-panel">
+      <div class="billing-hero">
+        <span class="billing-tag"><i class="fas fa-crown"></i> Unlock the admin experience</span>
+        <h2>Choose a plan that powers your volunteer impact.</h2>
+        <p id="billingStatusText">Pick a plan to unlock the NexoLink admin experience.</p>
+        <p id="billingRenewalText" class="billing-renewal-text" style="display: none;"></p>
+      </div>
+
+      <div class="billing-plans">
+        <article class="billing-card">
+          <div class="billing-card-header">
+            <span class="plan-label">Monthly</span>
+            <h3 class="plan-price">$5<span>/month</span></h3>
+          </div>
+          <ul class="plan-features">
+            <li><i class="fas fa-check"></i> Full admin portal access</li>
+            <li><i class="fas fa-check"></i> Unlimited volunteer records</li>
+            <li><i class="fas fa-check"></i> Automated analytics & reports</li>
+          </ul>
+          <button
+            class="btn-primary billing-checkout"
+            data-checkout-plan="monthly"
+            data-price-id="price_monthly_placeholder"
+          >Start Monthly</button>
+          <small class="plan-note">Cancel any time via the customer portal.</small>
+        </article>
+
+        <article class="billing-card billing-card--featured">
+          <div class="billing-card-header">
+            <span class="plan-label">Yearly</span>
+            <span class="plan-badge">Save $10</span>
+            <h3 class="plan-price">$50<span>/year</span></h3>
+          </div>
+          <ul class="plan-features">
+            <li><i class="fas fa-check"></i> Everything in Monthly</li>
+            <li><i class="fas fa-check"></i> Priority roadmap requests</li>
+            <li><i class="fas fa-check"></i> Annual compliance report bundle</li>
+          </ul>
+          <button
+            class="btn-primary billing-checkout"
+            data-checkout-plan="yearly"
+            data-price-id="price_yearly_placeholder"
+          >Start Yearly</button>
+          <small class="plan-note">Two free months compared to monthly billing.</small>
+        </article>
+      </div>
+
+      <div class="billing-footer">
+        <button class="btn-outline" data-customer-portal style="display: none;">
+          <i class="fas fa-sliders-h"></i>
+          Manage subscription
+        </button>
+        <p class="billing-help">
+          Need help or a purchase order? <a href="mailto:support@nexolink.org">Contact support</a> and we’ll get you set up.
+        </p>
       </div>
     </div>
   </div>
@@ -2200,6 +2315,184 @@
       animation: authCanvasDrift 26s ease-in-out infinite alternate;
     }
 
+    .billing-gate {
+      display: flex;
+      justify-content: center;
+      padding: clamp(3rem, 10vh, 5rem) 1.5rem 4rem;
+      min-height: calc(100vh - 120px);
+      background: transparent;
+    }
+
+    .billing-panel {
+      display: grid;
+      gap: clamp(2.5rem, 6vh, 4rem);
+      width: min(960px, 100%);
+    }
+
+    .billing-hero {
+      display: grid;
+      gap: 1rem;
+      text-align: center;
+      color: var(--text-dark);
+    }
+
+    .billing-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.45rem 1.1rem;
+      border-radius: 999px;
+      background: rgba(255, 190, 11, 0.2);
+      color: rgba(46, 31, 0, 0.85);
+      font-weight: 600;
+      width: fit-content;
+      margin: 0 auto;
+    }
+
+    .billing-hero h2 {
+      font-size: clamp(2.2rem, 5vw, 3.2rem);
+      font-weight: 820;
+      letter-spacing: -0.04em;
+    }
+
+    .billing-hero p {
+      max-width: 620px;
+      margin: 0 auto;
+      color: var(--text-muted);
+    }
+
+    .billing-renewal-text {
+      font-size: 0.95rem;
+      color: rgba(54, 34, 8, 0.62);
+    }
+
+    .billing-plans {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: clamp(1.5rem, 4vw, 2rem);
+    }
+
+    .billing-card {
+      display: grid;
+      gap: 1rem;
+      padding: clamp(1.8rem, 4vh, 2.4rem);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      box-shadow: 0 28px 70px rgba(104, 62, 0, 0.16);
+      backdrop-filter: blur(20px);
+      position: relative;
+    }
+
+    .billing-card--featured {
+      border: 1px solid rgba(255, 190, 11, 0.4);
+      box-shadow: 0 32px 80px rgba(255, 182, 32, 0.28);
+      transform: translateY(-6px);
+    }
+
+    .billing-card-header {
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .plan-label {
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: rgba(54, 34, 8, 0.55);
+    }
+
+    .plan-badge {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(255, 111, 178, 0.25);
+      color: #bf2a75;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .plan-price {
+      font-size: clamp(2.4rem, 5vw, 3rem);
+      font-weight: 820;
+      margin: 0;
+    }
+
+    .plan-price span {
+      font-size: 1rem;
+      font-weight: 600;
+      color: rgba(54, 34, 8, 0.55);
+      margin-left: 0.35rem;
+    }
+
+    .plan-features {
+      list-style: none;
+      display: grid;
+      gap: 0.65rem;
+      margin: 0;
+      padding: 0;
+      color: rgba(54, 34, 8, 0.75);
+      font-weight: 500;
+    }
+
+    .plan-features li i {
+      color: var(--accent);
+      margin-right: 0.5rem;
+    }
+
+    .billing-card .btn-primary {
+      justify-self: stretch;
+      padding: 0.9rem 1.6rem;
+    }
+
+    .billing-card .btn-primary.is-loading {
+      opacity: 0.65;
+    }
+
+    .plan-note {
+      font-size: 0.85rem;
+      color: rgba(54, 34, 8, 0.6);
+    }
+
+    .billing-footer {
+      display: grid;
+      gap: 0.75rem;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .billing-footer .btn-outline {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.85rem 1.6rem;
+      border-radius: 999px;
+      border: 1px solid rgba(54, 34, 8, 0.25);
+      background: rgba(255, 255, 255, 0.85);
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .billing-footer .btn-outline:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 40px rgba(104, 62, 0, 0.15);
+    }
+
+    .billing-help {
+      font-size: 0.9rem;
+      color: rgba(54, 34, 8, 0.62);
+    }
+
+    .billing-help a {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
     /* NAVBAR */
     .navbar {
       position: sticky;
@@ -2639,6 +2932,176 @@
     .toggle-buttons button:hover:not(.active) {
       color: var(--text-dark);
       transform: translateY(-1px);
+    }
+
+    .signup-plan-gate {
+      display: grid;
+      gap: clamp(1.2rem, 4vh, 1.8rem);
+      padding-top: 0.5rem;
+    }
+
+    .signup-plan-intro {
+      display: grid;
+      gap: 0.65rem;
+      text-align: center;
+    }
+
+    .signup-plan-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.95rem;
+      border-radius: 999px;
+      background: rgba(255, 190, 11, 0.22);
+      color: rgba(46, 31, 0, 0.85);
+      font-weight: 600;
+      font-size: 0.85rem;
+      justify-self: center;
+    }
+
+    .signup-plan-intro h3 {
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    .signup-plan-intro p {
+      color: var(--text-muted);
+      max-width: 520px;
+      justify-self: center;
+    }
+
+    .signup-plan-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: clamp(1rem, 3vw, 1.5rem);
+    }
+
+    .signup-plan-card {
+      position: relative;
+      display: grid;
+      gap: 0.85rem;
+      padding: 1.6rem;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      box-shadow: 0 24px 60px rgba(104, 62, 0, 0.14);
+      backdrop-filter: blur(18px);
+    }
+
+    .signup-plan-card:not(.signup-plan-card--featured):hover {
+      transform: translateY(-4px);
+      box-shadow: 0 28px 70px rgba(104, 62, 0, 0.18);
+    }
+
+    .signup-plan-card--featured {
+      border: 1px solid rgba(255, 190, 11, 0.45);
+      box-shadow: 0 30px 80px rgba(255, 182, 32, 0.2);
+      transform: translateY(-6px);
+    }
+
+    .signup-plan-card--featured:hover {
+      transform: translateY(-10px);
+      box-shadow: 0 36px 90px rgba(255, 182, 32, 0.28);
+    }
+
+    .signup-plan-card__header {
+      display: grid;
+      gap: 0.4rem;
+    }
+
+    .signup-plan-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: rgba(54, 34, 8, 0.55);
+    }
+
+    .signup-plan-badge {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 0.3rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(255, 111, 178, 0.22);
+      color: #b82472;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .signup-plan-price {
+      margin: 0;
+      font-size: 2rem;
+      font-weight: 820;
+      color: var(--text-dark);
+    }
+
+    .signup-plan-price span {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: rgba(54, 34, 8, 0.58);
+      margin-left: 0.3rem;
+    }
+
+    .signup-plan-features {
+      list-style: none;
+      display: grid;
+      gap: 0.55rem;
+      margin: 0;
+      padding: 0;
+      color: rgba(54, 34, 8, 0.72);
+      font-weight: 500;
+    }
+
+    .signup-plan-features li i {
+      margin-right: 0.45rem;
+      color: var(--accent);
+    }
+
+    .plan-checkout.btn-primary {
+      justify-content: center;
+      padding: 0.85rem 1.4rem;
+      width: 100%;
+    }
+
+    .plan-checkout.btn-primary.is-loading {
+      opacity: 0.6;
+    }
+
+    .signup-plan-note {
+      font-size: 0.82rem;
+      color: rgba(54, 34, 8, 0.6);
+    }
+
+    .signup-plan-help {
+      font-size: 0.85rem;
+      text-align: center;
+      color: rgba(54, 34, 8, 0.62);
+    }
+
+    .signup-fields {
+      display: grid;
+      gap: 1.2rem;
+    }
+
+    .signup-fields-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.9rem;
+      border-radius: 999px;
+      background: rgba(255, 190, 11, 0.2);
+      color: rgba(46, 31, 0, 0.85);
+      font-weight: 600;
+      font-size: 0.85rem;
+      width: fit-content;
+    }
+
+    .signup-fields h3 {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 700;
     }
 
     /* Form sections */

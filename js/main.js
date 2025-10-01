@@ -1,6 +1,7 @@
 import { setupAuthModule, registerAuthFormHandlers, toggleForm, signIn, signup, logout } from './modules/auth.js';
 import { showDashboardSection, initDashboardNavigation } from './modules/dashboard.js';
 import { attachGlobalUiHandlers } from './modules/ui.js';
+import { initBillingUi, showBillingGate, hideBillingGate } from './modules/billing.js';
 import {
   editVolunteerHours,
   saveVolunteerHours,
@@ -33,13 +34,16 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadSheetsReport,
     closeSheetsModal,
     generateSheetsData,
-    renderApprovalQueue
+    renderApprovalQueue,
+    showBillingGate,
+    hideBillingGate
   });
 
   // Initialize modules after functions are on the window
   attachGlobalUiHandlers();
   registerAuthFormHandlers();
   initDashboardNavigation();
+  initBillingUi();
   setupAuthModule();
   initAnalytics();
   initApprovalsModule();

@@ -1,0 +1,30 @@
+{
+  "functions": {
+    "source": "functions"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "/signup.html",
+        "type": 302
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/api/checkout",
+        "function": "createCheckout"
+      },
+      {
+        "source": "/api/stripe",
+        "function": "stripeWebhook"
+      }
+    ]
+  }
+}

@@ -14,6 +14,7 @@ import {
   where,
   getDocs,
   serverTimestamp,
+  deleteDoc,
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 import { auth, db } from "./firebase.js";
@@ -24,6 +25,7 @@ import {
   initializeDashboard,
   setActiveView,
 } from "./dashboard.js";
+import { showBillingGate, hideBillingGate } from "./billing.js";
 import {
   showMessage,
   clearInlineAuthMessage,
@@ -31,8 +33,52 @@ import {
 } from "./ui.js";
 
 const TAB_SESSION_KEY = `auth_${appState.tabId}`;
+const SIGNUP_CHECKOUT_KEY = 'signup_checkout_confirmed';
 
 let authFormHandlersRegistered = false;
+
+function syncSignupCheckoutStatus() {
+  if (typeof window === 'undefined') return;
+  const params = new URLSearchParams(window.location.search);
+  const sessionFlag = params.get('session');
+  if (sessionFlag === 'success') {
+    sessionStorage.setItem(SIGNUP_CHECKOUT_KEY, 'true');
+    params.delete('session');
+    if (params.has('plan')) params.delete('plan');
+    const newQuery = params.toString();
+    const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
+    window.history.replaceState({}, '', newUrl);
+  }
+}
+
+function hasCompletedSignupCheckout() {
+  if (typeof window === 'undefined') return false;
+  return sessionStorage.getItem(SIGNUP_CHECKOUT_KEY) === 'true';
+}
+
+function ensureSignupControls() {
+  if (typeof document === 'undefined') return;
+  const gate = document.getElementById('signupPlanGate');
+  const fields = document.getElementById('signupFields');
+  const submitBtn = document.getElementById('signupBtn');
+  const unlocked = hasCompletedSignupCheckout();
+
+  if (gate) {
+    gate.style.display = unlocked ? 'none' : 'grid';
+    gate.setAttribute('aria-hidden', unlocked ? 'true' : 'false');
+  }
+
+  if (fields) {
+    fields.style.display = unlocked ? 'grid' : 'none';
+    fields.setAttribute('aria-hidden', unlocked ? 'false' : 'true');
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = !unlocked;
+  }
+}
+
+syncSignupCheckoutStatus();
 
 export function toggleForm(type) {
   const signInForm = document.getElementById("signInForm");
@@ -65,6 +111,10 @@ export function toggleForm(type) {
   if (targetToggle) targetToggle.classList.add("active");
 
   clearInlineAuthMessage();
+
+  if (type === 'signup') {
+    ensureSignupControls();
+  }
 }
 
 export function registerAuthFormHandlers() {
@@ -131,6 +181,50 @@ export function registerAuthFormHandlers() {
   if (forgotPasswordLink) {
     forgotPasswordLink.addEventListener("click", handleForgotPassword);
   }
+
+  ensureSignupControls();
+}
+
+function normalizeSubscription(subscription) {
+  if (!subscription) {
+    return { status: 'inactive' };
+  }
+
+  const normalized = { ...subscription };
+  const timestampFields = [
+    'currentPeriodEnd',
+    'current_period_end',
+    'trialEnd',
+    'trial_end'
+  ];
+
+  timestampFields.forEach((field) => {
+    if (!normalized[field]) return;
+    const value = normalized[field];
+    if (typeof value?.toDate === 'function') {
+      normalized[field] = value.toDate();
+    } else if (typeof value === 'number') {
+      normalized[field] = new Date(value * (value < 1e12 ? 1000 : 1));
+    }
+  });
+
+  if (normalized.current_period_end && !normalized.currentPeriodEnd) {
+    normalized.currentPeriodEnd = normalized.current_period_end;
+  }
+
+  normalized.status = (normalized.status || 'inactive').toLowerCase();
+  return normalized;
+}
+
+function isSubscriptionActive(subscription) {
+  if (!subscription) return false;
+  if ((subscription.status || '').toLowerCase() !== 'active') return false;
+  if (!subscription.currentPeriodEnd) return true;
+  try {
+    return new Date(subscription.currentPeriodEnd).getTime() > Date.now();
+  } catch (error) {
+    return false;
+  }
 }
 
 export function setupAuthModule() {
@@ -149,12 +243,21 @@ export function setupAuthModule() {
 
         if (userDoc.exists() && userDoc.data().role === "admin") {
           const adminData = userDoc.data();
-          appState.currentAdmin = { uid: user.uid, ...adminData };
+          const subscription = normalizeSubscription(adminData.subscription);
+          const isActiveSub = isSubscriptionActive(subscription);
+
+          appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
           appState.currentOrgCode = adminData.organizationCode;
           appState.isAuthenticated = true;
 
           sessionStorage.setItem(TAB_SESSION_KEY, "true");
 
+          if (!isActiveSub) {
+            showBillingGate(subscription);
+            return;
+          }
+
+          hideBillingGate();
           showDashboardSection();
           setActiveView('overview');
           await initializeDashboard();
@@ -187,6 +290,7 @@ export function setupAuthModule() {
       console.error("onAuthStateChanged error:", error);
       sessionStorage.removeItem(TAB_SESSION_KEY);
       appState.isAuthenticated = false;
+      hideBillingGate();
       showAuthSection();
       toggleForm("signIn");
       sessionStorage.removeItem("auth_last_message");
@@ -252,10 +356,16 @@ export async function signup() {
   const emailInput = document.getElementById("signupEmail");
   const passwordInput = document.getElementById("signupPassword");
   const organizationInput = document.getElementById("organizationName");
-  const signupBtn = document.querySelector("#signupForm .btn-primary");
+  const signupBtn = document.getElementById("signupBtn");
   const signupLabel = signupBtn ? signupBtn.querySelector("span") : null;
 
   clearInlineAuthMessage();
+
+  if (!hasCompletedSignupCheckout()) {
+    showInlineAuthMessage("Choose a plan and complete checkout before creating your account.", "info");
+    ensureSignupControls();
+    return;
+  }
 
   const email = emailInput ? emailInput.value.trim() : "";
   const password = passwordInput ? passwordInput.value || "" : "";
@@ -311,11 +421,24 @@ export async function signup() {
       createdAt: serverTimestamp(),
     });
 
+    try {
+      const pendingRef = doc(db, 'pendingSubscriptions', email.toLowerCase());
+      const pendingSnap = await getDoc(pendingRef);
+      if (pendingSnap.exists()) {
+        await setDoc(doc(db, 'users', user.uid), pendingSnap.data(), { merge: true });
+        await deleteDoc(pendingRef);
+      }
+    } catch (err) {
+      console.warn('Unable to merge pending subscription', err);
+    }
+
     showInlineAuthMessage(
       "Account created successfully! Sign in with your new credentials.",
       "success"
     );
     renderSuccessState(organizationCode, email);
+    sessionStorage.removeItem(SIGNUP_CHECKOUT_KEY);
+    ensureSignupControls();
   } catch (error) {
     console.error("Signup error:", error);
     let errorMessage;
