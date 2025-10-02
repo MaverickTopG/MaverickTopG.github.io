@@ -102,9 +102,8 @@ export async function initializeDashboard() {
   try {
     displayAdminInfo();
     initDashboardNavigation();
-    // FIX: Initialize the billing module on dashboard load.
-    // This fetches subscription status and correctly displays either the
-    // dashboard or the billing gate, instead of relying on stale data.
+    // Initialize billing to fetch subscription status and determine
+    // if the dashboard or billing gate should be shown.
     initBillingModule();
 
     registerVolunteersUpdateHandler(() => {
@@ -465,7 +464,7 @@ function normalizeDateValue(val) {
   }
 
   if (!isNaN(d.getTime())) {
-    // FIX: Do not zero out the time here. Let comparisons happen with full date-time objects.
+    d.setHours(0, 0, 0, 0);
     return d;
   }
 

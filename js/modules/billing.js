@@ -1,27 +1,41 @@
 import { appState } from './state.js';
 import { showMessage, setTextContent } from './ui.js';
-import { auth, functions } from './firebase.js';
-import { httpsCallable } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-functions.js';
+import { auth } from './firebase.js';
 
 const STRIPE_PUBLISHABLE_KEY = 'pk_test_…'; // replace with your key
-let customerPortalFunction;
-let createCheckoutSessionFunction;
 
 export function initBillingModule() {
   if (!appState.isBillingInitialized) {
-    try {
-      customerPortalFunction = httpsCallable(functions, 'ext-firestore-stripe-payments-createPortalLink');
-      createCheckoutSessionFunction = httpsCallable(functions, 'ext-firestore-stripe-payments-createCheckoutSession');
-    } catch (e) {
-      console.error("Could not initialize billing functions", e);
-      showMessage("Billing functions are not available at the moment.", "error");
+    // The functions are now called via fetch, so no special initialization is needed here.
+    // We just need to ensure the event listener is attached.
+    const dashboardEl = document.getElementById('dashboardSection');
+    if (!dashboardEl) {
+      console.error("Dashboard element not found for billing event delegation.");
       return;
     }
 
-    const dashboardEl = document.getElementById('dashboardSection');
-    if (dashboardEl) {
-      dashboardEl.addEventListener('click', handleBillingActions);
-    }
+    dashboardEl.addEventListener('click', handleBillingActions);
+
+    const manageBillingBtn = document.getElementById('manageBilling');
+    manageBillingBtn?.addEventListener('click', async () => {
+      const user = auth.currentUser;
+      if (!user) {
+        showMessage("You must be signed in to manage your subscription.", "error");
+        return;
+      }
+      manageBillingBtn.classList.add('is-loading');
+      manageBillingBtn.disabled = true;
+      try {
+        const res = await fetch('/api/portal', { method: 'POST' });
+        const { url } = await res.json();
+        location.href = url;
+      } catch (error) {
+        showMessage('Could not open billing portal.', 'error');
+        manageBillingBtn.classList.remove('is-loading');
+        manageBillingBtn.disabled = false;
+      }
+    });
+
     appState.isBillingInitialized = true;
   }
   refreshBillingDisplay();
@@ -69,15 +83,29 @@ async function createCheckoutSession(button) {
   button.classList.add('is-loading');
   button.disabled = true;
 
+  const user = auth.currentUser;
+  if (!user) {
+    showMessage("You must be signed in to start a subscription.", "error");
+    button.classList.remove('is-loading');
+    button.disabled = false;
+    return;
+  }
+
   try {
-    const { data } = await createCheckoutSessionFunction({
-      price: priceId,
-      success_url: window.location.href,
-      cancel_url: window.location.href,
-      allow_promotion_codes: true,
-      trial_from_plan: false,
+    const idToken = await user.getIdToken();
+    const response = await fetch('/api/createCheckout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`
+      },
+      body: JSON.stringify({ priceId, plan, email: user.email, uid: user.uid })
     });
-    window.location.assign(data.url);
+
+    if (!response.ok) throw new Error(await response.text());
+
+    const { url } = await response.json();
+    window.location.assign(url);
   } catch (error) {
     console.error('Stripe checkout error:', error);
     showMessage(`Error creating checkout session: ${error.message}`, 'error');
@@ -87,15 +115,29 @@ async function createCheckoutSession(button) {
 }
 
 async function redirectToCustomerPortal() {
-  const portalButton = document.querySelector('[data-customer-portal]');
-  if (portalButton) {
-    portalButton.classList.add('is-loading');
-    portalButton.disabled = true;
+  // The button is already managed by the handleBillingActions function,
+  // which adds loading states. We can simplify this function.
+  const portalButton = document.querySelector('[data-customer-portal].is-loading');
+  
+  const user = auth.currentUser;
+  if (!user) {
+    showMessage("You must be signed in to manage your subscription.", "error");
+    if (portalButton) {
+      portalButton.classList.remove('is-loading');
+      portalButton.disabled = false;
+    }
+    return;
   }
 
   try {
-    const { data } = await customerPortalFunction({ returnUrl: window.location.href });
-    window.location.assign(data.url);
+    const idToken = await user.getIdToken();
+    const response = await fetch('/api/portal', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${idToken}` }
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const { url } = await response.json();
+    window.location.assign(url);
   } catch (error) {
     console.error('Customer portal error:', error);
     showMessage(`Error opening customer portal: ${error.message}`, 'error');
@@ -115,7 +157,8 @@ export async function refreshBillingDisplay() {
   }
 
   try {
-    const tokenResult = await user.getIdTokenResult(true);
+    await user.getIdToken(true);
+    const tokenResult = await user.getIdTokenResult();
     const claims = tokenResult.claims;
     const stripeRole = claims.stripeRole;
     const subscription = appState.currentAdmin?.subscription;
@@ -164,7 +207,7 @@ function updateBillingUI(subscription, stripeRole) {
   } = subscription;
 
   const interval = plan?.interval || 'month';
-  const price    = plan?.amount ? `$${(plan.amount/100).toFixed(0)}` : '';
+  const price    = plan?.amount ? `${(plan.amount/100).toFixed(0)}` : '';
 
   planNameEl.textContent   = `${interval.charAt(0).toUpperCase() + interval.slice(1)} Plan`;
   planAmountEl.textContent = `${price}/${interval}`;
@@ -190,7 +233,7 @@ function updateBillingUI(subscription, stripeRole) {
   // Invoice details
   if (latest_invoice) {
     setTextContent('billingInvoiceAmount', latest_invoice.amount_due > 0
-      ? `$${(latest_invoice.amount_due/100).toFixed(2)}`
+      ? `${(latest_invoice.amount_due/100).toFixed(2)}`
       : 'Paid');
     setTextContent('billingInvoiceStatus', latest_invoice.status);
     setTextContent('billingInvoiceDate', latest_invoice.created
@@ -222,7 +265,7 @@ function updateBillingUI(subscription, stripeRole) {
               <small>Quantity: ${item.quantity}</small>
             </div>
             <div class="activity-status">
-              $${(item.price.unit_amount/100).toFixed(2)} / ${item.price.recurring.interval}
+              ${(item.price.unit_amount/100).toFixed(2)} / ${item.price.recurring.interval}
             </div>
           </li>
         `).join('')

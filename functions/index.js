@@ -417,7 +417,7 @@ export const createCheckout = onRequest(
   }
 );
 
-export const createPortal = onRequest(
+export const portal = onRequest(
   {
     cors: true,
     secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL],

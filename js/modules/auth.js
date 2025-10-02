@@ -228,11 +228,10 @@ function normalizeSubscription(subscription) {
 
 function isSubscriptionActive(subscription) {
   if (!subscription) return false;
-  // FIX: A subscription is active if it's 'active' OR 'trialing'.
-  // This was the last critical bug preventing new users from seeing the dashboard.
   const activeStatuses = ['active', 'trialing'];
-  if (!activeStatuses.includes((subscription.status || '').toLowerCase())) return false;
-  if (!subscription.currentPeriodEnd) return true;
+  if (!activeStatuses.includes((subscription.status || '').toLowerCase())) {
+    return false;
+  }
   try {
     return new Date(subscription.currentPeriodEnd).getTime() > Date.now();
   } catch (error) {
@@ -245,9 +244,6 @@ export function setupAuthModule() {
 
   onAuthStateChanged(auth, async (user) => {
     try {
-      // Add a small delay to allow signIn function to set session storage
-      await new Promise(resolve => setTimeout(resolve, 100));
-
       const sessionHasAuth = sessionStorage.getItem(TAB_SESSION_KEY) === "true";
 
       if (user && sessionHasAuth) {
@@ -273,7 +269,7 @@ export function setupAuthModule() {
           hideBillingGate();
           showDashboardSection();
           setActiveView('overview');
-          await initializeDashboard(); // FIX: Only call initializeDashboard once.
+          await initializeDashboard();
           return;
         }
 
@@ -281,23 +277,14 @@ export function setupAuthModule() {
         // The rest of the logic will handle showing the correct message.
         await signOut(auth);
       }
-
-      const pendingAuthMessage = sessionStorage.getItem("auth_last_message");
-      if (pendingAuthMessage) {
-        try {
-          const parsed = JSON.parse(pendingAuthMessage);
-          showInlineAuthMessage(parsed.text || "", parsed.type || "info");
-        } catch (parseError) {
-          showInlineAuthMessage("Sign in to continue.", "info");
-        }
-        sessionStorage.removeItem("auth_last_message");
-      } else {
-        clearInlineAuthMessage();
-        if (!user) {
-          // Only show default message if there's no user and no pending message
-          showInlineAuthMessage("Sign in to continue.", "info");
-        }
-      }
+      // If we reach here, it means the user is not an admin or doesn't exist in our DB.
+      // We must ensure the UI resets to the login form.
+      appState.isAuthenticated = false;
+      sessionStorage.removeItem(TAB_SESSION_KEY);
+      hideBillingGate();
+      showAuthSection();
+      toggleForm("signIn");
+      showInlineAuthMessage("Sign in to continue.", "info");
     } catch (error) {
       console.error("onAuthStateChanged error:", error);
       sessionStorage.removeItem(TAB_SESSION_KEY);
@@ -305,7 +292,6 @@ export function setupAuthModule() {
       hideBillingGate();
       showAuthSection();
       toggleForm("signIn");
-      sessionStorage.removeItem("auth_last_message");
       showInlineAuthMessage(
         "Authentication error. Please sign in again.",
         "error"
@@ -568,46 +554,32 @@ export async function signIn() {
     const user = userCredential.user;
     console.log("Firebase signInWithEmailAndPassword success. User:", user);
 
+    // The `onAuthStateChanged` listener is the single source of truth.
+    // We only need to verify the user is an admin here. If they are not,
+    // we sign them out, which will trigger the listener to show an error.
     const userDocRef = doc(db, "users", user.uid);
     const userDoc = await getDoc(userDocRef);
-    console.log("Firestore getDoc result:", userDoc);
 
-    if (!userDoc.exists()) {
-      console.log("User document does not exist. Signing out.");
+    if (!userDoc.exists() || userDoc.data().role !== "admin") {
+      console.log("User is not an admin or does not exist. Signing out.");
       await signOut(auth);
-      showInlineAuthMessage("Admin account not found.", "error");
-      return; // Stop execution
+      // The onAuthStateChanged listener will handle the UI update and error message.
+      return;
     }
 
-    const userData = userDoc.data();
-    console.log("User data from Firestore:", userData);
-
-    if (userData.role !== "admin") {
-      console.log("User is not an admin. Signing out.");
-      await signOut(auth);
-      showInlineAuthMessage(
-        "Access denied. This portal is for administrators only.",
-        "error"
-      );
-      showMessage(
-        "Access denied. This portal is for administrators only.",
-        "error"
-      );
-      return; // Stop execution
-    }
-
-    console.log("User is an admin. Proceeding with login.");
-    appState.currentAdmin = { uid: user.uid, ...userData };
-    appState.currentOrgCode = userData.organizationCode;
-    appState.isAuthenticated = true;
-
-    sessionStorage.removeItem("auth_last_message");
+    // If the user is a valid admin, set the session key. The onAuthStateChanged
+    // listener will handle the rest of the UI transition to the dashboard.
     sessionStorage.setItem(TAB_SESSION_KEY, "true");
 
-    // FIX: Do not initialize the dashboard here.
-    // The onAuthStateChanged listener is the single source of truth for this.
-    // It will handle showing the dashboard and initializing it after verifying the user's role and subscription.
-    // This prevents race conditions and ensures all data is ready.
+    // The onAuthStateChanged listener is the single source of truth for all UI
+    // updates. Forcing a token refresh will trigger this listener. We must `await`
+    // this to ensure that the `finally` block (which re-enables the sign-in
+    // button) doesn't execute before the UI has a chance to transition to the
+    // dashboard. This prevents the UI from getting stuck on the "Signing you in..."
+    // message.
+    if (auth.currentUser) {
+      await auth.currentUser.getIdToken(true); // Force refresh to trigger listener
+    }
   } catch (error) {
     console.error("Sign in error:", error);
     let errorMessage;

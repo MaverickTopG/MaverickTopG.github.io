@@ -1,7 +1,7 @@
 import { setupAuthModule, registerAuthFormHandlers, toggleForm, signIn, signup, logout } from './modules/auth.js';
 import { showDashboardSection, initDashboardNavigation } from './modules/dashboard.js';
 import { attachGlobalUiHandlers } from './modules/ui.js';
-import { initBillingUi, showBillingGate, hideBillingGate } from './modules/billing.js';
+import { initBillingModule, showBillingGate, hideBillingGate } from './modules/billing.js';
 import {
   editVolunteerHours,
   saveVolunteerHours,
@@ -39,12 +39,14 @@ document.addEventListener('DOMContentLoaded', () => {
     hideBillingGate
   });
 
-  // Initialize modules after functions are on the window
+  // FIX: Initialize the auth module FIRST. This is critical to prevent race conditions.
+  // The onAuthStateChanged listener must be active before any other code
+  // (like a sign-in attempt) tries to interact with the authentication state.
+  setupAuthModule();
   attachGlobalUiHandlers();
   registerAuthFormHandlers();
   initDashboardNavigation();
-  initBillingUi();
-  setupAuthModule();
+  initBillingModule();
   initAnalytics();
   initApprovalsModule();
 });
