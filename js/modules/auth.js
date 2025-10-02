@@ -127,6 +127,16 @@ export function registerAuthFormHandlers() {
   const signupPassword = document.getElementById("signupPassword");
   const organizationName = document.getElementById("organizationName");
   const forgotPasswordLink = document.getElementById("forgotPasswordLink");
+  const signInToggle = document.getElementById("signInToggle");
+  const signupToggle = document.getElementById("signupToggle");
+
+  if (signInToggle) {
+    signInToggle.addEventListener('click', () => toggleForm('signIn'));
+  }
+
+  if (signupToggle) {
+    signupToggle.addEventListener('click', () => toggleForm('signup'));
+  }
 
   if (signInEmail) {
     signInEmail.addEventListener("keypress", (event) => {
@@ -218,7 +228,10 @@ function normalizeSubscription(subscription) {
 
 function isSubscriptionActive(subscription) {
   if (!subscription) return false;
-  if ((subscription.status || '').toLowerCase() !== 'active') return false;
+  // FIX: A subscription is active if it's 'active' OR 'trialing'.
+  // This was the last critical bug preventing new users from seeing the dashboard.
+  const activeStatuses = ['active', 'trialing'];
+  if (!activeStatuses.includes((subscription.status || '').toLowerCase())) return false;
   if (!subscription.currentPeriodEnd) return true;
   try {
     return new Date(subscription.currentPeriodEnd).getTime() > Date.now();
@@ -260,8 +273,7 @@ export function setupAuthModule() {
           hideBillingGate();
           showDashboardSection();
           setActiveView('overview');
-          await initializeDashboard();
-          await initializeDashboard();
+          await initializeDashboard(); // FIX: Only call initializeDashboard once.
           return;
         }
 
@@ -592,8 +604,10 @@ export async function signIn() {
     sessionStorage.removeItem("auth_last_message");
     sessionStorage.setItem(TAB_SESSION_KEY, "true");
 
-    showDashboardSection();
-    await initializeDashboard();
+    // FIX: Do not initialize the dashboard here.
+    // The onAuthStateChanged listener is the single source of truth for this.
+    // It will handle showing the dashboard and initializing it after verifying the user's role and subscription.
+    // This prevents race conditions and ensures all data is ready.
   } catch (error) {
     console.error("Sign in error:", error);
     let errorMessage;

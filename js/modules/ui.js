@@ -162,6 +162,36 @@ export function attachGlobalUiHandlers() {
 }
 
 /**
+ * Formats an email so we only expose the first one or two characters
+ * of the local part followed by the full domain (e.g. jo@example.com).
+ * If the local part is two characters or fewer, only the first character
+ * is kept to satisfy privacy requirements.
+ *
+ * @param {string} email Original email address.
+ * @returns {string} Formatted email for display.
+ */
+export function formatEmailForDisplay(email = '') {
+  if (!email || typeof email !== 'string') return '—';
+  const trimmed = email.trim();
+  if (!trimmed) return '—';
+
+  const atIndex = trimmed.indexOf('@');
+  if (atIndex <= 0) {
+    return trimmed.toLowerCase();
+  }
+
+  const localPart = trimmed.slice(0, atIndex).toLowerCase();
+  const domainPart = trimmed.slice(atIndex).toLowerCase(); // includes '@'
+
+  if (!domainPart) {
+    return trimmed.toLowerCase();
+  }
+
+  const normalizedLocal = localPart.length <= 2 ? localPart.slice(0, 1) : localPart.slice(0, 2);
+  return `${normalizedLocal}${domainPart}`;
+}
+
+/**
  * Applies a staggered "roll-in" animation to a list of elements.
  * This should be called each time the view containing the list becomes active.
  * @param {string} selector A CSS selector for the items to animate (e.g., 'tbody tr').

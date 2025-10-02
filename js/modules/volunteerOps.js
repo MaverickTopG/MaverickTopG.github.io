@@ -16,9 +16,8 @@ import {
   getDocs,
 } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
 import { appState } from './state.js';
-import { showMessage, setTextContent } from './ui.js';
+import { showMessage, setTextContent, formatEmailForDisplay, triggerListAnimation } from './ui.js';
 import { setActiveView } from './dashboard.js';
-import { triggerListAnimation } from './ui.js';
 
 let volunteersUpdateHandler = () => {};
 
@@ -247,9 +246,10 @@ export function displayVolunteers() { // This function is also exported as rende
     const roleMeta = rolesCatalog.find((r) => r.id === v.role) || { name: v.role || 'Volunteer' };
 
     const row = document.createElement('tr');
+    const maskedEmail = formatEmailForDisplay(v.email || '');
     row.innerHTML = `
       <td>${name}</td>
-      <td>${v.email}</td>
+      <td title="${v.email || ''}">${maskedEmail}</td>
       <td><span class="role-pill role-${v.role || 'volunteer'}">${roleMeta.name}</span></td>
       <td><span class="hours-badge">${(v.totalHours || 0).toFixed(1)} hrs</span></td>
       <td>${lastActivity}</td>

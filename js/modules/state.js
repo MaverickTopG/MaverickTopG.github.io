@@ -43,5 +43,12 @@ export const appState = {
   scheduledReports: [],
   reportSchedulesUnsub: null,
   roleManagerSelection: new Set(),
+  billing: {
+    subscription: null,
+    lastInvoice: null,
+    activity: [],
+    claims: null,
+    tokenRefreshedAt: null
+  },
   authInitialized: false
 };

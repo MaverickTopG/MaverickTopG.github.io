@@ -312,12 +312,18 @@ body::after {
 }
 
 .org-code {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: var(--gradient-primary);
     color: var(--black);
-    padding: 3px 10px;
-    border-radius: 15px;
-    font-weight: 600;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    font-weight: 700;
     font-size: 0.85rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    width: fit-content;
 }
 
 /* Statistics Grid */

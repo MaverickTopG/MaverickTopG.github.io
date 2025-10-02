@@ -1,5 +1,5 @@
 import { appState } from './state.js';
-import { showMessage } from './ui.js';
+import { showMessage, formatEmailForDisplay } from './ui.js';
 import { db } from './firebase.js';
 import { doc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
 import { notifyVolunteersUpdate } from './volunteerOps.js';
@@ -54,7 +54,7 @@ function renderRoleCards(members) {
         <div class="role-card__header">
           <div>
             <h4>${name}</h4>
-            <span class="subtle-text">${email}</span>
+            <span class="subtle-text" title="${email}">${formatEmailForDisplay(email)}</span>
           </div>
           <span class="role-pill role-${member.role || 'volunteer'}">${roleMeta.name}</span>
         </div>

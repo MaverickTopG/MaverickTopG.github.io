@@ -1,164 +1,267 @@
-import { showMessage } from './ui.js';
+import { appState } from './state.js';
+import { showMessage, setTextContent } from './ui.js';
+import { auth, functions } from './firebase.js';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-functions.js';
 
-let billingHandlersRegistered = false;
+const STRIPE_PUBLISHABLE_KEY = 'pk_test_…'; // replace with your key
+let customerPortalFunction;
+let createCheckoutSessionFunction;
 
-const CHECKOUT_ENDPOINT = '/api/checkout';
-const PORTAL_ENDPOINT = '/api/stripe/create-portal-session';
-
-function setLoading(button, loading) {
-  if (!button) return;
-  if (loading) {
-    button.dataset.originalText = button.dataset.originalText || button.innerText;
-    button.classList.add('is-loading');
-    button.innerText = 'Redirecting…';
-    button.disabled = true;
-  } else {
-    button.classList.remove('is-loading');
-    if (button.dataset.originalText) {
-      button.innerText = button.dataset.originalText;
-      delete button.dataset.originalText;
-    }
-    button.disabled = false;
-  }
-}
-
-async function startCheckout(priceId, button) {
-  if (!priceId) {
-    showMessage('Price ID missing. Configure your Stripe price IDs.', 'error');
-    return;
-  }
-
-  try {
-    setLoading(button, true);
-    const emailInput = document.getElementById('signupEmail');
-    const email = emailInput ? emailInput.value.trim() : '';
-    if (typeof window !== 'undefined') {
-      try {
-        sessionStorage.setItem('signup_selected_plan', priceId);
-      } catch (err) {
-        // ignore storage failures
-      }
-    }
-    const response = await fetch(CHECKOUT_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        priceId,
-        email,
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error('Unable to create checkout session.');
-    }
-
-    const payload = await response.json();
-    if (payload.url) {
-      window.location.href = payload.url;
+export function initBillingModule() {
+  if (!appState.isBillingInitialized) {
+    try {
+      customerPortalFunction = httpsCallable(functions, 'ext-firestore-stripe-payments-createPortalLink');
+      createCheckoutSessionFunction = httpsCallable(functions, 'ext-firestore-stripe-payments-createCheckoutSession');
+    } catch (e) {
+      console.error("Could not initialize billing functions", e);
+      showMessage("Billing functions are not available at the moment.", "error");
       return;
     }
 
-    throw new Error(payload.error || 'Checkout session missing redirect URL.');
-  } catch (error) {
-    console.error(error);
-    showMessage(error.message || 'Unable to start checkout.', 'error');
-  } finally {
-    setLoading(button, false);
-  }
-}
-
-async function openCustomerPortal(button) {
-  try {
-    setLoading(button, true);
-    const response = await fetch(PORTAL_ENDPOINT, { method: 'POST' });
-    if (!response.ok) {
-      throw new Error('Unable to create portal session.');
+    const dashboardEl = document.getElementById('dashboardSection');
+    if (dashboardEl) {
+      dashboardEl.addEventListener('click', handleBillingActions);
     }
-    const payload = await response.json();
-    if (payload.url) {
-      window.location.href = payload.url;
-      return;
-    }
-    throw new Error(payload.error || 'Portal session missing redirect URL.');
-  } catch (error) {
-    console.error(error);
-    showMessage(error.message || 'Unable to open customer portal.', 'error');
-  } finally {
-    setLoading(button, false);
+    appState.isBillingInitialized = true;
+  }
+  refreshBillingDisplay();
+}
+
+async function handleBillingActions(event) {
+  const checkoutButton = event.target.closest('.billing-checkout, .plan-checkout');
+  const portalButton = event.target.closest('[data-customer-portal]');
+
+  if (checkoutButton) {
+    await createCheckoutSession(checkoutButton);
+  } else if (portalButton) {
+    await redirectToCustomerPortal();
   }
 }
 
-function formatDate(date) {
-  if (!date) return '';
-  try {
-    return new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch (error) {
-    return '';
-  }
-}
-
-export function initBillingUi() {
-  if (billingHandlersRegistered) return;
-  billingHandlersRegistered = true;
-
-  document
-    .querySelectorAll('[data-checkout-plan]')
-    .forEach((button) => {
-      button.addEventListener('click', () => startCheckout(button.dataset.priceId, button));
-    });
-
-  const portalBtn = document.querySelector('[data-customer-portal]');
-  if (portalBtn) {
-    portalBtn.addEventListener('click', () => openCustomerPortal(portalBtn));
-  }
-}
-
-export function showBillingGate(subscription = {}) {
+export function showBillingGate(status, renewalDate) {
   const gate = document.getElementById('billingGate');
-  const authSection = document.getElementById('authSection');
-  const dashboard = document.getElementById('dashboardSection');
-  const statusText = document.getElementById('billingStatusText');
-  const renewalText = document.getElementById('billingRenewalText');
-  const portalBtn = document.querySelector('[data-customer-portal]');
-  const navBar = document.querySelector('nav.navbar');
-  const navLogout = document.getElementById('navbarLogoutBtn');
-  const sideLogout = document.getElementById('logoutBtn');
+  if (!gate) return;
 
-  if (authSection) authSection.style.display = 'none';
-  if (dashboard) dashboard.style.display = 'none';
-  if (gate) gate.style.display = 'flex';
-  document.body.classList.add('has-aurora');
-  if (navBar) navBar.style.display = 'flex';
-  if (navLogout) navLogout.style.display = 'block';
-  if (sideLogout) sideLogout.style.display = 'none';
-
-  initBillingUi();
-
-  const status = (subscription.status || 'inactive').toLowerCase();
-  if (statusText) {
-    if (status === 'active') {
-      statusText.innerText = 'Your subscription is active. Feel free to manage it below or continue using the dashboard.';
-    } else if (status === 'past_due' || status === 'canceled' || status === 'unpaid') {
-      statusText.innerText = 'We were unable to renew your subscription. Choose a plan to regain access instantly.';
-    } else {
-      statusText.innerText = 'Pick a plan to unlock the NexoLink admin experience.';
-    }
+  setTextContent('billingStatusText', `Your current plan is ${status}.`);
+  const renewalEl = document.getElementById('billingRenewalText');
+  if (renewalEl && renewalDate) {
+    renewalEl.textContent = `Your plan renews on ${new Date(renewalDate).toLocaleDateString()}.`;
+    renewalEl.style.display = 'block';
+  } else if (renewalEl) {
+    renewalEl.style.display = 'none';
   }
 
-  if (renewalText) {
-    const periodEnd = subscription.currentPeriodEnd || subscription.current_period_end;
-    const formatted = periodEnd ? formatDate(periodEnd) : '';
-    renewalText.innerText = formatted ? `Current period ends ${formatted}.` : '';
-    renewalText.style.display = formatted ? 'block' : 'none';
-  }
-
-  if (portalBtn) {
-    portalBtn.style.display = status === 'active' ? 'inline-flex' : 'none';
-  }
+  gate.style.display = 'flex';
+  document.getElementById('dashboardSection').style.display = 'none';
 }
 
 export function hideBillingGate() {
   const gate = document.getElementById('billingGate');
   if (gate) gate.style.display = 'none';
-  document.body.classList.remove('has-aurora');
+}
+
+async function createCheckoutSession(button) {
+  const plan = button.dataset.checkoutPlan;
+  const priceId = plan === 'yearly'
+    ? 'price_1PPfJQRxL0hMhYyI8s7t6r5f'
+    : 'price_1PPfJQRxL0hMhYyI4t3y2x1w';
+
+  button.classList.add('is-loading');
+  button.disabled = true;
+
+  try {
+    const { data } = await createCheckoutSessionFunction({
+      price: priceId,
+      success_url: window.location.href,
+      cancel_url: window.location.href,
+      allow_promotion_codes: true,
+      trial_from_plan: false,
+    });
+    window.location.assign(data.url);
+  } catch (error) {
+    console.error('Stripe checkout error:', error);
+    showMessage(`Error creating checkout session: ${error.message}`, 'error');
+    button.classList.remove('is-loading');
+    button.disabled = false;
+  }
+}
+
+async function redirectToCustomerPortal() {
+  const portalButton = document.querySelector('[data-customer-portal]');
+  if (portalButton) {
+    portalButton.classList.add('is-loading');
+    portalButton.disabled = true;
+  }
+
+  try {
+    const { data } = await customerPortalFunction({ returnUrl: window.location.href });
+    window.location.assign(data.url);
+  } catch (error) {
+    console.error('Customer portal error:', error);
+    showMessage(`Error opening customer portal: ${error.message}`, 'error');
+    if (portalButton) {
+      portalButton.classList.remove('is-loading');
+      portalButton.disabled = false;
+    }
+  }
+}
+
+export async function refreshBillingDisplay() {
+  const user = auth.currentUser;
+  if (!user) {
+    updateBillingUI(null);
+    updateBillingDebug(null);
+    return;
+  }
+
+  try {
+    const tokenResult = await user.getIdTokenResult(true);
+    const claims = tokenResult.claims;
+    const stripeRole = claims.stripeRole;
+    const subscription = appState.currentAdmin?.subscription;
+
+    updateBillingUI(subscription, stripeRole);
+    updateBillingDebug(claims, subscription);
+  } catch (error) {
+    console.error("Error refreshing billing display:", error);
+    updateBillingUI(null);
+    updateBillingDebug(null);
+  }
+}
+
+function updateBillingUI(subscription, stripeRole) {
+  const planNameEl        = document.getElementById('billingPlanName');
+  const planAmountEl      = document.getElementById('billingPlanAmount');
+  const renewalCopyEl     = document.getElementById('billingRenewalCopy');
+  const statusPillEl      = document.getElementById('billingStatusPill');
+  const trialCountdownEl  = document.getElementById('billingTrialCountdown');
+  const portalBtn         = document.querySelector('[data-customer-portal]');
+  const activityList      = document.getElementById('billingActivityList');
+
+  if (portalBtn) {
+    portalBtn.style.display = stripeRole ? 'inline-flex' : 'none';
+  }
+
+  if (!subscription || !subscription.status) {
+    planNameEl.textContent       = 'No active plan';
+    planAmountEl.textContent     = 'Choose a plan to unlock the admin experience.';
+    renewalCopyEl.textContent    = 'No renewal scheduled.';
+    statusPillEl.textContent     = 'Inactive';
+    statusPillEl.className       = 'status-pill pill-muted';
+    trialCountdownEl.style.display = 'none';
+    if (activityList) activityList.innerHTML = '<li class="empty">No subscription items found.</li>';
+    return;
+  }
+
+  const {
+    status,
+    trial_end,
+    current_period_end,
+    plan,
+    cancel_at_period_end,
+    latest_invoice,
+    items
+  } = subscription;
+
+  const interval = plan?.interval || 'month';
+  const price    = plan?.amount ? `$${(plan.amount/100).toFixed(0)}` : '';
+
+  planNameEl.textContent   = `${interval.charAt(0).toUpperCase() + interval.slice(1)} Plan`;
+  planAmountEl.textContent = `${price}/${interval}`;
+  statusPillEl.textContent = status;
+  statusPillEl.className   = `status-pill pill-${status.match(/active|trialing/) ? 'active' : 'warning'}`;
+
+  // Trial vs renewal copy
+  if (status === 'trialing' && trial_end) {
+    const endDate = trial_end.toDate();
+    const daysLeft = Math.ceil((endDate - Date.now())/(1000*60*60*24));
+    trialCountdownEl.textContent = `You have ${daysLeft} days left in your trial.`;
+    trialCountdownEl.style.display = 'block';
+    renewalCopyEl.textContent      = `Your trial ends on ${endDate.toLocaleDateString()}.`;
+  } else {
+    trialCountdownEl.style.display = 'none';
+    if (cancel_at_period_end) {
+      renewalCopyEl.textContent = `Your plan will be cancelled on ${current_period_end.toDate().toLocaleDateString()}.`;
+    } else {
+      renewalCopyEl.textContent = `Your plan renews on ${current_period_end.toDate().toLocaleDateString()}.`;
+    }
+  }
+
+  // Invoice details
+  if (latest_invoice) {
+    setTextContent('billingInvoiceAmount', latest_invoice.amount_due > 0
+      ? `$${(latest_invoice.amount_due/100).toFixed(2)}`
+      : 'Paid');
+    setTextContent('billingInvoiceStatus', latest_invoice.status);
+    setTextContent('billingInvoiceDate', latest_invoice.created
+      ? new Date(latest_invoice.created*1000).toLocaleDateString()
+      : '—');
+    const badge = document.getElementById('billingInvoiceBadge');
+    if (badge) {
+      badge.textContent = latest_invoice.status;
+      badge.className   = `status-pill pill-${latest_invoice.status === 'paid' ? 'active' : 'warning'}`;
+    }
+    const link = document.getElementById('billingInvoiceLink');
+    if (link) {
+      if (latest_invoice.hosted_invoice_url) {
+        link.href = latest_invoice.hosted_invoice_url;
+        link.style.display = 'inline-flex';
+      } else {
+        link.style.display = 'none';
+      }
+    }
+  }
+
+  // Activity list
+  if (activityList) {
+    activityList.innerHTML = items && items.length
+      ? items.map(item => `
+          <li>
+            <div class="activity-meta">
+              <span>${item.price.product?.name || 'Subscription Item'}</span>
+              <small>Quantity: ${item.quantity}</small>
+            </div>
+            <div class="activity-status">
+              $${(item.price.unit_amount/100).toFixed(2)} / ${item.price.recurring.interval}
+            </div>
+          </li>
+        `).join('')
+      : '<li class="empty">No subscription items found.</li>';
+  }
+}
+
+function updateBillingDebug(claims, subscription) {
+  const debugEl = document.getElementById('billingDebugContent');
+  if (!debugEl) return;
+
+  if (!auth.currentUser) {
+    debugEl.textContent = 'Not signed in.';
+    return;
+  }
+
+  const toDate = ts => {
+    if (!ts) return 'n/a';
+    return typeof ts.toDate === 'function'
+      ? ts.toDate().toLocaleString()
+      : (new Date(ts*1000)).toLocaleString();
+  };
+
+  debugEl.textContent = `
+    claims.stripeRole:      ${claims?.stripeRole  || 'n/a'}
+    claims.exp:             ${toDate(claims?.exp)}
+
+    subscription.id:        ${subscription?.id    || 'n/a'}
+    subscription.status:    ${subscription?.status|| 'n/a'}
+    subscription.trial_end: ${toDate(subscription?.trial_end)}
+    subscription.current_period_end: ${toDate(subscription?.current_period_end)}
+    subscription.cancel_at_period_end: ${subscription?.cancel_at_period_end || false}
+
+    latest_invoice.id:      ${subscription?.latest_invoice?.id    || 'n/a'}
+    latest_invoice.status:  ${subscription?.latest_invoice?.status|| 'n/a'}
+    latest_invoice.paid:    ${subscription?.latest_invoice?.paid  || 'n/a'}
+  `.trim();
+}
+
+export function subscribeToSubscriptionChanges() {
+  // listen for Firestore updates and call refreshBillingDisplay()
 }

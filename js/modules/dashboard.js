@@ -1,5 +1,5 @@
 import { appState } from './state.js';
-import { showMessage, animateNumber, setTextContent } from './ui.js';
+import { showMessage, animateNumber, setTextContent, formatEmailForDisplay } from './ui.js';
 import {
   initVolunteerEditView,
   resetVolunteerListener,
@@ -16,7 +16,7 @@ import {
 } from './programsEvents.js';
 import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
-import { hideBillingGate } from './billing.js';
+import { hideBillingGate, initBillingModule } from './billing.js';
 
 const VOLUNTEER_HOUR_VALUE = 28.27;
 let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
@@ -66,6 +66,8 @@ export function setActiveView(view) {
     renderTopVolunteers();
     renderEventActivityChart();
     renderCalendarHeatmap();
+  } else if (view === 'billing') {
+    initBillingModule();
   }
 }
 
@@ -100,6 +102,10 @@ export async function initializeDashboard() {
   try {
     displayAdminInfo();
     initDashboardNavigation();
+    // FIX: Initialize the billing module on dashboard load.
+    // This fetches subscription status and correctly displays either the
+    // dashboard or the billing gate, instead of relying on stale data.
+    initBillingModule();
 
     registerVolunteersUpdateHandler(() => {
       updateStatistics();
@@ -148,7 +154,11 @@ function displayAdminInfo() {
   const { email = '', organizationName = 'Organization' } = appState.currentAdmin || {};
   const orgCode = appState.currentOrgCode || 'XXXXXXXX';
 
-  setTextContent('sidebarUserEmail', email);
+  setTextContent('sidebarUserEmail', formatEmailForDisplay(email));
+  const sidebarEmailEl = document.getElementById('sidebarUserEmail');
+  if (sidebarEmailEl) {
+    sidebarEmailEl.title = email || '';
+  }
   setTextContent('sidebarOrgName', organizationName);
   setTextContent('sidebarOrgCode', orgCode);
   setTextContent('sidebarAvatar', computeInitials(email, organizationName));
@@ -313,7 +323,7 @@ function renderTopVolunteers() {
           <div class="employee-avatar">${initials}</div>
           <div class="employee-text">
             <div class="employee-name">${name}</div>
-            <div class="subtle-text">${v.email||''}</div>
+            <div class="subtle-text" title="${v.email || ''}">${formatEmailForDisplay(v.email || '')}</div>
           </div>
         </div>
         <div class="employee-hours">${hrs} hrs</div>

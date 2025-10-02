@@ -1,26 +1,43 @@
 import { onRequest } from 'firebase-functions/v2/https';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { defineSecret } from 'firebase-functions/params';
 import Stripe from 'stripe';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 
 const STRIPE_SECRET_KEY = defineSecret('STRIPE_SECRET_KEY');
 const STRIPE_WEBHOOK_SECRET = defineSecret('STRIPE_WEBHOOK_SECRET');
 const PUBLIC_BASE_URL = defineSecret('PUBLIC_BASE_URL');
+const STRIPE_PRICE_MONTHLY = defineSecret('STRIPE_PRICE_MONTHLY');
+const STRIPE_PRICE_YEARLY = defineSecret('STRIPE_PRICE_YEARLY');
 
 initializeApp();
 const db = getFirestore();
+const authAdmin = getAuth();
 
-const PRICE_MAP = {
-  monthly: 'price_monthly_placeholder',
-  yearly: 'price_yearly_placeholder',
-};
+function safeSecretValue(secret, fallback) {
+  try {
+    const value = secret.value();
+    return value || fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function getPriceMap() {
+  return {
+    monthly: safeSecretValue(STRIPE_PRICE_MONTHLY, null),
+    yearly: safeSecretValue(STRIPE_PRICE_YEARLY, null),
+  };
+}
 
 function resolvePriceId(input) {
   if (!input) return null;
-  if (PRICE_MAP[input]) return PRICE_MAP[input];
-  if (Object.values(PRICE_MAP).includes(input)) return input;
+  const priceMap = getPriceMap();
+  if (priceMap[input]) return priceMap[input];
+  if (Object.values(priceMap).includes(input)) return input;
   return null;
 }
 
@@ -30,7 +47,94 @@ function computePaidStatus(status) {
   return normalized === 'active' || normalized === 'trialing';
 }
 
-async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail) {
+async function findUserDocByEmail(normalizedEmail, originalEmail = null) {
+  const normalized = (normalizedEmail || originalEmail || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const byNormalized = await db
+    .collection('users')
+    .where('emailNormalized', '==', normalized)
+    .limit(1)
+    .get();
+
+  if (!byNormalized.empty) {
+    return byNormalized.docs[0];
+  }
+
+  const byLowerEmail = await db
+    .collection('users')
+    .where('email', '==', normalized)
+    .limit(1)
+    .get();
+
+  if (!byLowerEmail.empty) {
+    return byLowerEmail.docs[0];
+  }
+
+  if (originalEmail && originalEmail.trim()) {
+    const byExactEmail = await db
+      .collection('users')
+      .where('email', '==', originalEmail.trim())
+      .limit(1)
+      .get();
+
+    if (!byExactEmail.empty) {
+      return byExactEmail.docs[0];
+    }
+  }
+
+  return null;
+}
+
+async function findUserDocByUid(uid) {
+  if (!uid) return null;
+
+  try {
+    const docRef = await db.collection('users').doc(uid).get();
+    if (docRef.exists) {
+      return docRef;
+    }
+  } catch (error) {
+    logger.warn(`Unable to find user by uid ${uid}`, error);
+  }
+
+  return null;
+}
+
+async function syncCustomClaimsForUser(uid, paid) {
+  if (!uid) return;
+  try {
+    const userRecord = await authAdmin.getUser(uid);
+    const currentClaims = userRecord.customClaims || {};
+    if (currentClaims.paid === paid) {
+      return;
+    }
+    await authAdmin.setCustomUserClaims(uid, { ...currentClaims, paid });
+  } catch (error) {
+    logger.warn(`Unable to sync custom claims for ${uid}`, error);
+  }
+}
+
+async function decodeAuthHeader(req) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+    return null;
+  }
+
+  const token = authHeader.replace(/Bearer\s+/i, '').trim();
+  if (!token) return null;
+
+  try {
+    return await authAdmin.verifyIdToken(token);
+  } catch (error) {
+    logger.warn('Invalid authorization token supplied', error);
+    return null;
+  }
+}
+
+async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fallbackUid = null) {
   if (!subscription) return;
   let email = fallbackEmail || subscription.customer_email || null;
 
@@ -54,11 +158,14 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail) {
     id: subscription.id,
     status: subscription.status,
     plan: firstItem.price?.id || null,
+    planKey: subscription.metadata?.plan_key || null,
     product: firstItem.price?.product || null,
     currentPeriodEnd: subscription.current_period_end
       ? subscription.current_period_end * 1000
       : null,
+    trialEnd: subscription.trial_end ? subscription.trial_end * 1000 : null,
     cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+    autoRenew: !subscription.cancel_at_period_end,
     customerId: subscription.customer,
     paid: computePaidStatus(subscription.status),
     updatedAt: new Date().toISOString(),
@@ -66,32 +173,98 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail) {
 
   if (!email) {
     logger.warn('Subscription update missing email', subscription.id);
-    return;
   }
 
-  const normalizedEmail = email.toLowerCase();
-  const usersSnapshot = await db
-    .collection('users')
-    .where('email', '==', normalizedEmail)
-    .limit(1)
-    .get();
+  const metadataUid = subscription.metadata?.uid || subscription.metadata?.user_uid || null;
+  const effectiveUid = fallbackUid || metadataUid || null;
 
-  if (!usersSnapshot.empty) {
-    const userRef = usersSnapshot.docs[0].ref;
+  let userDoc = null;
+  if (effectiveUid) {
+    userDoc = await findUserDocByUid(effectiveUid);
+  }
+
+  email = (email || '').trim();
+  const normalizedEmail = email.toLowerCase();
+  if (!userDoc && normalizedEmail) {
+    userDoc = await findUserDocByEmail(normalizedEmail, email);
+  }
+
+  if (userDoc) {
+    const userRef = userDoc.ref;
     await userRef.set(
-      { subscription: subscriptionPayload, paid: subscriptionPayload.paid },
+      {
+        subscription: subscriptionPayload,
+        paid: subscriptionPayload.paid,
+        emailNormalized: normalizedEmail || userDoc.get('emailNormalized') || null,
+        stripeCustomerId: subscription.customer,
+      },
       { merge: true }
     );
-    await db
-      .collection('pendingSubscriptions')
-      .doc(normalizedEmail)
-      .delete()
-      .catch(() => {});
+    await syncCustomClaimsForUser(userRef.id, subscriptionPayload.paid);
+    if (normalizedEmail) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(normalizedEmail)
+        .delete()
+        .catch(() => {});
+    }
+    if (email && email !== normalizedEmail) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(email)
+        .delete()
+        .catch(() => {});
+    }
+    if (effectiveUid) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(effectiveUid)
+        .delete()
+        .catch(() => {});
+    }
   } else {
-    await db
-      .collection('pendingSubscriptions')
-      .doc(normalizedEmail)
-      .set({ subscription: subscriptionPayload }, { merge: true });
+    if (normalizedEmail) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(normalizedEmail)
+        .set(
+          {
+            emailNormalized: normalizedEmail,
+            subscription: subscriptionPayload,
+            paid: subscriptionPayload.paid,
+            stripeCustomerId: subscription.customer,
+          },
+          { merge: true }
+        );
+    }
+    if (email && email !== normalizedEmail) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(email)
+        .set(
+          {
+            emailNormalized: normalizedEmail,
+            subscription: subscriptionPayload,
+            paid: subscriptionPayload.paid,
+            stripeCustomerId: subscription.customer,
+          },
+          { merge: true }
+        );
+    }
+    if (effectiveUid) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(effectiveUid)
+        .set(
+          {
+            emailNormalized: normalizedEmail || null,
+            subscription: subscriptionPayload,
+            paid: subscriptionPayload.paid,
+            stripeCustomerId: subscription.customer,
+          },
+          { merge: true }
+        );
+    }
   }
 }
 
@@ -106,7 +279,12 @@ async function updateInvoiceInfo(stripe, invoice, statusLabel) {
   try {
     if (invoice.subscription) {
       subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-      await upsertSubscriptionRecord(stripe, subscription, email);
+      await upsertSubscriptionRecord(
+        stripe,
+        subscription,
+        email,
+        subscription?.metadata?.uid || subscription?.metadata?.user_uid || null
+      );
     }
   } catch (error) {
     logger.warn('Unable to sync subscription from invoice', error);
@@ -132,6 +310,7 @@ async function updateInvoiceInfo(stripe, invoice, statusLabel) {
 
   if (!email) return;
 
+  email = email.trim();
   const normalizedEmail = email.toLowerCase();
   const invoicePayload = {
     id: invoice.id,
@@ -143,26 +322,35 @@ async function updateInvoiceInfo(stripe, invoice, statusLabel) {
     created: invoice.created ? invoice.created * 1000 : Date.now(),
   };
 
-  const usersSnapshot = await db
-    .collection('users')
-    .where('email', '==', normalizedEmail)
-    .limit(1)
-    .get();
+  const userDoc = await findUserDocByEmail(normalizedEmail, email);
 
-  if (!usersSnapshot.empty) {
-    await usersSnapshot.docs[0].ref.set({ lastInvoice: invoicePayload }, { merge: true });
+  if (userDoc) {
+    await userDoc.ref.set({ lastInvoice: invoicePayload, emailNormalized: normalizedEmail }, { merge: true });
   } else {
     await db
       .collection('pendingSubscriptions')
       .doc(normalizedEmail)
-      .set({ lastInvoice: invoicePayload }, { merge: true });
+      .set({ emailNormalized: normalizedEmail, lastInvoice: invoicePayload }, { merge: true });
+    if (email && email !== normalizedEmail) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(email)
+        .set({ emailNormalized: normalizedEmail, lastInvoice: invoicePayload }, { merge: true });
+    }
+    const invoiceUid = subscription?.metadata?.uid || subscription?.metadata?.user_uid || null;
+    if (invoiceUid) {
+      await db
+        .collection('pendingSubscriptions')
+        .doc(invoiceUid)
+        .set({ emailNormalized: normalizedEmail, lastInvoice: invoicePayload }, { merge: true });
+    }
   }
 }
 
 export const createCheckout = onRequest(
   {
     cors: true,
-    secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL],
+    secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY],
   },
   async (req, res) => {
     if (req.method !== 'POST') {
@@ -170,6 +358,7 @@ export const createCheckout = onRequest(
       return;
     }
 
+    const decodedToken = await decodeAuthHeader(req);
     const { priceId, plan, email, uid } = req.body || {};
     const resolvedPriceId = resolvePriceId(priceId || plan);
 
@@ -178,11 +367,19 @@ export const createCheckout = onRequest(
       return;
     }
 
+    const planKey = plan || Object.entries(getPriceMap()).find(([, value]) => value === resolvedPriceId)?.[0] || null;
+    const normalizedEmail = (decodedToken?.email || email || '').trim().toLowerCase();
+    const customerUid = decodedToken?.uid || uid || '';
+
     try {
       const stripe = new Stripe(STRIPE_SECRET_KEY.value());
-      const publicBase = PUBLIC_BASE_URL.value();
-      const successUrl = `${publicBase.replace(/\/?$/, '')}/signup.html?session=success&plan=${encodeURIComponent(resolvedPriceId)}`;
-      const cancelUrl = `${publicBase.replace(/\/?$/, '')}/signup.html?session=cancel`;
+      const publicBase = PUBLIC_BASE_URL.value().replace(/\/?$/, '');
+      const successParams = new URLSearchParams({ checkout: 'success' });
+      if (planKey) {
+        successParams.set('plan', planKey);
+      }
+      const successUrl = `${publicBase}/signup.html?${successParams.toString()}`;
+      const cancelUrl = `${publicBase}/signup.html?checkout=cancel`;
 
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
@@ -193,13 +390,22 @@ export const createCheckout = onRequest(
           },
         ],
         allow_promotion_codes: true,
+        client_reference_id: customerUid || undefined,
         success_url: successUrl,
         cancel_url: cancelUrl,
-        customer_email: email || undefined,
+        customer_email: normalizedEmail || undefined,
         metadata: {
-          uid: uid || '',
+          uid: customerUid,
           plan: resolvedPriceId,
-          email: (email || '').toLowerCase(),
+          plan_key: planKey || '',
+          email: normalizedEmail || (email || '').toLowerCase(),
+        },
+        subscription_data: {
+          // trial_period_days: 7,
+          metadata: {
+            plan_key: planKey || '',
+            uid: customerUid,
+          },
         },
       });
 
@@ -210,6 +416,74 @@ export const createCheckout = onRequest(
     }
   }
 );
+
+export const createPortal = onRequest(
+  {
+    cors: true,
+    secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL],
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+
+    const decodedToken = await decodeAuthHeader(req);
+    if (!decodedToken?.uid) {
+      res.status(401).json({ error: 'Missing or invalid authorization token.' });
+      return;
+    }
+
+    try {
+      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+      if (!userDoc.exists) {
+        res.status(404).json({ error: 'Admin record not found.' });
+        return;
+      }
+
+      const userData = userDoc.data() || {};
+      const subscription = userData.subscription || {};
+      const customerId = subscription.customerId || subscription.customer_id;
+
+      if (!customerId) {
+        res.status(400).json({ error: 'No Stripe customer found for this admin.' });
+        return;
+      }
+
+      const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+      const returnUrl = `${PUBLIC_BASE_URL.value().replace(/\/?$/, '')}/signup.html?checkout=return`;
+
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: returnUrl,
+      });
+
+      res.json({ url: portalSession.url });
+    } catch (error) {
+      logger.error('Customer portal session creation failed', error);
+      res.status(500).json({ error: 'Unable to create customer portal session.' });
+    }
+  }
+);
+
+export const syncUserClaims = onDocumentWritten('users/{userId}', async (event) => {
+  const afterSnap = event.data?.after;
+  if (!afterSnap?.exists) {
+    return;
+  }
+
+  const userId = event.params.userId;
+  const afterData = afterSnap.data() || {};
+  const beforeData = event.data?.before?.data() || {};
+  const paid = Boolean(afterData.paid);
+  const previousPaid = beforeData ? Boolean(beforeData.paid) : null;
+
+  if (previousPaid === paid) {
+    return;
+  }
+
+  await syncCustomClaimsForUser(userId, paid);
+});
 
 export const stripeWebhook = onRequest(
   {
@@ -249,7 +523,8 @@ export const stripeWebhook = onRequest(
             await upsertSubscriptionRecord(
               stripe,
               subscription,
-              session.customer_details?.email || session.customer_email || session.metadata?.email
+              session.customer_details?.email || session.customer_email || session.metadata?.email,
+              session.client_reference_id || session.metadata?.uid || null
             );
           }
           break;
@@ -260,7 +535,8 @@ export const stripeWebhook = onRequest(
           await upsertSubscriptionRecord(
             stripe,
             subscription,
-            subscription.customer_email
+            subscription.customer_email,
+            subscription.metadata?.uid || subscription.metadata?.user_uid || null
           );
           break;
         }

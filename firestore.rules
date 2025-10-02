@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasPaidAccess() {
+      return isSignedIn() && request.auth.token.paid == true;
+    }
+
+    match /users/{userId} {
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow read: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
+      allow update: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
+      allow delete: if hasPaidAccess();
+    }
+
+    match /volunteer_logs/{document=**} {
+      allow read, write: if hasPaidAccess();
+    }
+
+    match /program_templates/{document=**} {
+      allow read, write: if hasPaidAccess();
+    }
+
+    match /report_schedules/{document=**} {
+      allow read, write: if hasPaidAccess();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

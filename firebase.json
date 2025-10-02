@@ -3,11 +3,12 @@
     "source": "functions"
   },
   "hosting": {
-    "public": "public",
+    "public": ".",
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "functions/**"
     ],
     "redirects": [
       {
@@ -20,6 +21,10 @@
       {
         "source": "/api/checkout",
         "function": "createCheckout"
+      },
+      {
+        "source": "/api/portal",
+        "function": "createPortal"
       },
       {
         "source": "/api/stripe",
