@@ -393,7 +393,6 @@ export const createCheckout = onRequest(
         client_reference_id: customerUid || undefined,
         success_url: successUrl,
         cancel_url: cancelUrl,
-        customer_email: normalizedEmail || undefined,
         metadata: {
           uid: customerUid,
           plan: resolvedPriceId,
@@ -417,7 +416,7 @@ export const createCheckout = onRequest(
   }
 );
 
-export const portal = onRequest(
+export const createPortal = onRequest(
   {
     cors: true,
     secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL],

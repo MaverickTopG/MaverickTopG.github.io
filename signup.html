@@ -101,56 +101,19 @@
         <!-- Signup Form -->
         <div id="signupForm" class="auth-form hidden">
           <div id="signupPlanGate" class="signup-plan-gate">
-            <div class="signup-plan-intro">
-              <span class="signup-plan-tag"><i class="fas fa-crown"></i> Step 1</span>
-              <h3>Choose your billing plan</h3>
-              <p>Subscription unlocks the admin toolkit for your organization. Annual billing saves you $10.</p>
+            <span class="signup-plan-tag"><i class="fas fa-crown"></i> Step 1</span>
+            <h3>Activate your plan to keep the admin suite humming.</h3>
+            <p>Complete checkout, then return to finish creating your administrator profile.</p>
+            <div class="signup-plan-actions">
+              <button type="button" id="viewPlansBtn" class="btn-secondary">
+                <i class="fas fa-eye"></i>
+                See our plans
+              </button>
+              <button type="button" id="unlockSignupBtn" class="btn-link" hidden>
+                <i class="fas fa-rotate-left"></i>
+                I already completed checkout
+              </button>
             </div>
-            <div class="signup-plan-grid">
-              <article class="signup-plan-card" data-plan="monthly">
-                <div class="signup-plan-card__header">
-                  <span class="signup-plan-label">Monthly</span>
-                  <h4 class="signup-plan-price">$5<span>/month</span></h4>
-                </div>
-                <ul class="signup-plan-features">
-                  <li><i class="fas fa-check"></i> Full admin portal access</li>
-                  <li><i class="fas fa-check"></i> Unlimited volunteers & logs</li>
-                  <li><i class="fas fa-check"></i> Automated analytics & exports</li>
-                </ul>
-                <button
-                  type="button"
-                  class="btn-primary plan-checkout"
-                  data-checkout-plan="monthly"
-                  data-plan-label="Monthly Plan"
-                  data-plan-amount="$5/month"
-                >Start Monthly</button>
-                <small class="signup-plan-note">Includes a 7-day free trial. Auto-renews monthly unless cancelled.</small>
-              </article>
-
-              <article class="signup-plan-card signup-plan-card--featured" data-plan="yearly">
-                <div class="signup-plan-card__header">
-                  <span class="signup-plan-label">Yearly</span>
-                  <span class="signup-plan-badge">Save $10</span>
-                  <h4 class="signup-plan-price">$50<span>/year</span></h4>
-                </div>
-                <ul class="signup-plan-features">
-                  <li><i class="fas fa-check"></i> Everything in Monthly</li>
-                  <li><i class="fas fa-check"></i> Priority roadmap requests</li>
-                  <li><i class="fas fa-check"></i> Annual compliance report bundle</li>
-                </ul>
-                <button
-                  type="button"
-                  class="btn-primary plan-checkout"
-                  data-checkout-plan="yearly"
-                  data-plan-label="Yearly Plan"
-                  data-plan-amount="$50/year"
-                >Start Yearly</button>
-                <small class="signup-plan-note">Includes a 7-day free trial and two months free versus monthly. Auto-renews yearly unless cancelled.</small>
-              </article>
-            </div>
-            <p class="signup-plan-help">
-              Checkout handled securely by Stripe. Return here after payment to finish setting up your admin account.
-            </p>
           </div>
 
           <div id="signupFields" class="signup-fields" style="display: none;">
@@ -3375,149 +3338,64 @@
     }
 
     .signup-plan-gate {
-      display: grid;
-      gap: clamp(1.2rem, 4vh, 1.8rem);
-      padding-top: 0.5rem;
-    }
-
-    .signup-plan-intro {
-      display: grid;
-      gap: 0.65rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 1.5rem 1rem;
+      margin-bottom: 1rem;
       text-align: center;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px dashed rgba(255, 190, 11, 0.45);
+      box-shadow: 0 20px 45px rgba(104, 62, 0, 0.12);
     }
 
     .signup-plan-tag {
       display: inline-flex;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0.35rem 0.95rem;
+      gap: 0.45rem;
+      padding: 0.35rem 0.9rem;
       border-radius: 999px;
       background: rgba(255, 190, 11, 0.22);
       color: rgba(46, 31, 0, 0.85);
       font-weight: 600;
       font-size: 0.85rem;
-      justify-self: center;
     }
 
-    .signup-plan-intro h3 {
-      font-size: 1.4rem;
-      font-weight: 700;
-    }
-
-    .signup-plan-intro p {
-      color: var(--text-muted);
-      max-width: 520px;
-      justify-self: center;
-    }
-
-    .signup-plan-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: clamp(1rem, 3vw, 1.5rem);
-    }
-
-    .signup-plan-card {
-      position: relative;
-      display: grid;
-      gap: 0.85rem;
-      padding: 1.6rem;
-      border-radius: 22px;
-      background: rgba(255, 255, 255, 0.78);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      box-shadow: 0 24px 60px rgba(104, 62, 0, 0.14);
-      backdrop-filter: blur(18px);
-    }
-
-    .signup-plan-card:not(.signup-plan-card--featured):hover {
-      transform: translateY(-4px);
-      box-shadow: 0 28px 70px rgba(104, 62, 0, 0.18);
-    }
-
-    .signup-plan-card--featured {
-      border: 1px solid rgba(255, 190, 11, 0.45);
-      box-shadow: 0 30px 80px rgba(255, 182, 32, 0.2);
-      transform: translateY(-6px);
-    }
-
-    .signup-plan-card--featured:hover {
-      transform: translateY(-10px);
-      box-shadow: 0 36px 90px rgba(255, 182, 32, 0.28);
-    }
-
-    .signup-plan-card__header {
-      display: grid;
-      gap: 0.4rem;
-    }
-
-    .signup-plan-label {
-      font-size: 0.85rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: rgba(54, 34, 8, 0.55);
-    }
-
-    .signup-plan-badge {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      padding: 0.3rem 0.75rem;
-      border-radius: 999px;
-      background: rgba(255, 111, 178, 0.22);
-      color: #b82472;
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-    }
-
-    .signup-plan-price {
+    .signup-plan-gate h3 {
       margin: 0;
-      font-size: 2rem;
-      font-weight: 820;
-      color: var(--text-dark);
+      font-size: 1.35rem;
+      font-weight: 700;
     }
 
-    .signup-plan-price span {
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: rgba(54, 34, 8, 0.58);
-      margin-left: 0.3rem;
-    }
-
-    .signup-plan-features {
-      list-style: none;
-      display: grid;
-      gap: 0.55rem;
+    .signup-plan-gate p {
       margin: 0;
-      padding: 0;
-      color: rgba(54, 34, 8, 0.72);
-      font-weight: 500;
+      color: rgba(46, 31, 0, 0.7);
+      max-width: 440px;
     }
 
-    .signup-plan-features li i {
-      margin-right: 0.45rem;
-      color: var(--accent);
-    }
-
-    .plan-checkout.btn-primary {
+    .signup-plan-actions {
+      display: flex;
+      flex-wrap: wrap;
       justify-content: center;
-      padding: 0.85rem 1.4rem;
-      width: 100%;
+      gap: 0.75rem;
     }
 
-    .plan-checkout.btn-primary.is-loading {
-      opacity: 0.6;
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.4rem 0.6rem;
     }
 
-    .signup-plan-note {
-      font-size: 0.82rem;
-      color: rgba(54, 34, 8, 0.6);
-    }
-
-    .signup-plan-help {
-      font-size: 0.85rem;
-      text-align: center;
-      color: rgba(54, 34, 8, 0.62);
+    .btn-link:hover {
+      text-decoration: underline;
     }
 
     .signup-fields {

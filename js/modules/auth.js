@@ -34,8 +34,33 @@ import {
 
 const TAB_SESSION_KEY = `auth_${appState.tabId}`;
 const SIGNUP_CHECKOUT_KEY = 'signup_checkout_confirmed';
+const AUTH_MESSAGE_KEY = 'auth_last_message';
 
 let authFormHandlersRegistered = false;
+
+function storeAuthMessage(type, text) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(AUTH_MESSAGE_KEY, JSON.stringify({ type, text }));
+  } catch (error) {
+    console.warn('Unable to persist auth message', error);
+  }
+}
+
+function consumeAuthMessage() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(AUTH_MESSAGE_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(AUTH_MESSAGE_KEY);
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.text) return null;
+    return { type: parsed.type || 'info', text: parsed.text };
+  } catch (error) {
+    console.warn('Unable to read auth message', error);
+    return null;
+  }
+}
 
 function syncSignupCheckoutStatus() {
   if (typeof window === 'undefined') return;
@@ -61,10 +86,11 @@ function ensureSignupControls() {
   const gate = document.getElementById('signupPlanGate');
   const fields = document.getElementById('signupFields');
   const submitBtn = document.getElementById('signupBtn');
+  const unlockBtn = document.getElementById('unlockSignupBtn');
   const unlocked = hasCompletedSignupCheckout();
 
   if (gate) {
-    gate.style.display = unlocked ? 'none' : 'grid';
+    gate.style.display = unlocked ? 'none' : 'flex';
     gate.setAttribute('aria-hidden', unlocked ? 'true' : 'false');
   }
 
@@ -75,6 +101,10 @@ function ensureSignupControls() {
 
   if (submitBtn) {
     submitBtn.disabled = !unlocked;
+  }
+
+  if (unlockBtn) {
+    unlockBtn.hidden = unlocked;
   }
 }
 
@@ -129,6 +159,8 @@ export function registerAuthFormHandlers() {
   const forgotPasswordLink = document.getElementById("forgotPasswordLink");
   const signInToggle = document.getElementById("signInToggle");
   const signupToggle = document.getElementById("signupToggle");
+  const viewPlansBtn = document.getElementById('viewPlansBtn');
+  const unlockSignupBtn = document.getElementById('unlockSignupBtn');
 
   if (signInToggle) {
     signInToggle.addEventListener('click', () => toggleForm('signIn'));
@@ -137,6 +169,17 @@ export function registerAuthFormHandlers() {
   if (signupToggle) {
     signupToggle.addEventListener('click', () => toggleForm('signup'));
   }
+
+  viewPlansBtn?.addEventListener('click', () => {
+    window.location.href = 'plans.html';
+  });
+
+  unlockSignupBtn?.addEventListener('click', () => {
+    if (!hasCompletedSignupCheckout()) {
+      showInlineAuthMessage('Complete checkout via "See our plans" before creating your account.', 'info');
+    }
+    ensureSignupControls();
+  });
 
   if (signInEmail) {
     signInEmail.addEventListener("keypress", (event) => {
@@ -244,48 +287,54 @@ export function setupAuthModule() {
 
   onAuthStateChanged(auth, async (user) => {
     try {
-      const sessionHasAuth = sessionStorage.getItem(TAB_SESSION_KEY) === "true";
+      if (!user) {
+        appState.isAuthenticated = false;
+        appState.currentAdmin = null;
+        appState.currentOrgCode = null;
+        sessionStorage.removeItem(TAB_SESSION_KEY);
+        hideBillingGate();
+        showAuthSection();
+        toggleForm('signIn');
 
-      if (user && sessionHasAuth) {
-        const userDocRef = doc(db, "users", user.uid);
-        const userDoc = await getDoc(userDocRef);
-
-        if (userDoc.exists() && userDoc.data().role === "admin") {
-          const adminData = userDoc.data();
-          const subscription = normalizeSubscription(adminData.subscription);
-          const isActiveSub = isSubscriptionActive(subscription);
-
-          appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
-          appState.currentOrgCode = adminData.organizationCode;
-          appState.isAuthenticated = true;
-
-          sessionStorage.setItem(TAB_SESSION_KEY, "true");
-
-          if (!isActiveSub) {
-            showBillingGate(subscription);
-            return;
-          }
-
-          hideBillingGate();
-          showDashboardSection();
-          setActiveView('overview');
-          await initializeDashboard();
-          return;
+        const storedMessage = consumeAuthMessage();
+        if (storedMessage) {
+          showInlineAuthMessage(storedMessage.text, storedMessage.type);
+        } else {
+          showInlineAuthMessage('Sign in to continue.', 'info');
         }
-
-        // If user is not an admin, just sign them out and show auth section.
-        // The rest of the logic will handle showing the correct message.
-        await signOut(auth);
+        return;
       }
-      // If we reach here, it means the user is not an admin or doesn't exist in our DB.
-      // We must ensure the UI resets to the login form.
-      appState.isAuthenticated = false;
-      sessionStorage.removeItem(TAB_SESSION_KEY);
+
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+        storeAuthMessage('error', 'This account does not have admin access.');
+        await signOut(auth);
+        return;
+      }
+
+      const adminData = userDoc.data();
+      const subscription = normalizeSubscription(adminData.subscription);
+      const isActiveSub = isSubscriptionActive(subscription);
+
+      appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
+      appState.currentOrgCode = adminData.organizationCode;
+      appState.isAuthenticated = true;
+
+      sessionStorage.setItem(TAB_SESSION_KEY, 'true');
+
+      if (!isActiveSub) {
+        showBillingGate(subscription);
+        return;
+      }
+
       hideBillingGate();
-      showAuthSection();
-      toggleForm("signIn");
-      showInlineAuthMessage("Sign in to continue.", "info");
-    } catch (error) {
+      showDashboardSection();
+      setActiveView('overview');
+      await initializeDashboard();
+    }
+    catch (error) {
       console.error("onAuthStateChanged error:", error);
       sessionStorage.removeItem(TAB_SESSION_KEY);
       appState.isAuthenticated = false;
@@ -503,10 +552,7 @@ function renderSuccessState(organizationCode, email) {
 
       const messageText =
         "Account created - please sign in with your email and password.";
-      sessionStorage.setItem(
-        "auth_last_message",
-        JSON.stringify({ type: "info", text: messageText })
-      );
+      storeAuthMessage('info', messageText);
       showInlineAuthMessage(messageText, "info");
       signOut(auth).catch((signOutError) => {
         console.warn("Post-signup signOut failed:", signOutError);
@@ -591,10 +637,10 @@ export async function signIn() {
         errorMessage = "Invalid credentials. Please check your email and password.";
         break;
       case "auth/invalid-email":
-        errorMessage += "Invalid email address.";
+        errorMessage = "Invalid email address.";
         break;
       case "auth/too-many-requests":
-        errorMessage += "Too many failed attempts. Please try again later.";
+        errorMessage = "Too many failed attempts. Please try again later.";
         break;
       default:
         errorMessage = `Sign in failed: ${error.message || "Unknown error occurred."}`;
