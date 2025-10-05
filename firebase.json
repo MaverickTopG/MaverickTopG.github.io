@@ -27,6 +27,22 @@
         "function": "createPortal"
       },
       {
+        "source": "/api/checkoutSession",
+        "function": "getCheckoutSession"
+      },
+      {
+        "source": "/api/invoices",
+        "function": "listInvoices"
+      },
+      {
+        "source": "/api/subscriptions",
+        "function": "listSubscriptions"
+      },
+      {
+        "source": "/api/cancelSubscription",
+        "function": "cancelSubscription"
+      },
+      {
         "source": "/api/stripe",
         "function": "stripeWebhook"
       }

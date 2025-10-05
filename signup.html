@@ -165,6 +165,9 @@
 
   <div id="billingGate" class="billing-gate" style="display: none;">
     <div class="billing-panel">
+      <button id="billingGateClose" class="billing-gate-close" type="button" aria-label="Close plan selection">
+        <i class="fas fa-times"></i>
+      </button>
       <div class="billing-hero">
         <span class="billing-tag"><i class="fas fa-crown"></i> Unlock the admin experience</span>
         <h2>Choose a plan that powers your volunteer impact.</h2>
@@ -213,15 +216,7 @@
         </article>
       </div>
 
-      <div class="billing-footer">
-        <button id="manageBilling" class="btn-outline" data-customer-portal>
-          <i class="fas fa-sliders-h"></i>
-          Manage Billing
-        </button>
-        <p class="billing-help">
-          Need help or a purchase order? <a href="mailto:support@nexolink.org">Contact support</a> and we’ll get you set up.
-        </p>
-      </div>
+      
     </div>
   </div>
 
@@ -611,9 +606,9 @@
               <p class="page-subtitle">Manage your subscription and keep tabs on recent invoices.</p>
             </div>
             <div class="header-actions">
-              <button id="manageBilling" class="btn-outline" type="button" data-customer-portal>
-                <i class="fas fa-sliders-h"></i>
-                Manage Billing
+              <button id="cancelSubscriptionBtn" class="btn-outline btn-destructive" type="button">
+                <i class="fas fa-ban"></i>
+                <span class="btn-label">Cancel Subscription</span>
               </button>
             </div>
           </header>
@@ -630,19 +625,21 @@
                 <p id="billingTrialCountdown" class="billing-trial-countdown" style="display: none;"></p>
                 <div class="billing-primary-actions">
                   <button
+                    id="billingStayMonthlyBtn"
                     class="btn-primary"
                     type="button"
                     data-checkout-plan="monthly"
                     data-plan-label="Monthly Plan"
                     data-plan-amount="$5/month"
-                  >Stay on Monthly</button>
+                  ><span class="btn-label">Stay on Monthly</span></button>
                   <button
+                    id="billingUpgradeBtn"
                     class="btn-primary"
                     type="button"
                     data-checkout-plan="yearly"
                     data-plan-label="Yearly Plan"
                     data-plan-amount="$50/year"
-                  >Upgrade to Yearly</button>
+                  ><span class="btn-label">Upgrade to Yearly</span></button>
                 </div>
               </article>
 
@@ -662,7 +659,7 @@
                     <dd id="billingInvoiceBadge" class="status-pill pill-muted">None</dd>
                   </div>
                 </dl>
-                <a id="billingInvoiceLink" class="invoice-link" href="#" target="_blank" rel="noopener" style="display: none;">
+                <a id="billingInvoiceLink" class="invoice-link" href="#" target="_blank" rel="noopener" data-latest-invoice style="display: none;">
                   View hosted invoice
                 </a>
               </article>
@@ -2414,7 +2411,7 @@
     }
 
     .billing-gate {
-      display: flex;
+      display: none;
       justify-content: center;
       padding: clamp(3rem, 10vh, 5rem) 1.5rem 4rem;
       min-height: calc(100vh - 120px);
@@ -2425,6 +2422,62 @@
       display: grid;
       gap: clamp(2.5rem, 6vh, 4rem);
       width: min(960px, 100%);
+    }
+
+    .billing-gate.is-visible {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(2rem, 5vw, 3.5rem);
+      background: rgba(18, 12, 2, 0.55);
+      backdrop-filter: blur(8px);
+    }
+
+    .billing-gate.is-visible .billing-panel {
+      position: relative;
+      background: rgba(255, 255, 255, 0.94);
+      border-radius: 32px;
+      padding: clamp(2.4rem, 5vw, 3.2rem);
+      box-shadow: 0 30px 70px rgba(18, 12, 2, 0.28);
+      max-width: 960px;
+    }
+
+    .billing-gate-close {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255, 255, 255, 0.75);
+      color: rgba(54, 34, 8, 0.85);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 12px 30px rgba(18, 12, 2, 0.18);
+      cursor: pointer;
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+
+    .billing-gate-close:hover {
+      transform: scale(1.05);
+      background: rgba(255, 255, 255, 0.95);
+    }
+
+    body.billing-overlay-active #dashboardSection,
+    body.billing-overlay-active #view-billing,
+    body.billing-overlay-active .dashboard-shell {
+      filter: blur(6px);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    body.billing-overlay-active {
+      overflow: hidden;
     }
 
     .billing-hero {
@@ -2480,6 +2533,114 @@
       box-shadow: 0 28px 70px rgba(104, 62, 0, 0.16);
       backdrop-filter: blur(20px);
       position: relative;
+    }
+
+    .btn-label {
+      margin-left: 0.4rem;
+      font-weight: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .btn-outline.btn-destructive {
+      position: relative;
+      background: linear-gradient(135deg, rgba(255, 91, 91, 0.14) 0%, rgba(255, 120, 120, 0.08) 55%, rgba(255, 216, 216, 0.2) 100%);
+      border: 1px solid rgba(209, 67, 67, 0.35);
+      color: #c53f3f;
+      box-shadow: 0 14px 30px rgba(209, 67, 67, 0.18);
+      letter-spacing: 0.01em;
+      padding-inline: 22px;
+      overflow: hidden;
+    }
+
+    .btn-outline.btn-destructive .btn-label,
+    .btn-outline.btn-destructive[data-action="reactivate"] .btn-label {
+      font-weight: 600;
+    }
+
+    .billing-loader {
+      position: fixed;
+      bottom: 22px;
+      right: 22px;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.8rem;
+      padding: 0.85rem 1.3rem;
+      border-radius: 16px;
+      background: rgba(18, 12, 2, 0.78);
+      color: #ffffff;
+      box-shadow: 0 18px 40px rgba(18, 12, 2, 0.35);
+      backdrop-filter: blur(8px);
+      font-size: 0.9rem;
+      letter-spacing: 0.02em;
+      transform: translateY(10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      z-index: 9999;
+    }
+
+    .billing-loader.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .billing-loader__spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: billingSpin 0.9s linear infinite;
+    }
+
+    .billing-loader__text {
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+    }
+
+    @keyframes billingSpin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .btn-outline.btn-destructive::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(125deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0) 45%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    }
+
+    .btn-outline.btn-destructive:hover {
+      border-color: rgba(209, 67, 67, 0.55);
+      color: #aa2e2e;
+      transform: translateY(-2px);
+      box-shadow: 0 18px 40px rgba(209, 67, 67, 0.26);
+    }
+
+    .btn-outline.btn-destructive:hover::after {
+      opacity: 1;
+    }
+
+    .btn-outline.btn-destructive[data-action="reactivate"] {
+      background: linear-gradient(135deg, rgba(80, 120, 255, 0.12) 0%, rgba(146, 176, 255, 0.18) 100%);
+      border-color: rgba(84, 109, 255, 0.45);
+      color: #4454d1;
+      box-shadow: 0 14px 30px rgba(92, 118, 255, 0.18);
+    }
+
+    .btn-outline.btn-destructive[data-action="reactivate"]:hover {
+      border-color: rgba(84, 109, 255, 0.65);
+      color: #2f3fbf;
+      box-shadow: 0 18px 40px rgba(92, 118, 255, 0.26);
     }
 
     .billing-card--featured {
@@ -2554,41 +2715,6 @@
     .plan-note {
       font-size: 0.85rem;
       color: rgba(54, 34, 8, 0.6);
-    }
-
-    .billing-footer {
-      display: grid;
-      gap: 0.75rem;
-      justify-items: center;
-      text-align: center;
-    }
-
-    .billing-footer .btn-outline {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.6rem;
-      padding: 0.85rem 1.6rem;
-      border-radius: 999px;
-      border: 1px solid rgba(54, 34, 8, 0.25);
-      background: rgba(255, 255, 255, 0.85);
-      font-weight: 600;
-      cursor: pointer;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .billing-footer .btn-outline:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 18px 40px rgba(104, 62, 0, 0.15);
-    }
-
-    .billing-help {
-      font-size: 0.9rem;
-      color: rgba(54, 34, 8, 0.62);
-    }
-
-    .billing-help a {
-      color: var(--accent);
-      font-weight: 600;
     }
 
     .billing-view {

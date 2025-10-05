@@ -25,7 +25,7 @@ import {
   initializeDashboard,
   setActiveView,
 } from "./dashboard.js";
-import { showBillingGate, hideBillingGate } from "./billing.js";
+import { showBillingGate, hideBillingGate, bindCheckoutButtons } from "./billing.js";
 import {
   showMessage,
   clearInlineAuthMessage,
@@ -34,6 +34,8 @@ import {
 
 const TAB_SESSION_KEY = `auth_${appState.tabId}`;
 const SIGNUP_CHECKOUT_KEY = 'signup_checkout_confirmed';
+const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
+const SIGNUP_FORCE_FORM_KEY = 'signup_force_form';
 const AUTH_MESSAGE_KEY = 'auth_last_message';
 
 let authFormHandlersRegistered = false;
@@ -62,14 +64,71 @@ function consumeAuthMessage() {
   }
 }
 
+async function hydrateEmailFromCheckout(sessionId) {
+  if (!sessionId || typeof window === 'undefined') return;
+
+  try {
+    const response = await fetch(`/api/checkoutSession?id=${encodeURIComponent(sessionId)}`);
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const { email } = await response.json();
+    if (email) {
+      sessionStorage.setItem(SIGNUP_CHECKOUT_EMAIL_KEY, email.trim());
+      const signupEmail = document.getElementById('signupEmail');
+      if (signupEmail && !signupEmail.value) {
+        signupEmail.value = email.trim();
+      }
+    }
+  } catch (error) {
+    console.warn('Unable to retrieve checkout session details', error);
+  } finally {
+    try {
+      sessionStorage.removeItem('signup_checkout_session_id');
+    } catch (error) {
+      /* noop */
+    }
+    ensureSignupControls();
+  }
+}
+
 function syncSignupCheckoutStatus() {
   if (typeof window === 'undefined') return;
   const params = new URLSearchParams(window.location.search);
   const sessionFlag = params.get('session');
-  if (sessionFlag === 'success') {
+  const checkoutStatus = params.get('checkout');
+  const checkoutSessionId = params.get('session_id');
+
+  if (sessionFlag === 'success' || checkoutStatus === 'success') {
     sessionStorage.setItem(SIGNUP_CHECKOUT_KEY, 'true');
+    sessionStorage.setItem(SIGNUP_FORCE_FORM_KEY, 'signup');
+    if (checkoutStatus === 'success') {
+      params.delete('checkout');
+    }
     params.delete('session');
     if (params.has('plan')) params.delete('plan');
+    const newQuery = params.toString();
+    const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
+    window.history.replaceState({}, '', newUrl);
+  } else if (checkoutStatus === 'cancel') {
+    sessionStorage.removeItem(SIGNUP_CHECKOUT_KEY);
+    sessionStorage.removeItem(SIGNUP_CHECKOUT_EMAIL_KEY);
+    params.delete('checkout');
+    const newQuery = params.toString();
+    const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
+    window.history.replaceState({}, '', newUrl);
+  }
+
+  if (checkoutSessionId) {
+    try {
+      sessionStorage.setItem('signup_checkout_session_id', checkoutSessionId);
+    } catch (error) {
+      console.warn('Unable to persist checkout session id', error);
+      if (typeof window !== 'undefined') {
+        window.__nexolinkCheckoutSessionId = checkoutSessionId;
+      }
+    }
+    params.delete('session_id');
     const newQuery = params.toString();
     const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
     window.history.replaceState({}, '', newUrl);
@@ -86,7 +145,8 @@ function ensureSignupControls() {
   const gate = document.getElementById('signupPlanGate');
   const fields = document.getElementById('signupFields');
   const submitBtn = document.getElementById('signupBtn');
-  const unlockBtn = document.getElementById('unlockSignupBtn');
+  const signupForm = document.getElementById('signupForm');
+  const signupEmail = document.getElementById('signupEmail');
   const unlocked = hasCompletedSignupCheckout();
 
   if (gate) {
@@ -103,8 +163,24 @@ function ensureSignupControls() {
     submitBtn.disabled = !unlocked;
   }
 
-  if (unlockBtn) {
-    unlockBtn.hidden = unlocked;
+  if (unlocked) {
+    const storedEmail = typeof window !== 'undefined'
+      ? sessionStorage.getItem(SIGNUP_CHECKOUT_EMAIL_KEY)
+      : null;
+
+    if (signupEmail) {
+      if (!signupEmail.value && storedEmail) {
+        signupEmail.value = storedEmail;
+      }
+      signupEmail.placeholder = 'Use the same email you used during checkout';
+    }
+
+    if (signupForm && signupForm.dataset.unlockNotified !== 'true') {
+      showInlineAuthMessage('Checkout confirmed! Finish creating your admin account below.', 'success');
+      signupForm.dataset.unlockNotified = 'true';
+    }
+  } else if (signupForm) {
+    delete signupForm.dataset.unlockNotified;
   }
 }
 
@@ -159,8 +235,8 @@ export function registerAuthFormHandlers() {
   const forgotPasswordLink = document.getElementById("forgotPasswordLink");
   const signInToggle = document.getElementById("signInToggle");
   const signupToggle = document.getElementById("signupToggle");
-  const viewPlansBtn = document.getElementById('viewPlansBtn');
-  const unlockSignupBtn = document.getElementById('unlockSignupBtn');
+
+  bindCheckoutButtons(document.getElementById('signupPlanGate'));
 
   if (signInToggle) {
     signInToggle.addEventListener('click', () => toggleForm('signIn'));
@@ -169,17 +245,6 @@ export function registerAuthFormHandlers() {
   if (signupToggle) {
     signupToggle.addEventListener('click', () => toggleForm('signup'));
   }
-
-  viewPlansBtn?.addEventListener('click', () => {
-    window.location.href = 'plans.html';
-  });
-
-  unlockSignupBtn?.addEventListener('click', () => {
-    if (!hasCompletedSignupCheckout()) {
-      showInlineAuthMessage('Complete checkout via "See our plans" before creating your account.', 'info');
-    }
-    ensureSignupControls();
-  });
 
   if (signInEmail) {
     signInEmail.addEventListener("keypress", (event) => {
@@ -236,6 +301,40 @@ export function registerAuthFormHandlers() {
   }
 
   ensureSignupControls();
+
+  let forceForm = null;
+  try {
+    forceForm = sessionStorage.getItem(SIGNUP_FORCE_FORM_KEY);
+  } catch (error) {
+    console.warn('Unable to read signup force form flag', error);
+  }
+
+  if (forceForm === 'signup' || hasCompletedSignupCheckout()) {
+    toggleForm('signup');
+    try {
+      sessionStorage.removeItem(SIGNUP_FORCE_FORM_KEY);
+    } catch (error) {
+      /* noop */
+    }
+  }
+
+  let pendingSessionId = null;
+  try {
+    pendingSessionId = sessionStorage.getItem('signup_checkout_session_id');
+  } catch (error) {
+    pendingSessionId = window.__nexolinkCheckoutSessionId || null;
+  }
+
+  if (!pendingSessionId && typeof window !== 'undefined') {
+    pendingSessionId = window.__nexolinkCheckoutSessionId || null;
+  }
+
+  if (pendingSessionId) {
+    if (typeof window !== 'undefined') {
+      delete window.__nexolinkCheckoutSessionId;
+    }
+    hydrateEmailFromCheckout(pendingSessionId);
+  }
 }
 
 function normalizeSubscription(subscription) {
@@ -269,16 +368,24 @@ function normalizeSubscription(subscription) {
   return normalized;
 }
 
-function isSubscriptionActive(subscription) {
+function isSubscriptionActive(subscription, legacyPaid = false) {
+  if (legacyPaid) return true;
   if (!subscription) return false;
   const activeStatuses = ['active', 'trialing'];
   if (!activeStatuses.includes((subscription.status || '').toLowerCase())) {
     return false;
   }
   try {
-    return new Date(subscription.currentPeriodEnd).getTime() > Date.now();
+    if (!subscription.currentPeriodEnd) {
+      return true;
+    }
+    const periodEnd = new Date(subscription.currentPeriodEnd);
+    if (Number.isNaN(periodEnd.getTime())) {
+      return true;
+    }
+    return periodEnd.getTime() > Date.now();
   } catch (error) {
-    return false;
+    return true;
   }
 }
 
@@ -316,7 +423,7 @@ export function setupAuthModule() {
 
       const adminData = userDoc.data();
       const subscription = normalizeSubscription(adminData.subscription);
-      const isActiveSub = isSubscriptionActive(subscription);
+      const isActiveSub = isSubscriptionActive(subscription, adminData.paid === true);
 
       appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
       appState.currentOrgCode = adminData.organizationCode;
@@ -485,6 +592,7 @@ export async function signup() {
     );
     renderSuccessState(organizationCode, email);
     sessionStorage.removeItem(SIGNUP_CHECKOUT_KEY);
+    sessionStorage.removeItem(SIGNUP_CHECKOUT_EMAIL_KEY);
     ensureSignupControls();
   } catch (error) {
     console.error("Signup error:", error);
