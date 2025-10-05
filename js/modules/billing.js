@@ -54,11 +54,7 @@ export function initBillingModule() {
       event.preventDefault();
       event.stopPropagation();
       const action = cancelSubscriptionBtn.dataset.action || 'cancel';
-      if (action === 'reactivate') {
-        openReactivateOverlay();
-      } else {
-        cancelRecurringSubscription(cancelSubscriptionBtn);
-      }
+      handleCancelOrReactivate(action, cancelSubscriptionBtn);
     });
 
     const billingGateCloseBtn = document.getElementById('billingGateClose');
@@ -69,6 +65,14 @@ export function initBillingModule() {
     appState.isBillingInitialized = true;
   }
   refreshBillingDisplay();
+}
+
+function handleCancelOrReactivate(action, button) {
+  if (action === 'reactivate') {
+    openReactivateOverlay();
+  } else {
+    cancelRecurringSubscription(button);
+  }
 }
 
 async function handleBillingActions(event) {
@@ -179,14 +183,14 @@ async function createCheckoutSession(button) {
     const currentStatus = (appState.currentAdmin?.subscription?.status || '').toLowerCase();
     const hasScheduledCancel = Boolean(appState.currentAdmin?.subscription?.cancel_at_period_end);
 
-    if (currentInterval) {
-      if ((currentInterval === 'year' || currentInterval === 'yearly') && plan === 'monthly') {
-        showMessage('Thanks! As soon as your current yearly term wraps, we’ll start your monthly plan and comp the first month from this payment.', 'info');
-      } else if ((currentInterval === 'month' || currentInterval === 'monthly') && plan === 'yearly') {
-        showMessage('Once this payment completes, we’ll roll you into yearly billing at the end of your current monthly cycle.', 'info');
-      }
-    } else if (currentStatus === 'canceled' || hasScheduledCancel) {
+    if (currentStatus === 'canceled' || hasScheduledCancel) {
       showMessage('We’ll reactivate your subscription as soon as checkout completes.', 'info');
+    } else if (currentInterval) {
+      if ((currentInterval === 'year' || currentInterval === 'yearly') && plan === 'monthly') {
+        showMessage('Your plan will be switched to monthly at the end of your current yearly term.', 'info');
+      } else if ((currentInterval === 'month' || currentInterval === 'monthly') && plan === 'yearly') {
+        showMessage('Your plan will be upgraded to yearly immediately. Any remaining time on your monthly plan will be credited towards the new plan.', 'info');
+      }
     }
 
     if (typeof window !== 'undefined') {
@@ -429,28 +433,36 @@ function updateBillingUI(subscription, stripeRole) {
   const cancelAtPeriodEnd = Boolean(subscription?.cancel_at_period_end || subscription?.cancelAtPeriodEnd);
   const subscriptionStatus = (subscription?.status || '').toLowerCase();
   const isCanceledStatus = subscriptionStatus === 'canceled';
+  // A user wants to reactivate if their sub is canceled or scheduled for cancellation.
   const wantsReactivate = cancelAtPeriodEnd || isCanceledStatus;
 
   if (cancelSubscriptionBtn) {
     const canCancel = hasSubscription && hasPortalCustomer && !wantsReactivate;
+
     cancelSubscriptionBtn.style.display = hasSubscription ? 'inline-flex' : 'none';
     cancelSubscriptionBtn.classList.remove('is-loading');
 
+    // Reset styling classes
+    cancelSubscriptionBtn.classList.remove(
+      'btn-danger',
+      'btn-outline',
+      'btn-primary',
+      'btn-success',
+      'btn-destructive'
+    );
+
     if (wantsReactivate) {
+      // Reactivate state
       cancelSubscriptionBtn.dataset.action = 'reactivate';
       cancelSubscriptionBtn.disabled = false;
       cancelSubscriptionBtn.style.opacity = '';
       cancelSubscriptionBtn.style.pointerEvents = '';
-      const reactivateTitle = 'Reactivate your subscription by selecting a plan';
-      cancelSubscriptionBtn.title = reactivateTitle;
-      cancelSubscriptionBtn.setAttribute('aria-label', reactivateTitle);
-      if (cancelLabel) {
-        cancelLabel.textContent = 'Reactivate Plan';
-      }
-      // Add classes for styling
-      cancelSubscriptionBtn.classList.remove('btn-danger', 'btn-success', 'btn-primary', 'btn-outline');
-      cancelSubscriptionBtn.classList.add('btn-outline', 'btn-destructive');
+      cancelSubscriptionBtn.title = 'Reactivate subscription';
+      cancelSubscriptionBtn.setAttribute('aria-label', 'Reactivate subscription');
+      if (cancelLabel) cancelLabel.textContent = 'Reactivate Subscription';
+      cancelSubscriptionBtn.classList.add('btn-primary');
     } else {
+      // Cancel state
       cancelSubscriptionBtn.dataset.action = 'cancel';
       cancelSubscriptionBtn.disabled = !canCancel;
       cancelSubscriptionBtn.style.opacity = canCancel ? '' : '0.6';
@@ -460,12 +472,8 @@ function updateBillingUI(subscription, stripeRole) {
         : 'Link a billing profile to manage cancellations.';
       cancelSubscriptionBtn.title = cancelTitle;
       cancelSubscriptionBtn.setAttribute('aria-label', cancelTitle);
-      if (cancelLabel) {
-        cancelLabel.textContent = 'Cancel Subscription';
-      }
-      // Add classes for styling
-      cancelSubscriptionBtn.classList.remove('btn-primary', 'btn-success');
-      cancelSubscriptionBtn.classList.add('btn-destructive', 'btn-outline');
+      if (cancelLabel) cancelLabel.textContent = 'Cancel Subscription';
+      cancelSubscriptionBtn.classList.add('btn-primary');
     }
   }
 
@@ -488,7 +496,7 @@ function updateBillingUI(subscription, stripeRole) {
       delete upgradeBtn.dataset.priceId;
       if (upgradeLabel) upgradeLabel.textContent = 'Upgrade Plan';
     }
-    lockPlanOptions(null, true);
+
     updateInvoiceSection(null, invoiceElements);
     if (activityList) activityList.innerHTML = '<li class="empty">No subscription items found.</li>';
     return;
@@ -510,10 +518,10 @@ function updateBillingUI(subscription, stripeRole) {
       ? rawItems
       : [];
   const firstItem = billingItems[0];
-  const interval = subscription.plan?.interval
+  let interval = subscription.plan?.interval
     || subscription.plan_interval
     || firstItem?.price?.recurring?.interval
-    || 'month';
+    || firstItem?.plan?.interval;
   const amountCents = subscription.plan?.amount
     ?? subscription.planAmount
     ?? subscription.amount
@@ -522,8 +530,14 @@ function updateBillingUI(subscription, stripeRole) {
     || subscription.plan?.currency
     || firstItem?.price?.currency
     || 'usd';
+
+  if (!interval && typeof amountCents === 'number') {
+    if (amountCents === 5000) interval = 'year';
+    if (amountCents === 500) interval = 'month';
+  }
+
   const recurringPrice = typeof amountCents === 'number'
-    ? `${formatMoney(amountCents, currencyCode)}${interval ? ` / ${interval}` : ''}`
+    ? `${formatMoney(amountCents, currencyCode)}${interval ? ` / ${interval.replace(/ly$/, '')}` : ''}`
     : null;
   const trialEndDate = normalizeDate(subscription.trial_end || subscription.trialEnd);
   const periodStartDate = normalizeDate(subscription.current_period_start || subscription.currentPeriodStart);
@@ -543,7 +557,7 @@ function updateBillingUI(subscription, stripeRole) {
 
   if (planNameEl) {
     const intervalLabel = interval
-      ? `${interval.charAt(0).toUpperCase() + interval.slice(1)} Plan`
+      ? `${capitalize(interval)} Plan`
       : 'Subscription';
     planNameEl.textContent = intervalLabel;
   }
@@ -556,7 +570,7 @@ function updateBillingUI(subscription, stripeRole) {
     nextBillingCopy = formatDisplayDate(nextBillingTimestamp, 'Scheduled to cancel');
   }
 
-  const intervalKey = interval.toLowerCase();
+  const intervalKey = (interval || '').toLowerCase();
 
   if (stayMonthlyBtn) {
     stayMonthlyBtn.disabled = false;
@@ -578,7 +592,9 @@ function updateBillingUI(subscription, stripeRole) {
   if (planAmountEl) {
     const planLines = [];
     if (recurringPrice) planLines.push(recurringPrice);
-    planLines.push(`Next billing: ${nextBillingCopy}`);
+    if (!isCanceledStatus && !cancelAtPeriodEnd) {
+      planLines.push(`Next billing: ${nextBillingCopy}`);
+    }
     if (cancelAtPeriodEnd && nextBillingTimestamp) {
       planLines.push(`Access through: ${formatDisplayDate(nextBillingTimestamp)}`);
     }
@@ -663,7 +679,7 @@ function updateBillingUI(subscription, stripeRole) {
     }
   }
 
-  lockPlanOptions(interval, wantsReactivate);
+  
 
   updateInvoiceSection(normalizedInvoice, invoiceElements);
 
@@ -680,7 +696,7 @@ function updateBillingUI(subscription, stripeRole) {
   if (!normalizedInvoice) {
     fetchLatestInvoiceFromServer()
       .then(invoice => {
-        if (!invoice) return;
+        if (!invoice) return null;
         updateInvoiceSection(invoice, invoiceElements);
         const refreshedHistory = Array.isArray(appState.currentAdmin?.invoiceHistory)
           ? appState.currentAdmin.invoiceHistory
@@ -1531,40 +1547,7 @@ function ensureButtonLabel(button, fallbackText = '') {
   return label;
 }
 
-function lockPlanOptions(activeInterval, unlockAll = false) {
-  const intervalKey = (activeInterval || '').toLowerCase();
-  const selectorsMonthly = ['#view-billing [data-checkout-plan="monthly"]', '#billingGate [data-checkout-plan="monthly"]', '#signupPlanGate [data-checkout-plan="monthly"]'];
-  const selectorsYearly = ['#view-billing [data-checkout-plan="yearly"]', '#billingGate [data-checkout-plan="yearly"]', '#signupPlanGate [data-checkout-plan="yearly"]'];
-  const monthlyButtons = document.querySelectorAll(selectorsMonthly.join(', '));
-  const yearlyButtons = document.querySelectorAll(selectorsYearly.join(', '));
 
-  const toggleButton = (button, isActive) => {
-    if (!button) return;
-    if (isActive) {
-      button.classList.add('is-current-plan');
-      button.setAttribute('aria-disabled', 'true');
-      button.disabled = true;
-      button.style.opacity = '0.6';
-      button.style.pointerEvents = 'none';
-    } else {
-      button.classList.remove('is-current-plan');
-      button.removeAttribute('aria-disabled');
-      button.disabled = false;
-      button.style.opacity = '';
-      button.style.pointerEvents = '';
-    }
-  };
-
-  monthlyButtons.forEach(button => {
-    const isMonthly = !unlockAll && (intervalKey === 'month' || intervalKey === 'monthly');
-    toggleButton(button, isMonthly);
-  });
-
-  yearlyButtons.forEach(button => {
-    const isYearly = !unlockAll && (intervalKey === 'year' || intervalKey === 'yearly' || intervalKey === 'annual');
-    toggleButton(button, isYearly);
-  });
-}
 
 function resolveNextBillingTimestamp(subscription, subscriptionHistory = [], invoiceHistory = []) {
   const now = Date.now();

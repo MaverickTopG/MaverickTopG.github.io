@@ -192,6 +192,8 @@ export function toggleForm(type) {
   const successState = document.getElementById("successState");
   const signInToggle = document.getElementById("signInToggle");
   const signupToggle = document.getElementById("signupToggle");
+  const authHeader = document.querySelector('.auth-header h2');
+  const authSubHeader = document.querySelector('.auth-header p');
 
   if (
     !signInForm ||
@@ -215,6 +217,16 @@ export function toggleForm(type) {
 
   if (targetForm) targetForm.classList.remove("hidden");
   if (targetToggle) targetToggle.classList.add("active");
+
+  if (authHeader && authSubHeader) {
+    if (type === 'signup') {
+      authHeader.textContent = 'Create your Account';
+      authSubHeader.textContent = 'Join to manage your volunteer ecosystem';
+    } else {
+      authHeader.textContent = 'Welcome back';
+      authSubHeader.textContent = 'Secure access for administrators';
+    }
+  }
 
   clearInlineAuthMessage();
 
