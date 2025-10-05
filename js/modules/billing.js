@@ -447,6 +447,9 @@ function updateBillingUI(subscription, stripeRole) {
       if (cancelLabel) {
         cancelLabel.textContent = 'Reactivate Plan';
       }
+      // Add classes for styling
+      cancelSubscriptionBtn.classList.remove('btn-danger', 'btn-success', 'btn-primary', 'btn-outline');
+      cancelSubscriptionBtn.classList.add('btn-outline', 'btn-destructive');
     } else {
       cancelSubscriptionBtn.dataset.action = 'cancel';
       cancelSubscriptionBtn.disabled = !canCancel;
@@ -460,6 +463,9 @@ function updateBillingUI(subscription, stripeRole) {
       if (cancelLabel) {
         cancelLabel.textContent = 'Cancel Subscription';
       }
+      // Add classes for styling
+      cancelSubscriptionBtn.classList.remove('btn-primary', 'btn-success');
+      cancelSubscriptionBtn.classList.add('btn-destructive', 'btn-outline');
     }
   }
 
@@ -1016,7 +1022,10 @@ function updateInvoiceSection(invoice, elements) {
 
   if (!normalized) {
     if (amountEl) amountEl.textContent = '—';
-    if (statusEl) statusEl.textContent = 'No invoices yet.';
+    if (statusEl) {
+      statusEl.textContent = 'No invoices yet.';
+      statusEl.style.display = '';
+    }
     if (dateEl) dateEl.textContent = '—';
     if (badgeEl) {
       badgeEl.textContent = 'None';
@@ -1041,10 +1050,10 @@ function updateInvoiceSection(invoice, elements) {
     ? (normalized.amount_due / 100).toFixed(2)
     : '0.00';
 
-  if (amountEl) amountEl.textContent = `$${amountDisplay}`;
+  if (amountEl) amountEl.textContent = `${amountDisplay}`;
 
   const statusText = normalized.status || '—';
-  if (statusEl) statusEl.textContent = `Status: ${statusText}`;
+  if (statusEl) statusEl.style.display = 'none';
   if (badgeEl) {
     const statusKey = statusText.toLowerCase();
     const badgeClass = statusKey === 'paid'
@@ -1262,17 +1271,7 @@ function buildBillingActivityTimeline({
     }
   };
 
-  (Array.isArray(subscriptionHistory) ? subscriptionHistory : []).forEach(entry => {
-    pushEvent(decorateSubscriptionEvent(entry, subscription));
-  });
-
-  if (subscription) {
-    const snapshot = createSubscriptionSnapshot(subscription);
-    const hasSubscriptionEvent = Array.from(eventMap.values()).some(evt => evt?.type === 'subscription');
-    if (!hasSubscriptionEvent && snapshot) {
-      pushEvent(decorateSubscriptionEvent(snapshot, subscription));
-    }
-  }
+  
 
   (Array.isArray(invoiceHistory) ? invoiceHistory : []).forEach(invoice => {
     pushEvent(decorateInvoiceEvent(invoice));
