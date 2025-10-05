@@ -328,6 +328,14 @@ export function registerAuthFormHandlers() {
     } catch (error) {
       /* noop */
     }
+  } else {
+    // If we are on the signup page but haven't completed checkout,
+    // default to the sign-in form to avoid showing a disabled signup form.
+    const currentPage = window.location.pathname.split('/').pop();
+    if (currentPage === 'signup.html' || currentPage === '') {
+      const activeToggle = document.querySelector('.toggle-buttons button.active');
+      if (!activeToggle || activeToggle.id !== 'signInToggle') toggleForm('signIn');
+    }
   }
 
   let pendingSessionId = null;
@@ -444,7 +452,8 @@ export function setupAuthModule() {
       sessionStorage.setItem(TAB_SESSION_KEY, 'true');
 
       if (!isActiveSub) {
-        showBillingGate(subscription);
+        showDashboardSection({ locked: true });
+        setActiveView('billing');
         return;
       }
 
@@ -598,14 +607,16 @@ export async function signup() {
       console.warn('Unable to merge pending subscription', err);
     }
 
-    showInlineAuthMessage(
-      "Account created successfully! Sign in with your new credentials.",
-      "success"
-    );
-    renderSuccessState(organizationCode, email);
     sessionStorage.removeItem(SIGNUP_CHECKOUT_KEY);
     sessionStorage.removeItem(SIGNUP_CHECKOUT_EMAIL_KEY);
     ensureSignupControls();
+
+    storeAuthMessage('success', 'Account created successfully! Please sign in with your new credentials.');
+    await signOut(auth);
+    // The onAuthStateChanged listener will handle the redirect, but we can force it.
+    if (typeof window !== 'undefined') {
+      window.location.href = 'signup.html';
+    }
   } catch (error) {
     console.error("Signup error:", error);
     let errorMessage;

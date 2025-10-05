@@ -92,6 +92,18 @@ async function handleBillingActions(event) {
   if (invoiceButton) {
     openLatestInvoice(invoiceButton);
   }
+
+  const openPlansButton = event.target.closest('[data-action="open-plans"]');
+  if (openPlansButton) {
+    openReactivateOverlay();
+    return;
+  }
+
+  const upgradeButton = event.target.closest('[data-action="upgrade"]');
+  if (upgradeButton) {
+    openReactivateOverlay();
+    return;
+  }
 }
 
 export function showBillingGate(statusOrSubscription, renewalDateInput) {
@@ -211,7 +223,7 @@ async function createCheckoutSession(button) {
     const response = await fetch('/api/checkout', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ priceId, plan, email, uid })
+      body: JSON.stringify({ priceId, plan, email, uid, trial: true })
     });
 
     if (!response.ok) {
@@ -610,9 +622,17 @@ function updateBillingUI(subscription, stripeRole) {
       .join('<br>');
   }
   if (statusPillEl) {
-    statusPillEl.textContent = status;
-    const statusClass = /active|trialing/i.test(status) ? 'active' : 'warning';
-    statusPillEl.className = `status-pill pill-${statusClass}`;
+    if (isCanceledStatus) {
+      statusPillEl.textContent = 'Deactivated';
+      statusPillEl.className = 'status-pill pill-danger';
+    } else if (cancelAtPeriodEnd) {
+      statusPillEl.textContent = 'Cancels Soon';
+      statusPillEl.className = 'status-pill pill-warning';
+    } else {
+      statusPillEl.textContent = capitalize(status);
+      const statusClass = /active|trialing/i.test(status) ? 'active' : 'warning';
+      statusPillEl.className = `status-pill pill-${statusClass}`;
+    }
   }
 
   if (trialCountdownEl) {
@@ -665,14 +685,14 @@ function updateBillingUI(subscription, stripeRole) {
   if (upgradeBtn) {
     upgradeBtn.disabled = false;
     upgradeBtn.classList.remove('is-loading');
-    upgradeBtn.setAttribute('data-checkout-plan', 'yearly');
-    upgradeBtn.removeAttribute('data-customer-portal');
-    upgradeBtn.dataset.priceId = resolveBasePriceId('yearly');
+    upgradeBtn.removeAttribute('data-checkout-plan');
+    upgradeBtn.setAttribute('data-action', 'upgrade');
+    delete upgradeBtn.dataset.priceId;
     if (upgradeLabel) {
       if (wantsReactivate) {
         upgradeLabel.textContent = 'Start Yearly';
       } else if (intervalKey === 'month' || intervalKey === 'monthly') {
-        upgradeLabel.textContent = 'Upgrade to Yearly';
+        upgradeLabel.textContent = 'Upgrade Plan';
       } else {
         upgradeLabel.textContent = 'Stay on Yearly';
       }

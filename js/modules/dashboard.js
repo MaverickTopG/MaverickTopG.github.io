@@ -83,7 +83,9 @@ export function showAuthSection() {
   activeView = 'overview';
 }
 
-export function showDashboardSection() {
+export function showDashboardSection(options = {}) {
+  const { locked = false } = options;
+
   document.getElementById('authSection').style.display = 'none';
   document.getElementById('dashboardSection').style.display = 'block';
   document.getElementById('logoutBtn').style.display = 'flex';
@@ -92,6 +94,14 @@ export function showDashboardSection() {
   hideBillingGate();
   document.body.classList.remove('has-aurora');
   initDashboardNavigation();
+
+  const navItems = document.querySelectorAll('.sidebar-nav .nav-item[data-view]');
+  navItems.forEach(item => {
+    const view = item.dataset.view;
+    if (view !== 'billing' && view !== 'logout') {
+      item.classList.toggle('nav-item--disabled', locked);
+    }
+  });
 }
 
 
