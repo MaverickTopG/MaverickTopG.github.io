@@ -4,14 +4,14 @@ import { showMessage } from './ui.js';
 let analyticsInitialized = false;
 const MAX_TREND_DAYS = 180;
 const COLOR_PALETTE = [
-  '#ffbe0b',
-  '#ff595e',
-  '#8ac926',
-  '#1982c4',
-  '#6a4c93',
+  '#ffb347',
+  '#ff8b6b',
+  '#ff6fb2',
+  '#ffd970',
   '#f9844a',
   '#4cc9f0',
-  '#d81159'
+  '#1982c4',
+  '#6a4c93'
 ];
 
 export function initAnalytics() {
@@ -133,8 +133,8 @@ function renderTrendChart() {
             label: metricLabel(metric),
             data,
             fill: false,
-            borderColor: '#ffbe0b',
-            backgroundColor: 'rgba(255, 190, 11, 0.25)',
+            borderColor: '#ffb347',
+            backgroundColor: 'rgba(255, 179, 71, 0.28)',
             tension: 0.25,
             pointRadius: 2
           }

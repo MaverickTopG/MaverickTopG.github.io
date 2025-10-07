@@ -2,9 +2,9 @@ import { appState } from './state.js';
 import { showMessage, setTextContent } from './ui.js';
 import { auth } from './firebase.js';
 
-const STRIPE_PUBLISHABLE_KEY = 'pk_test_…'; // replace with your key
-const FALLBACK_PRICE_MONTHLY = 'price_1SDIUBHbGg7F5Ky7Ix6qd5mR';
-const FALLBACK_PRICE_YEARLY = 'price_1SDIUuHbGg7F5Ky7FX58nZEJ';
+const STRIPE_PUBLISHABLE_KEY = 'REDACTED_STRIPE_LIVE_PUBLISHABLE_KEY';
+const FALLBACK_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
+const FALLBACK_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
 const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
 
 let latestInvoiceFetchPromise = null;
@@ -213,6 +213,23 @@ async function createCheckoutSession(button) {
       } catch (err) {
         console.warn('Unable to persist checkout email', err);
       }
+    }
+
+    const env = import.meta?.env;
+
+    if (typeof window !== 'undefined') {
+      console.debug('[BILLING] Preparing checkout', {
+        plan,
+        priceId,
+        resolvedPriceId: priceId,
+        datasetPriceId: button.dataset.priceId || null,
+        fallbackMonthly: FALLBACK_PRICE_MONTHLY,
+        fallbackYearly: FALLBACK_PRICE_YEARLY,
+        windowMonthly: window.STRIPE_PRICE_MONTHLY || null,
+        windowYearly: window.STRIPE_PRICE_YEARLY || null,
+        envMonthly: env?.VITE_STRIPE_PRICE_MONTHLY || null,
+        envYearly: env?.VITE_STRIPE_PRICE_YEARLY || null,
+      });
     }
 
     const headers = { 'Content-Type': 'application/json' };

@@ -297,13 +297,13 @@ async function initializeChart() {
 
     // Create gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-    gradient.addColorStop(0, 'rgba(255, 190, 11, 0.8)');
-    gradient.addColorStop(0.5, 'rgba(255, 190, 11, 0.4)');
-    gradient.addColorStop(1, 'rgba(255, 190, 11, 0.1)');
+    gradient.addColorStop(0, 'rgba(255, 179, 71, 0.85)');
+    gradient.addColorStop(0.5, 'rgba(255, 139, 107, 0.45)');
+    gradient.addColorStop(1, 'rgba(255, 111, 178, 0.14)');
 
     const borderGradient = ctx.createLinearGradient(0, 0, 0, 400);
-    borderGradient.addColorStop(0, '#ffbe0b');
-    borderGradient.addColorStop(1, '#ffd633');
+    borderGradient.addColorStop(0, '#ffb347');
+    borderGradient.addColorStop(1, '#ff8b6b');
 
     hoursChart = new Chart(ctx, {
         type: 'line',
@@ -317,18 +317,18 @@ async function initializeChart() {
                 borderWidth: 4,
                 fill: true,
                 tension: 0.4,
-                pointBackgroundColor: '#ffbe0b',
+                pointBackgroundColor: '#ffb347',
                 pointBorderColor: '#ffffff',
                 pointBorderWidth: 3,
                 pointRadius: 6,
                 pointHoverRadius: 8,
-                pointHoverBackgroundColor: '#ffd633',
+                pointHoverBackgroundColor: '#ff8b6b',
                 pointHoverBorderColor: '#ffffff',
                 pointHoverBorderWidth: 3,
                 shadowOffsetX: 0,
                 shadowOffsetY: 4,
                 shadowBlur: 10,
-                shadowColor: 'rgba(255, 190, 11, 0.3)'
+                shadowColor: 'rgba(255, 139, 107, 0.3)'
             }]
         },
         options: {
@@ -350,7 +350,7 @@ async function initializeChart() {
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
                     titleColor: '#ffffff',
                     bodyColor: '#ffffff',
-                    borderColor: '#ffbe0b',
+                    borderColor: '#ffb347',
                     borderWidth: 2,
                     cornerRadius: 10,
                     displayColors: false,
@@ -368,7 +368,7 @@ async function initializeChart() {
                 y: {
                     beginAtZero: true,
                     grid: {
-                        color: 'rgba(255, 190, 11, 0.1)',
+                        color: 'rgba(255, 179, 71, 0.16)',
                         lineWidth: 1
                     },
                     ticks: {

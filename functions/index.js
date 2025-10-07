@@ -13,6 +13,9 @@ const PUBLIC_BASE_URL = defineSecret('PUBLIC_BASE_URL');
 const STRIPE_PRICE_MONTHLY = defineSecret('STRIPE_PRICE_MONTHLY');
 const STRIPE_PRICE_YEARLY = defineSecret('STRIPE_PRICE_YEARLY');
 
+const DEFAULT_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
+const DEFAULT_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
+
 initializeApp();
 const db = getFirestore();
 const authAdmin = getAuth();
@@ -28,8 +31,8 @@ function safeSecretValue(secret, fallback) {
 
 function getPriceMap() {
   return {
-    monthly: safeSecretValue(STRIPE_PRICE_MONTHLY, null),
-    yearly: safeSecretValue(STRIPE_PRICE_YEARLY, null),
+    monthly: safeSecretValue(STRIPE_PRICE_MONTHLY, DEFAULT_PRICE_MONTHLY),
+    yearly: safeSecretValue(STRIPE_PRICE_YEARLY, DEFAULT_PRICE_YEARLY),
   };
 }
 
@@ -38,6 +41,9 @@ function resolvePriceId(input) {
   const priceMap = getPriceMap();
   if (priceMap[input]) return priceMap[input];
   if (Object.values(priceMap).includes(input)) return input;
+  if (typeof input === 'string' && /^price_[a-zA-Z0-9]+$/.test(input)) {
+    return input;
+  }
   return null;
 }
 
