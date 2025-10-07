@@ -673,7 +673,13 @@ export const createCheckout = onRequest(
     }
 
     const decodedToken = await decodeAuthHeader(req);
-    const { priceId, plan, email, uid } = req.body || {};
+    const {
+      priceId,
+      plan,
+      email,
+      uid,
+      trial: trialRequested,
+    } = req.body || {};
     const resolvedPriceId = resolvePriceId(priceId || plan);
 
     if (!resolvedPriceId) {
@@ -685,6 +691,55 @@ export const createCheckout = onRequest(
     const normalizedEmail = (decodedToken?.email || email || '').trim().toLowerCase();
     const customerUid = decodedToken?.uid || uid || '';
 
+    const shouldEvaluateTrial = Boolean(trialRequested);
+    const TRIAL_PERIOD_DAYS = 7;
+    let shouldApplyTrial = false;
+
+    if (shouldEvaluateTrial) {
+      try {
+        let existingUserDoc = null;
+        if (customerUid) {
+          existingUserDoc = await findUserDocByUid(customerUid);
+        }
+        if (!existingUserDoc && normalizedEmail) {
+          existingUserDoc = await findUserDocByEmail(normalizedEmail, email);
+        }
+
+        const existingData = existingUserDoc?.data ? existingUserDoc.data() : null;
+        const existingSubscription = existingData?.subscription || null;
+        const existingStatus = (existingSubscription?.status || '').toLowerCase();
+        const hasActiveLikeStatus = ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'incomplete_expired'].includes(existingStatus);
+        const hasSeenTrial = Boolean(
+          existingSubscription?.trialEnd
+          || existingSubscription?.trial_end
+          || existingSubscription?.trialEndedAt
+          || existingSubscription?.trialEndedAtMs
+        );
+        const hasCustomerRef = Boolean(
+          existingSubscription?.customerId
+          || existingSubscription?.customer_id
+          || existingSubscription?.customer
+          || existingData?.stripeCustomerId
+          || existingData?.stripeCustomer
+        );
+
+        if (!existingData || (!hasActiveLikeStatus && !hasSeenTrial && !hasCustomerRef)) {
+          if (normalizedEmail) {
+            const pendingDoc = await db.collection('pendingSubscriptions').doc(normalizedEmail).get();
+            const pendingData = pendingDoc.exists ? pendingDoc.data() : null;
+            const pendingStatus = (pendingData?.subscription?.status || '').toLowerCase();
+            const pendingTrial = pendingData?.subscription?.trialEnd || pendingData?.subscription?.trial_end;
+            shouldApplyTrial = !pendingTrial && (!pendingStatus || pendingStatus === 'canceled');
+          } else {
+            shouldApplyTrial = true;
+          }
+        }
+      } catch (error) {
+        logger.warn('Unable to determine trial eligibility', error);
+        shouldApplyTrial = false;
+      }
+    }
+
     try {
       const stripe = new Stripe(STRIPE_SECRET_KEY.value());
       const publicBase = PUBLIC_BASE_URL.value().replace(/\/?$/, '');
@@ -695,6 +750,19 @@ export const createCheckout = onRequest(
       const successQuery = successParams.toString();
       const successUrl = `${publicBase}/signup.html?${successQuery}${successQuery ? '&' : ''}session_id={CHECKOUT_SESSION_ID}`;
       const cancelUrl = `${publicBase}/signup.html?checkout=cancel`;
+
+      const subscriptionData = {
+        metadata: {
+          plan_key: planKey || '',
+          uid: customerUid,
+          trial_requested: shouldEvaluateTrial ? 'true' : 'false',
+          trial_applied: shouldApplyTrial ? 'true' : 'false',
+        },
+      };
+
+      if (shouldApplyTrial) {
+        subscriptionData.trial_period_days = TRIAL_PERIOD_DAYS;
+      }
 
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
@@ -714,13 +782,7 @@ export const createCheckout = onRequest(
           plan_key: planKey || '',
           email: normalizedEmail || (email || '').toLowerCase(),
         },
-        subscription_data: {
-          // trial_period_days: 7,
-          metadata: {
-            plan_key: planKey || '',
-            uid: customerUid,
-          },
-        },
+        subscription_data: subscriptionData,
       });
 
       res.json({ url: session.url });

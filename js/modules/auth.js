@@ -36,6 +36,7 @@ const TAB_SESSION_KEY = `auth_${appState.tabId}`;
 const SIGNUP_CHECKOUT_KEY = 'signup_checkout_confirmed';
 const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
 const SIGNUP_FORCE_FORM_KEY = 'signup_force_form';
+const SIGNUP_SUCCESS_DATA_KEY = 'signup_success_payload';
 const AUTH_MESSAGE_KEY = 'auth_last_message';
 
 let authFormHandlersRegistered = false;
@@ -61,6 +62,66 @@ function consumeAuthMessage() {
   } catch (error) {
     console.warn('Unable to read auth message', error);
     return null;
+  }
+}
+
+function storeSignupSuccessData(payload) {
+  if (!payload) return;
+  appState.signupSuccess = payload;
+  if (typeof window === 'undefined') {
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__nexolinkSignupSuccess = payload;
+    }
+    return;
+  }
+  try {
+    sessionStorage.setItem(SIGNUP_SUCCESS_DATA_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn('Unable to persist signup success payload', error);
+    window.__nexolinkSignupSuccess = payload;
+  }
+}
+
+function readSignupSuccessData() {
+  if (appState.signupSuccess) return appState.signupSuccess;
+
+  if (typeof window === 'undefined') {
+    return typeof globalThis !== 'undefined'
+      ? globalThis.__nexolinkSignupSuccess || null
+      : null;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(SIGNUP_SUCCESS_DATA_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      appState.signupSuccess = parsed;
+      return parsed;
+    }
+  } catch (error) {
+    console.warn('Unable to read signup success payload', error);
+  }
+
+  if (window.__nexolinkSignupSuccess) {
+    appState.signupSuccess = window.__nexolinkSignupSuccess;
+    return window.__nexolinkSignupSuccess;
+  }
+
+  return null;
+}
+
+function clearSignupSuccessData() {
+  appState.signupSuccess = null;
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.removeItem(SIGNUP_SUCCESS_DATA_KEY);
+    } catch (error) {
+      console.warn('Unable to clear signup success payload', error);
+    }
+    delete window.__nexolinkSignupSuccess;
+  } else if (typeof globalThis !== 'undefined') {
+    delete globalThis.__nexolinkSignupSuccess;
   }
 }
 
@@ -110,6 +171,22 @@ function syncSignupCheckoutStatus() {
     const newQuery = params.toString();
     const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
     window.history.replaceState({}, '', newUrl);
+
+    if (typeof document !== 'undefined') {
+      const ensureSignupView = () => {
+        try {
+          toggleForm('signup');
+        } catch (error) {
+          console.warn('Unable to toggle signup form immediately after checkout success', error);
+        }
+      };
+
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        requestAnimationFrame(ensureSignupView);
+      } else {
+        document.addEventListener('DOMContentLoaded', ensureSignupView, { once: true });
+      }
+    }
   } else if (checkoutStatus === 'cancel') {
     sessionStorage.removeItem(SIGNUP_CHECKOUT_KEY);
     sessionStorage.removeItem(SIGNUP_CHECKOUT_EMAIL_KEY);
@@ -367,7 +444,9 @@ function normalizeSubscription(subscription) {
     'currentPeriodEnd',
     'current_period_end',
     'trialEnd',
-    'trial_end'
+    'trial_end',
+    'cancelAt',
+    'cancel_at'
   ];
 
   timestampFields.forEach((field) => {
@@ -383,6 +462,19 @@ function normalizeSubscription(subscription) {
   if (normalized.current_period_end && !normalized.currentPeriodEnd) {
     normalized.currentPeriodEnd = normalized.current_period_end;
   }
+  if (normalized.trial_end && !normalized.trialEnd) {
+    normalized.trialEnd = normalized.trial_end;
+  }
+  if (normalized.cancel_at && !normalized.cancelAt) {
+    normalized.cancelAt = normalized.cancel_at;
+  }
+
+  normalized.cancelAtPeriodEnd = Boolean(
+    normalized.cancelAtPeriodEnd
+    || normalized.cancel_at_period_end
+    || subscription.cancelAtPeriodEnd
+    || subscription.cancel_at_period_end
+  );
 
   normalized.status = (normalized.status || 'inactive').toLowerCase();
   return normalized;
@@ -391,19 +483,44 @@ function normalizeSubscription(subscription) {
 function isSubscriptionActive(subscription, legacyPaid = false) {
   if (legacyPaid) return true;
   if (!subscription) return false;
+  const status = (subscription.status || '').toLowerCase();
+  const cancelAtPeriodEnd = Boolean(
+    subscription.cancelAtPeriodEnd
+    || subscription.cancel_at_period_end
+  );
+  const cancelAt = subscription.cancelAt instanceof Date
+    ? subscription.cancelAt
+    : subscription.cancel_at instanceof Date
+      ? subscription.cancel_at
+      : null;
+
+  if (status === 'trialing' && (cancelAtPeriodEnd || (cancelAt && cancelAt.getTime() <= Date.now()))) {
+    return false;
+  }
+
   const activeStatuses = ['active', 'trialing'];
-  if (!activeStatuses.includes((subscription.status || '').toLowerCase())) {
+  if (!activeStatuses.includes(status)) {
     return false;
   }
   try {
-    if (!subscription.currentPeriodEnd) {
+    const periodEnd = subscription.currentPeriodEnd
+      || subscription.current_period_end
+      || subscription.trialEnd
+      || subscription.trial_end
+      || null;
+
+    if (!periodEnd) {
       return true;
     }
-    const periodEnd = new Date(subscription.currentPeriodEnd);
-    if (Number.isNaN(periodEnd.getTime())) {
+
+    const normalizedEnd = periodEnd instanceof Date
+      ? periodEnd
+      : new Date(periodEnd);
+
+    if (Number.isNaN(normalizedEnd.getTime())) {
       return true;
     }
-    return periodEnd.getTime() > Date.now();
+    return normalizedEnd.getTime() > Date.now();
   } catch (error) {
     return true;
   }
@@ -417,16 +534,31 @@ export function setupAuthModule() {
       if (!user) {
         appState.isAuthenticated = false;
         appState.currentAdmin = null;
-        appState.currentOrgCode = null;
-        sessionStorage.removeItem(TAB_SESSION_KEY);
-        hideBillingGate();
-        showAuthSection();
-        toggleForm('signIn');
+      appState.currentOrgCode = null;
+      sessionStorage.removeItem(TAB_SESSION_KEY);
+      hideBillingGate();
+      showAuthSection();
 
-        const storedMessage = consumeAuthMessage();
-        if (storedMessage) {
-          showInlineAuthMessage(storedMessage.text, storedMessage.type);
-        } else {
+      const successData = readSignupSuccessData();
+      if (successData) {
+        renderSuccessState(
+          successData.organizationCode,
+          successData.email,
+          successData.organizationName
+        );
+        const signInEmail = document.getElementById('signInEmail');
+        if (signInEmail && successData.email) {
+          signInEmail.value = successData.email;
+        }
+        return;
+      }
+
+      toggleForm('signIn');
+
+      const storedMessage = consumeAuthMessage();
+      if (storedMessage) {
+        showInlineAuthMessage(storedMessage.text, storedMessage.type);
+      } else {
           showInlineAuthMessage('Sign in to continue.', 'info');
         }
         return;
@@ -611,12 +743,19 @@ export async function signup() {
     sessionStorage.removeItem(SIGNUP_CHECKOUT_EMAIL_KEY);
     ensureSignupControls();
 
-    storeAuthMessage('success', 'Account created successfully! Please sign in with your new credentials.');
-    await signOut(auth);
-    // The onAuthStateChanged listener will handle the redirect, but we can force it.
-    if (typeof window !== 'undefined') {
-      window.location.href = 'signup.html';
+    const successPayload = {
+      organizationName,
+      organizationCode,
+      email
+    };
+    storeSignupSuccessData(successPayload);
+    renderSuccessState(organizationCode, email, organizationName);
+    try {
+      await signOut(auth);
+    } catch (signOutError) {
+      console.warn("Post-signup signOut failed:", signOutError);
     }
+    return;
   } catch (error) {
     console.error("Signup error:", error);
     let errorMessage;
@@ -638,14 +777,15 @@ export async function signup() {
   }
 }
 
-function renderSuccessState(organizationCode, email) {
+function renderSuccessState(organizationCode, email, organizationName = '') {
   const signInForm = document.getElementById("signInForm");
   const signupForm = document.getElementById("signupForm");
   const successState = document.getElementById("successState");
   const displayOrgCode = document.getElementById("displayOrgCode");
-  const continueBtn = successState
-    ? successState.querySelector(".btn-primary")
-    : null;
+  const headlineEl = document.getElementById("successOrgHeadline");
+  const summaryEl = document.getElementById("successOrgSummary");
+  const orgLabelEl = document.getElementById("successOrgNameLabel");
+  const continueBtn = document.getElementById("successContinueBtn");
   const signInEmail = document.getElementById("signInEmail");
   const signInPassword = document.getElementById("signInPassword");
   const signInToggle = document.getElementById("signInToggle");
@@ -654,41 +794,64 @@ function renderSuccessState(organizationCode, email) {
   if (signInForm) signInForm.classList.add("hidden");
   if (signupForm) signupForm.classList.add("hidden");
   if (successState) successState.classList.remove("hidden");
+  if (signInToggle) signInToggle.classList.remove("active");
+  if (signupToggle) signupToggle.classList.remove("active");
+
+  if (headlineEl) {
+    headlineEl.textContent = organizationName
+      ? `${organizationName} is ready to launch!`
+      : "Account Created Successfully!";
+  }
+
+  if (summaryEl) {
+    summaryEl.textContent = organizationName
+      ? `${organizationName} has been created successfully. Sign in with your admin credentials to configure your workspace.`
+      : "Your new workspace is ready to go. Sign in with the credentials you just created to explore the dashboard.";
+  }
+
+  if (orgLabelEl) {
+    const baseLabel = organizationName
+      ? `${organizationName} organization code`
+      : "Your Organization Code";
+    orgLabelEl.textContent = `${baseLabel}:`;
+  }
 
   if (displayOrgCode) {
-    displayOrgCode.textContent = organizationCode;
+    displayOrgCode.textContent = organizationCode || "Pending — check your inbox";
   }
 
   if (continueBtn) {
     const label = continueBtn.querySelector("span");
     if (label) {
-      label.textContent = "Continue to Sign In";
+      label.textContent = "Proceed to Sign In";
     } else {
-      continueBtn.textContent = "Continue to Sign In";
+      continueBtn.textContent = "Proceed to Sign In";
     }
-    continueBtn.onclick = () => {
-      if (successState) successState.classList.add("hidden");
-      if (signupForm) signupForm.classList.add("hidden");
-      if (signInForm) signInForm.classList.remove("hidden");
-      if (signInToggle) signInToggle.classList.add("active");
-      if (signupToggle) signupToggle.classList.remove("active");
 
-      if (signInEmail) {
-        signInEmail.value = email;
-      }
-      if (signInPassword) {
-        signInPassword.value = "";
-        signInPassword.focus();
-      }
+    if (!continueBtn.dataset.bound) {
+      continueBtn.addEventListener("click", () => {
+        clearSignupSuccessData();
+        if (successState) successState.classList.add("hidden");
+        if (signInForm) signInForm.classList.remove("hidden");
+        if (signupForm) signupForm.classList.add("hidden");
+        if (signInToggle) signInToggle.classList.add("active");
+        if (signupToggle) signupToggle.classList.remove("active");
 
-      const messageText =
-        "Account created - please sign in with your email and password.";
-      storeAuthMessage('info', messageText);
-      showInlineAuthMessage(messageText, "info");
-      signOut(auth).catch((signOutError) => {
-        console.warn("Post-signup signOut failed:", signOutError);
+        if (signInEmail && email) {
+          signInEmail.value = email;
+        }
+        if (signInPassword) {
+          signInPassword.value = "";
+          signInPassword.focus();
+        }
+
+        showInlineAuthMessage(
+          "Sign in with the admin credentials you just created.",
+          "success"
+        );
       });
-    };
+      continueBtn.dataset.bound = "true";
+    }
   }
 }
 

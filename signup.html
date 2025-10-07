@@ -140,15 +140,18 @@
                 <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
               </svg>
             </div>
-            <h3>Account Created Successfully!</h3>
+            <h3 id="successOrgHeadline">Account Created Successfully!</h3>
+            <p id="successOrgSummary" class="success-summary">
+              Your new workspace is ready to go. Sign in with the credentials you just created to explore the dashboard.
+            </p>
             <div class="org-code-display">
-              <p><strong>Your Organization Code:</strong></p>
+              <p><strong id="successOrgNameLabel">Your Organization Code:</strong></p>
               <span id="displayOrgCode" class="org-code"></span>
               <p class="success-note">
                 Share this code with volunteers to register under your organization.
               </p>
             </div>
-            <button type="button" class="btn-primary"><span>Continue to Dashboard</span></button>
+            <button type="button" class="btn-primary" id="successContinueBtn"><span>Proceed to Sign In</span></button>
           </div>
         </div>
 

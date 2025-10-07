@@ -23,7 +23,6 @@ let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
 let navigationInitialized = false;
 let activeView = 'overview';
 
-
 /** ── NAVIGATION & VIEW SWITCHING ─────────────────────────────────────────── */
 
 export function initDashboardNavigation() {
@@ -40,7 +39,15 @@ export function initDashboardNavigation() {
       renderAttendanceChart();
     });
     navItems.forEach(item => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (event) => {
+        if (item.classList.contains('nav-item--disabled')) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (appState.isSubscriptionLocked) {
+            showMessage('Activate your subscription to access this area.', 'warning');
+          }
+          return;
+        }
         const next = item.dataset.view;
         if (next && next !== activeView) setActiveView(next);
       });
@@ -52,6 +59,11 @@ export function initDashboardNavigation() {
 }
 
 export function setActiveView(view) {
+  if (appState.isSubscriptionLocked && view !== 'billing' && view !== 'logout') {
+    showMessage('Activate your subscription to access this area.', 'warning');
+    view = 'billing';
+  }
+
   activeView = view;
   document.querySelectorAll('.sidebar-nav .nav-item[data-view]')
     .forEach(i => i.classList.toggle('active', i.dataset.view === view));
@@ -81,6 +93,7 @@ export function showAuthSection() {
   document.body.classList.add('has-aurora');
   resetRealtimeListeners();
   activeView = 'overview';
+  appState.isSubscriptionLocked = false;
 }
 
 export function showDashboardSection(options = {}) {
@@ -94,12 +107,20 @@ export function showDashboardSection(options = {}) {
   hideBillingGate();
   document.body.classList.remove('has-aurora');
   initDashboardNavigation();
+  appState.isSubscriptionLocked = Boolean(locked);
 
   const navItems = document.querySelectorAll('.sidebar-nav .nav-item[data-view]');
   navItems.forEach(item => {
     const view = item.dataset.view;
     if (view !== 'billing' && view !== 'logout') {
       item.classList.toggle('nav-item--disabled', locked);
+      if (locked) {
+        item.setAttribute('aria-disabled', 'true');
+        item.setAttribute('tabindex', '-1');
+      } else {
+        item.removeAttribute('aria-disabled');
+        item.removeAttribute('tabindex');
+      }
     }
   });
 }

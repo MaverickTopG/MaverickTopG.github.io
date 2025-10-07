@@ -220,10 +220,12 @@ async function createCheckoutSession(button) {
       headers.Authorization = `Bearer ${idToken}`;
     }
 
+    const isNewUser = !user;
+
     const response = await fetch('/api/checkout', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ priceId, plan, email, uid, trial: true })
+      body: JSON.stringify({ priceId, plan, email, uid, trial: isNewUser })
     });
 
     if (!response.ok) {

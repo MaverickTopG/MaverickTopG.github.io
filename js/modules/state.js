@@ -50,5 +50,7 @@ export const appState = {
     claims: null,
     tokenRefreshedAt: null
   },
-  authInitialized: false
+  authInitialized: false,
+  isSubscriptionLocked: false,
+  signupSuccess: null
 };
