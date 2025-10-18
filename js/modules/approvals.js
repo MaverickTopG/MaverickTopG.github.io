@@ -75,6 +75,7 @@ function ensureBaseLayout(host) {
               <th>Status</th>
               <th>Event</th>
               <th>Host</th>
+              <th>Checked In</th>
               <th class="centered-header">Actions</th>
             </tr>
           </thead>
@@ -267,7 +268,7 @@ function updateTable(dataset, options = {}) {
   }
 
   if (!dataset.filteredLogs.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-table-row">No submissions match your filters yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-table-row">No submissions match your filters yet.</td></tr>';
     const selectAll = document.getElementById('approvalSelectAll');
     if (selectAll) {
       selectAll.checked = false;
@@ -293,11 +294,12 @@ function renderApprovalRow(log) {
   const displayTime = timestamp ? timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
   const hoursLabel = formatHourDuration(getLogHours(log));
   const statusLabel = formatStatusLabel(status);
-  const source = log.source || log.entry_source || 'Portal';
   const volunteerName = getVolunteerDisplayName(log);
   const eventName = log.event || log.event_name || log.site || '—';
   const hostName = getHostName(log);
   const hostInitials = computeInitials(hostName);
+  const checkInInfo = deriveCheckInInfo(log);
+  const checkInTitleAttr = checkInInfo.tooltip ? ` title="${escapeHtml(checkInInfo.tooltip)}"` : '';
   const rowClasses = [`approval-row`, `status-${status}`];
   if (isExpanded) {
     rowClasses.push('expanded');
@@ -324,6 +326,12 @@ function renderApprovalRow(log) {
         </div>
       </td>
       <td>
+        <span class="checkin-chip ${checkInInfo.className}"${checkInTitleAttr}>
+          <i class="fas ${checkInInfo.icon}"></i>
+          ${escapeHtml(checkInInfo.label)}
+        </span>
+      </td>
+      <td>
         <div class="approval-actions">
           <button class="btn-icon" type="button" data-action="approve-row" data-log-id="${logId}" title="Approve">
             <i class="fas fa-check"></i>
@@ -348,6 +356,127 @@ function gatherNotes(log) {
     return log.submitted_note;
   }
   return '';
+}
+
+function deriveCheckInInfo(log) {
+  const defaultInfo = {
+    label: 'No',
+    className: 'unchecked',
+    icon: 'fa-circle',
+    tooltip: 'No phone check-in recorded.'
+  };
+
+  if (!log || typeof log !== 'object') {
+    return defaultInfo;
+  }
+
+  const metadata = (log.metadata && typeof log.metadata === 'object') ? log.metadata : (log.meta && typeof log.meta === 'object' ? log.meta : {});
+  const normalizedSources = [
+    log.checkInSource,
+    log.source,
+    log.entry_source,
+    metadata.checkInSource,
+    metadata.source
+  ].map(normalizeString).filter(Boolean);
+
+  const tagBuckets = [];
+  if (Array.isArray(log.tags)) tagBuckets.push(log.tags);
+  if (Array.isArray(log.labels)) tagBuckets.push(log.labels);
+  if (Array.isArray(metadata.tags)) tagBuckets.push(metadata.tags);
+  const normalizedTags = tagBuckets.flat().map(normalizeString).filter(Boolean);
+
+  const checkInBuckets = [];
+  if (Array.isArray(log.checkIns)) checkInBuckets.push(log.checkIns);
+  if (Array.isArray(log.checkins)) checkInBuckets.push(log.checkins);
+  if (Array.isArray(log.check_in_events)) checkInBuckets.push(log.check_in_events);
+  if (Array.isArray(metadata.checkIns)) checkInBuckets.push(metadata.checkIns);
+  const checkInEntries = checkInBuckets.flat();
+
+  let phoneCheckIn = normalizedSources.some(matchesPhoneKeyword)
+    || normalizedTags.some(matchesPhoneKeyword);
+
+  const checkInBooleans = [
+    log.checkedIn,
+    log.checked_in,
+    log.checked_in_phone,
+    log.checked_in_mobile,
+    metadata.checkedIn,
+    metadata.checked_in,
+    metadata.checked_in_phone
+  ];
+  let hasAnyCheckIn = checkInBooleans.some((value) => value === true)
+    || normalizedTags.some(matchesCheckKeyword);
+
+  checkInEntries.forEach((entry) => {
+    if (typeof entry === 'string') {
+      const normalized = normalizeString(entry);
+      phoneCheckIn = phoneCheckIn || matchesPhoneKeyword(normalized);
+      hasAnyCheckIn = hasAnyCheckIn || matchesCheckKeyword(normalized);
+    } else if (entry && typeof entry === 'object') {
+      const status = normalizeString(entry.status || entry.type || entry.tag);
+      const device = normalizeString(entry.device || entry.source || entry.via);
+      phoneCheckIn = phoneCheckIn || matchesPhoneKeyword(device);
+      hasAnyCheckIn = hasAnyCheckIn || matchesCheckKeyword(status) || matchesPhoneKeyword(device);
+    }
+  });
+
+  if (!phoneCheckIn) {
+    const metadataHints = [
+      metadata.device,
+      metadata.checkInDevice,
+      metadata.checkInMethod,
+      metadata.via,
+      metadata.channel
+    ];
+    phoneCheckIn = metadataHints.some(matchesPhoneKeyword);
+  }
+
+  const derivedInfo = phoneCheckIn
+    ? {
+        label: 'Yes',
+        className: 'checked',
+        icon: 'fa-mobile-screen-button',
+        tooltip: 'Phone/QR check-in recorded.'
+      }
+    : defaultInfo;
+
+  const tooltipParts = [derivedInfo.tooltip];
+  if (!phoneCheckIn && hasAnyCheckIn) {
+    tooltipParts.push('A check-in exists from another source.');
+  }
+  if (normalizedSources.length) {
+    tooltipParts.push(`Source: ${normalizedSources[0]}`);
+  }
+
+  return {
+    ...derivedInfo,
+    tooltip: tooltipParts.join(' ')
+  };
+}
+
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function matchesPhoneKeyword(value) {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return false;
+  }
+  return normalized.includes('phone')
+    || normalized.includes('mobile')
+    || normalized.includes('qr')
+    || normalized.includes('scan');
+}
+
+function matchesCheckKeyword(value) {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return false;
+  }
+  return normalized.includes('checked')
+    || normalized.includes('check-in')
+    || normalized.includes('checkin');
 }
 
 function renderAttachments(attachments) {

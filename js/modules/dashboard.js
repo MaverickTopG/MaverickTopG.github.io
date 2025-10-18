@@ -17,6 +17,7 @@ import {
 import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
 import { hideBillingGate, initBillingModule } from './billing.js';
+import { refreshCheckInBadge } from './checkInBadge.js';
 
 const VOLUNTEER_HOUR_VALUE = 28.27;
 let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
@@ -94,6 +95,7 @@ export function showAuthSection() {
   resetRealtimeListeners();
   activeView = 'overview';
   appState.isSubscriptionLocked = false;
+  refreshCheckInBadge();
 }
 
 export function showDashboardSection(options = {}) {
@@ -192,6 +194,7 @@ function displayAdminInfo() {
   setTextContent('sidebarOrgName', organizationName);
   setTextContent('sidebarOrgCode', orgCode);
   setTextContent('sidebarAvatar', computeInitials(email, organizationName));
+  refreshCheckInBadge();
 }
 
 

@@ -45,6 +45,10 @@
       {
         "source": "/api/stripe",
         "function": "stripeWebhook"
+      },
+      {
+        "source": "/api/issueAdminQr",
+        "function": "issueAdminQr"
       }
     ]
   }

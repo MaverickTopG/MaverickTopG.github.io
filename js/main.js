@@ -15,6 +15,7 @@ import {
 import { initApprovalsModule, renderApprovalQueue } from './modules/approvals.js';
 import { downloadSheetsReport, closeSheetsModal, generateSheetsData } from './modules/reportingComms.js';
 import { initAnalytics } from './modules/analytics.js';
+import { initCheckInBadge } from './modules/checkInBadge.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   Object.assign(window, {
@@ -49,4 +50,5 @@ document.addEventListener('DOMContentLoaded', () => {
   initBillingModule();
   initAnalytics();
   initApprovalsModule();
+  initCheckInBadge();
 });
