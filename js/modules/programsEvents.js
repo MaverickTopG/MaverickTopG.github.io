@@ -1,17 +1,33 @@
 import { db } from './firebase.js';
-import { collection, query, where, orderBy, onSnapshot } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+} from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
 import { appState } from './state.js';
 import { showMessage } from './ui.js';
 import { notifyVolunteersUpdate, syncVolunteerHoursFromActivity } from './volunteerOps.js';
 
 let activityUpdateHandler = () => {};
 
-export function registerActivityUpdateHandler(handler) { // handler can now accept a source
-  activityUpdateHandler = typeof handler === 'function' ? handler : () => {}; 
+export function registerActivityUpdateHandler(handler) {
+  activityUpdateHandler = typeof handler === 'function' ? handler : () => {};
 }
 
 function notifyActivityUpdate() {
   activityUpdateHandler();
+}
+
+function resetSharedLogsListener() {
+  if (appState.sharedLogsUnsub) {
+    try {
+      appState.sharedLogsUnsub();
+    } catch (error) {
+      console.warn('sharedLogsUnsub error', error);
+    }
+    appState.sharedLogsUnsub = null;
+  }
 }
 
 export function resetActivityListener() {
@@ -23,49 +39,176 @@ export function resetActivityListener() {
     }
     appState.logsUnsub = null;
   }
+  resetSharedLogsListener();
+}
+
+function parseDateForSort(log) {
+  const candidates = [
+    log.created_at,
+    log.createdAt,
+    log.submitted_at,
+    log.submittedAt,
+  ];
+
+  for (const value of candidates) {
+    if (!value) continue;
+    if (typeof value.toDate === 'function') {
+      const date = value.toDate();
+      const millis = date.getTime();
+      if (!Number.isNaN(millis)) return millis;
+    }
+    if (typeof value.toMillis === 'function') {
+      const millis = value.toMillis();
+      if (Number.isFinite(millis)) return millis;
+    }
+    const date = new Date(value);
+    const millis = date.getTime();
+    if (!Number.isNaN(millis)) return millis;
+  }
+
+  if (log.date) {
+    const date = new Date(log.date);
+    const millis = date.getTime();
+    if (!Number.isNaN(millis)) return millis;
+  }
+
+  return 0;
+}
+
+function loadSharedLogs(orgCode) {
+  resetSharedLogsListener();
+
+  if (!orgCode) {
+    appState.sharedLogs = [];
+    notifyActivityUpdate();
+    return;
+  }
+
+  try {
+    const sharedQuery = query(
+      collection(db, 'organization_shared_logs'),
+      where('organization_code', '==', orgCode),
+    );
+
+    appState.sharedLogsUnsub = onSnapshot(
+      sharedQuery,
+      (snapshot) => {
+        const records = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          records.push({
+            id: docSnap.id,
+            ...data,
+          });
+        });
+
+        records.sort((a, b) => {
+          const aTime = parseDateForSort(a);
+          const bTime = parseDateForSort(b);
+          return bTime - aTime;
+        });
+
+        appState.sharedLogs = records;
+        updateVolunteerAggregates();
+        notifyActivityUpdate();
+      },
+      (error) => {
+        console.error('shared logs onSnapshot error:', error);
+        showMessage(`Error loading shared logs: ${error.message || error}`, 'error');
+      },
+    );
+  } catch (error) {
+    console.error('shared logs listener setup failed:', error);
+    showMessage(`Unable to subscribe to shared logs: ${error.message || error}`, 'error');
+  }
+}
+
+function normalizeSharedLogForTotals(entry) {
+  if (!entry) return null;
+  const volunteerId = entry.user_id || entry.volunteer_id || entry.uid || null;
+  if (!volunteerId) return null;
+  const hours = Number(entry.hours_contributed ?? entry.hours ?? entry.total_hours ?? 0);
+  const normalized = {
+    id: entry.log_id || entry.id || `shared-${volunteerId}-${entry.date || Date.now()}`,
+    user_id: volunteerId,
+    site: entry.site || entry.task || entry.organization_task || 'Shared session',
+    hours_contributed: hours,
+    hours,
+    approve: 'approved',
+    date: entry.date || null,
+    time: entry.time || null,
+    organizationCode: entry.organization_code || entry.org_access_code || null,
+    organizationName: entry.organization_name || entry.org_name || null,
+    shared: true,
+  };
+  return normalized;
+}
+
+function buildCombinedActivity(baseLogs, sharedEntries) {
+  const base = Array.isArray(baseLogs) ? baseLogs : [];
+  const normalizedShared = Array.isArray(sharedEntries)
+    ? sharedEntries.map(normalizeSharedLogForTotals).filter(Boolean)
+    : [];
+  return [...base, ...normalizedShared];
+}
+
+function updateVolunteerAggregates() {
+  const combined = buildCombinedActivity(appState.activityData, appState.sharedLogs);
+  syncVolunteerHoursFromActivity(combined);
+  notifyVolunteersUpdate();
 }
 
 export function loadActivityData() {
   resetActivityListener();
 
-  if (!appState.currentOrgCode) {
+  const normalizedOrgCode = (appState.currentOrgCode || '').trim().toUpperCase();
+  if (!normalizedOrgCode) {
     appState.activityData = [];
+    appState.sharedLogs = [];
+    updateVolunteerAggregates();
     notifyActivityUpdate();
     return;
   }
 
   const logsQuery = query(
     collection(db, 'volunteer_logs'),
-    where('organization_id', '==', appState.currentOrgCode),
-    orderBy('date', 'desc')
+    where('organization_id', '==', normalizedOrgCode),
   );
 
-  appState.logsUnsub = onSnapshot(logsQuery, (snapshot) => {
-    const activity = [];
-    snapshot.forEach((doc) => {
-      const logData = doc.data();
-      // Ensure every log has an approval status for consistency.
-      if (logData.approve === undefined) {
-        logData.approve = 'pending';
-      }
-      activity.push({ id: doc.id, ...logData });
-    });
+  appState.logsUnsub = onSnapshot(
+    logsQuery,
+    (snapshot) => {
+      const activity = [];
+      snapshot.forEach((doc) => {
+        const logData = doc.data() || {};
+        if (logData.approve === undefined) {
+          logData.approve = 'pending';
+        }
+        activity.push({
+          id: doc.id,
+          ...logData,
+        });
+      });
 
-    appState.activityData = activity;
-    syncVolunteerHoursFromActivity(activity);
-    notifyVolunteersUpdate();
-    notifyActivityUpdate();
-  }, (error) => {
-    console.error('logs onSnapshot error:', error);
-    showMessage(`Error listening for activity: ${error.message || error}`, 'error');
-  });
+      activity.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
+
+      appState.activityData = activity;
+      updateVolunteerAggregates();
+      notifyActivityUpdate();
+    },
+    (error) => {
+      console.error('logs onSnapshot error:', error);
+      showMessage(`Error listening for activity: ${error.message || error}`, 'error');
+    },
+  );
+
+  loadSharedLogs(normalizedOrgCode);
 }
 
 export function getCurrentWeekBoundaries(referenceDate = new Date()) {
-  const now = new Date(referenceDate); // Use the provided date or today
-  // FIX: Ensure Sunday is correctly handled as the start of the new week.
-  const dayOfWeek = now.getUTCDay(); // 0 for Sunday
-  const diff = now.getUTCDate() - dayOfWeek; // This correctly finds the last Sunday.
+  const now = new Date(referenceDate);
+  const dayOfWeek = now.getUTCDay();
+  const diff = now.getUTCDate() - dayOfWeek;
 
   const startOfWeek = new Date(now.setUTCDate(diff));
   startOfWeek.setUTCHours(0, 0, 0, 0);
@@ -77,7 +220,9 @@ export function getCurrentWeekBoundaries(referenceDate = new Date()) {
 }
 
 export function getWeeklyData(startOfWeekInput) {
-  const startOfWeek = startOfWeekInput ? new Date(startOfWeekInput) : getCurrentWeekBoundaries().startOfWeek;
+  const startOfWeek = startOfWeekInput
+    ? new Date(startOfWeekInput)
+    : getCurrentWeekBoundaries().startOfWeek;
   startOfWeek.setHours(0, 0, 0, 0);
 
   const endOfWeek = new Date(startOfWeek);

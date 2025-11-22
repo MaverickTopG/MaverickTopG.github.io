@@ -1,6 +1,7 @@
 import { appState } from './state.js';
 import { showMessage, setTextContent } from './ui.js';
 import { auth } from './firebase.js';
+import { isDemoAccount, getDemoAccountDescription } from './accessControl.js';
 
 const STRIPE_PUBLISHABLE_KEY = 'REDACTED_STRIPE_LIVE_PUBLISHABLE_KEY';
 const FALLBACK_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
@@ -12,6 +13,41 @@ let invoiceHistoryFetchPromise = null;
 let subscriptionDatasetFetchPromise = null;
 let planOverlayKeyHandler = null;
 let billingLoaderEl = null;
+
+function isDemoBillingLocked() {
+  return isDemoAccount(appState.currentAdmin || auth.currentUser);
+}
+
+function getDemoBillingCopy() {
+  return getDemoAccountDescription(appState.currentAdmin || auth.currentUser)
+    || 'This shared login is for demos only.';
+}
+
+function notifyDemoBillingBlocked() {
+  const copy = `${getDemoBillingCopy()} Billing actions are disabled for demo credentials.`;
+  showMessage(copy, 'info');
+}
+
+function toggleDemoPlanNotice(visible, message) {
+  const planCard = document.querySelector('#view-billing .billing-summary-card');
+  let notice = document.getElementById('billingDemoNotice');
+
+  if (!visible) {
+    if (notice) notice.remove();
+    return;
+  }
+
+  if (!planCard) return;
+
+  if (!notice) {
+    notice = document.createElement('p');
+    notice.id = 'billingDemoNotice';
+    notice.className = 'demo-plan-notice';
+    planCard.appendChild(notice);
+  }
+
+  notice.textContent = message;
+}
 
 export function bindCheckoutButtons(root = document) {
   const container = typeof root === 'string'
@@ -78,12 +114,20 @@ function handleCancelOrReactivate(action, button) {
 async function handleBillingActions(event) {
   const checkoutButton = event.target.closest('[data-checkout-plan]');
   if (checkoutButton) {
+    if (isDemoBillingLocked()) {
+      notifyDemoBillingBlocked();
+      return;
+    }
     await createCheckoutSession(checkoutButton);
     return;
   }
 
   const portalButton = event.target.closest('[data-customer-portal]');
   if (portalButton) {
+    if (isDemoBillingLocked()) {
+      notifyDemoBillingBlocked();
+      return;
+    }
     await redirectToCustomerPortal(portalButton);
     return;
   }
@@ -157,6 +201,10 @@ export function hideBillingGate() {
 }
 
 async function createCheckoutSession(button) {
+  if (isDemoBillingLocked()) {
+    notifyDemoBillingBlocked();
+    return;
+  }
   closePlanOverlay();
 
   const plan = button.dataset.checkoutPlan;
@@ -265,6 +313,10 @@ async function createCheckoutSession(button) {
 }
 
 async function redirectToCustomerPortal(button) {
+  if (isDemoBillingLocked()) {
+    notifyDemoBillingBlocked();
+    return;
+  }
   const portalButton = button ?? document.querySelector('[data-customer-portal].is-loading');
   if (portalButton) {
     portalButton.classList.add('is-loading');
@@ -329,6 +381,10 @@ function openLatestInvoice(button) {
 }
 
 async function cancelRecurringSubscription(button) {
+  if (isDemoBillingLocked()) {
+    notifyDemoBillingBlocked();
+    return;
+  }
   if (!button) return;
   if (!window.confirm('Cancel future renewals? Charges already processed are non-refundable. We will preserve your data so you can resubscribe later.')) {
     return;
@@ -466,12 +522,18 @@ function updateBillingUI(subscription, stripeRole) {
   const isCanceledStatus = subscriptionStatus === 'canceled';
   // A user wants to reactivate if their sub is canceled or scheduled for cancellation.
   const wantsReactivate = cancelAtPeriodEnd || isCanceledStatus;
+  const demoBillingLocked = isDemoBillingLocked();
+  const demoCopy = `${getDemoBillingCopy()} Billing is disabled for this login.`;
+  toggleDemoPlanNotice(demoBillingLocked, demoCopy);
 
   if (cancelSubscriptionBtn) {
-    const canCancel = hasSubscription && hasPortalCustomer && !wantsReactivate;
+    if (demoBillingLocked) {
+      cancelSubscriptionBtn.style.display = 'none';
+    } else {
+      const canCancel = hasSubscription && hasPortalCustomer && !wantsReactivate;
 
-    cancelSubscriptionBtn.style.display = hasSubscription ? 'inline-flex' : 'none';
-    cancelSubscriptionBtn.classList.remove('is-loading');
+      cancelSubscriptionBtn.style.display = hasSubscription ? 'inline-flex' : 'none';
+      cancelSubscriptionBtn.classList.remove('is-loading');
 
     // Reset styling classes
     cancelSubscriptionBtn.classList.remove(
@@ -506,26 +568,61 @@ function updateBillingUI(subscription, stripeRole) {
       if (cancelLabel) cancelLabel.textContent = 'Cancel Subscription';
       cancelSubscriptionBtn.classList.add('btn-primary');
     }
+    }
   }
 
   if (!hasSubscription) {
-    if (planNameEl) planNameEl.textContent = 'No active plan';
-    if (planAmountEl) planAmountEl.textContent = 'Choose a plan to unlock the admin experience.';
-    if (renewalCopyEl) renewalCopyEl.textContent = 'No renewal scheduled.';
-    if (statusPillEl) {
-      statusPillEl.textContent = 'Inactive';
-      statusPillEl.className = 'status-pill pill-muted';
-    }
-    if (trialCountdownEl) trialCountdownEl.style.display = 'none';
-    if (actionsCopyEl) actionsCopyEl.textContent = 'Billing actions will appear once a subscription is active.';
-    if (actionsHintEl) actionsHintEl.textContent = 'Complete checkout to cancel renewals or download invoices.';
-    if (upgradeBtn) {
-      upgradeBtn.disabled = true;
-      upgradeBtn.classList.remove('is-loading');
-      upgradeBtn.removeAttribute('data-checkout-plan');
-      upgradeBtn.removeAttribute('data-customer-portal');
-      delete upgradeBtn.dataset.priceId;
-      if (upgradeLabel) upgradeLabel.textContent = 'Upgrade Plan';
+    if (demoBillingLocked) {
+      if (planNameEl) planNameEl.textContent = 'Demo Account';
+      if (planAmountEl) planAmountEl.textContent = demoCopy;
+      if (renewalCopyEl) renewalCopyEl.textContent = 'Connect your own workspace to activate billing.';
+      if (statusPillEl) {
+        statusPillEl.textContent = 'Demo';
+        statusPillEl.className = 'status-pill pill-warning';
+      }
+      if (trialCountdownEl) trialCountdownEl.style.display = 'none';
+      if (actionsCopyEl) {
+        actionsCopyEl.textContent = 'This shared demo login cannot purchase or manage subscriptions.';
+      }
+      if (actionsHintEl) {
+        actionsHintEl.textContent = 'Sign up with your own credentials to run checkout or access invoices.';
+      }
+      [stayMonthlyBtn, upgradeBtn].forEach((btn) => {
+        if (!btn) return;
+        btn.disabled = true;
+        btn.classList.remove('is-loading');
+        btn.classList.add('is-disabled');
+        btn.title = 'Billing is disabled for the demo login.';
+      });
+      if (stayLabel) stayLabel.textContent = 'Demo Access';
+      if (upgradeLabel) upgradeLabel.textContent = 'Demo Access';
+    } else {
+      if (planNameEl) planNameEl.textContent = 'No active plan';
+      if (planAmountEl) planAmountEl.textContent = 'Choose a plan to unlock the admin experience.';
+      if (renewalCopyEl) renewalCopyEl.textContent = 'No renewal scheduled.';
+      if (statusPillEl) {
+        statusPillEl.textContent = 'Inactive';
+        statusPillEl.className = 'status-pill pill-muted';
+      }
+      if (trialCountdownEl) trialCountdownEl.style.display = 'none';
+      if (actionsCopyEl) actionsCopyEl.textContent = 'Billing actions will appear once a subscription is active.';
+      if (actionsHintEl) actionsHintEl.textContent = 'Complete checkout to cancel renewals or download invoices.';
+      if (stayLabel) stayLabel.textContent = 'Stay on Monthly';
+      if (stayMonthlyBtn) stayMonthlyBtn.title = '';
+      if (upgradeBtn) {
+        upgradeBtn.disabled = true;
+        upgradeBtn.classList.remove('is-loading');
+        upgradeBtn.classList.remove('is-disabled');
+        upgradeBtn.removeAttribute('data-checkout-plan');
+        upgradeBtn.removeAttribute('data-customer-portal');
+        delete upgradeBtn.dataset.priceId;
+        upgradeBtn.title = '';
+        if (upgradeLabel) upgradeLabel.textContent = 'Upgrade Plan';
+      }
+      if (upgradeLabel && !upgradeBtn) {
+        upgradeLabel.textContent = 'Upgrade Plan';
+      }
+      stayMonthlyBtn?.classList.remove('is-disabled');
     }
 
     updateInvoiceSection(null, invoiceElements);

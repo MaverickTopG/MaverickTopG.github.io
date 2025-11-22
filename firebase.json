@@ -43,6 +43,10 @@
         "function": "cancelSubscription"
       },
       {
+        "source": "/api/webhook",
+        "function": "stripeWebhook"
+      },
+      {
         "source": "/api/stripe",
         "function": "stripeWebhook"
       },

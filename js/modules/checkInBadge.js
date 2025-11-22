@@ -4,8 +4,8 @@ import { showMessage } from './ui.js';
 
 let initialized = false;
 let qrLibPromise = null;
-let currentDataUrl = '';
 let isBusy = false;
+const badgeCache = new Map();
 
 const QR_SOURCE_CANDIDATES = [
   { type: 'module', url: 'https://esm.run/qrcode@1.5.3' },
@@ -206,6 +206,34 @@ function clearExpiryTimer() {
   }
 }
 
+function normalizeOrgCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function getCurrentOrgCode() {
+  return normalizeOrgCode(appState.currentOrgCode || getIdentifiers().orgId || '');
+}
+
+function isPayloadExpired(payload) {
+  if (!payload) return true;
+  const exp = typeof payload.exp === 'number' ? payload.exp : null;
+  if (!exp) return false;
+  const nowSec = Math.floor(Date.now() / 1000);
+  return nowSec >= exp;
+}
+
+function getCachedBadgePayload(orgCode) {
+  const normalized = normalizeOrgCode(orgCode);
+  if (!normalized) return null;
+  return badgeCache.get(normalized) || null;
+}
+
+function cacheBadgePayload(orgCode, payload) {
+  const normalized = normalizeOrgCode(orgCode);
+  if (!normalized || !payload) return;
+  badgeCache.set(normalized, payload);
+}
+
 function formatBadgeStatus() {
   if (!lastIssuedPayload) {
     return 'Ready to scan.';
@@ -216,17 +244,51 @@ function formatBadgeStatus() {
   const issuedAt = typeof lastIssuedPayload.issuedAt === 'number' ? lastIssuedPayload.issuedAt : null;
 
   if (exp && nowSec >= exp) {
-    return 'Expired — refresh the QR badge.';
+    return 'Expired — close and reopen this badge to refresh.';
   }
 
   if (exp) {
     const remaining = Math.max(0, exp - nowSec);
-    const minutes = Math.floor(remaining / 60);
     const seconds = remaining % 60;
+    const minutes = Math.floor(remaining / 60) % 60;
+    const hours = Math.floor(remaining / 3600) % 24;
+    const days = Math.floor(remaining / 86400);
     const secLabel = seconds.toString().padStart(2, '0');
+    const YEAR_SECONDS = 365.2425 * 86400;
+    const approxYears = remaining / YEAR_SECONDS;
+
+    if (approxYears >= 1) {
+      const roundedYears = approxYears >= 10
+        ? Math.round(approxYears)
+        : Math.round(approxYears * 10) / 10;
+      const expirationDate = new Date(exp * 1000).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+      return `Valid for ~${roundedYears} year${roundedYears === 1 ? '' : 's'} (expires ${expirationDate})`;
+    }
+
+    if (days >= 1) {
+      const dayLabel = days === 1 ? '1 day' : `${days} days`;
+      if (hours > 0) {
+        return `Expires in ${dayLabel} ${hours}h`;
+      }
+      return `Expires in ${dayLabel}`;
+    }
+
+    if (hours > 0) {
+      const hourLabel = hours === 1 ? '1 hour' : `${hours} hours`;
+      if (minutes > 0) {
+        return `Expires in ${hourLabel} ${minutes}m`;
+      }
+      return `Expires in ${hourLabel}`;
+    }
+
     if (minutes > 0) {
       return `Expires in ${minutes}m ${secLabel}s`;
     }
+
     return `Expires in ${secLabel}s`;
   }
 
@@ -277,10 +339,6 @@ function updateModalFieldsFromState() {
     adminEl.textContent = adminId || '—';
   }
   updateBadgeNote();
-  const downloadBtn = document.getElementById('downloadCheckInBadge');
-  if (downloadBtn) {
-    downloadBtn.disabled = !currentDataUrl || isBusy;
-  }
 }
 
 function setModalVisibility(visible) {
@@ -295,6 +353,25 @@ function setModalVisibility(visible) {
   }
 }
 
+function updateDownloadButtonState() {
+  const downloadBtn = document.getElementById('downloadCheckInBadgeBtn');
+  if (!downloadBtn) {
+    return;
+  }
+  const canDownload = Boolean(lastIssuedPayload) && !isBusy;
+  downloadBtn.disabled = !canDownload;
+  downloadBtn.setAttribute('aria-disabled', canDownload ? 'false' : 'true');
+}
+
+function updateRefreshButtonState() {
+  const refreshBtn = document.getElementById('refreshCheckInBadgeBtn');
+  if (!refreshBtn) {
+    return;
+  }
+  refreshBtn.disabled = isBusy;
+  refreshBtn.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
+}
+
 function setBadgeBusy(state) {
   isBusy = state;
   const modal = getModal();
@@ -302,17 +379,11 @@ function setBadgeBusy(state) {
     modal.classList.toggle('loading', state);
     modal.setAttribute('aria-busy', state ? 'true' : 'false');
   }
-  const rotateBtn = document.getElementById('rotateCheckInToken');
-  if (rotateBtn) {
-    rotateBtn.disabled = state;
-  }
-  const downloadBtn = document.getElementById('downloadCheckInBadge');
-  if (downloadBtn) {
-    downloadBtn.disabled = state || !currentDataUrl;
-  }
+  updateDownloadButtonState();
+  updateRefreshButtonState();
 }
 
-async function requestSignedBadge({ rotate = false } = {}) {
+async function requestSignedBadge() {
   const { orgId, adminId } = getIdentifiers();
   const cleanedOrg = String(orgId || '').trim().toUpperCase();
   const cleanedAdmin = String(adminId || '').trim();
@@ -340,7 +411,6 @@ async function requestSignedBadge({ rotate = false } = {}) {
     body: JSON.stringify({
       orgAccessCode: cleanedOrg,
       adminId: cleanedAdmin,
-      rotate: rotate || undefined,
     }),
   });
 
@@ -391,10 +461,23 @@ async function renderQr(payload) {
       light: '#ffffff'
     }
   });
-  currentDataUrl = canvas.toDataURL('image/png');
 }
 
-async function prepareBadge({ rotate = false } = {}) {
+async function applyBadgePayload(payload) {
+  if (!payload) return;
+  lastIssuedPayload = payload;
+  await renderQr(JSON.stringify(payload));
+  updateDownloadButtonState();
+  updateModalFieldsFromState();
+  if (isModalOpen()) {
+    startExpiryTimer();
+  } else {
+    updateBadgeNote();
+  }
+}
+
+async function prepareBadge(options = {}) {
+  const { forceRefresh = false } = options;
   if (isBusy) {
     return;
   }
@@ -403,33 +486,38 @@ async function prepareBadge({ rotate = false } = {}) {
     return;
   }
 
+  const orgAccessCode = getCurrentOrgCode();
+  if (!orgAccessCode) {
+    showMessage('No organization access code found. Link an organization first.', 'error');
+    return;
+  }
+
+  if (!forceRefresh) {
+    const cached = getCachedBadgePayload(orgAccessCode);
+    if (cached && !isPayloadExpired(cached)) {
+      await applyBadgePayload(cached);
+      return;
+    }
+  }
+
   setBadgeBusy(true);
   try {
-    const { payload, sig } = await requestSignedBadge({ rotate });
-    const orgAccessCode = String(payload?.orgAccessCode || '').trim().toUpperCase();
+    const { payload, sig } = await requestSignedBadge();
+    const normalizedOrg = normalizeOrgCode(payload?.orgAccessCode);
     const adminId = String(payload?.adminId || '').trim();
     const qrPayload = {
       ...payload,
       sig,
-      orgId: orgAccessCode,
+      orgId: normalizedOrg,
       qrToken: sig,
       qrVersion: payload?.v,
       qrIssuedAt: payload?.issuedAt,
       qrExpiresAt: payload?.exp,
       adminId,
-      orgAccessCode,
+      orgAccessCode: normalizedOrg,
     };
-    lastIssuedPayload = qrPayload;
-    await renderQr(JSON.stringify(qrPayload));
-    updateModalFieldsFromState();
-    if (isModalOpen()) {
-      startExpiryTimer();
-    } else {
-      updateBadgeNote();
-    }
-    if (rotate) {
-      showMessage('Check-in badge refreshed.', 'success');
-    }
+    cacheBadgePayload(normalizedOrg, qrPayload);
+    await applyBadgePayload(qrPayload);
   } catch (error) {
     console.error('Unable to prepare check-in badge', error);
     const message = error?.message || 'Unable to prepare your check-in badge. Please try again.';
@@ -437,25 +525,6 @@ async function prepareBadge({ rotate = false } = {}) {
   } finally {
     setBadgeBusy(false);
   }
-}
-
-function handleDownload() {
-  if (!currentDataUrl) {
-    showMessage('QR code is still generating. Please try again in a moment.', 'info');
-    return;
-  }
-  const { adminId } = getIdentifiers();
-  const link = document.createElement('a');
-  link.href = currentDataUrl;
-  link.download = `nexolink-checkin-${adminId || 'badge'}.png`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
-function handleRotate() {
-  clearExpiryTimer();
-  prepareBadge({ rotate: true });
 }
 
 function isModalOpen() {
@@ -477,6 +546,64 @@ function openBadgeModal() {
 function closeBadgeModal() {
   clearExpiryTimer();
   setModalVisibility(false);
+}
+
+function refreshBadgeManually() {
+  if (isBusy) return;
+  const orgCode = getCurrentOrgCode();
+  if (orgCode) {
+    badgeCache.delete(orgCode);
+  }
+  prepareBadge({ forceRefresh: true });
+}
+
+function downloadBadgeImage() {
+  const canvas = document.getElementById('checkInBadgeCanvas');
+  if (!canvas) {
+    showMessage('Open your check-in badge first.', 'info');
+    return;
+  }
+  if (!lastIssuedPayload) {
+    showMessage('Generate a fresh badge to download.', 'info');
+    return;
+  }
+
+  const filenameParts = ['nexolink-checkin-badge'];
+  if (appState.currentOrgCode) {
+    filenameParts.push(String(appState.currentOrgCode).toLowerCase());
+  }
+  const filename = `${filenameParts.join('-')}.png`;
+
+  const triggerDownload = (url, cleanup) => {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    if (typeof cleanup === 'function') {
+      cleanup();
+    }
+  };
+
+  if (typeof canvas.toBlob === 'function') {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        showMessage('Unable to download the badge right now. Please try again.', 'error');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      triggerDownload(url, () => URL.revokeObjectURL(url));
+    }, 'image/png');
+    return;
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  if (!dataUrl) {
+    showMessage('Unable to download the badge right now. Please try again.', 'error');
+    return;
+  }
+  triggerDownload(dataUrl);
 }
 
 function handleOverlayClick(event) {
@@ -504,28 +631,32 @@ export function initCheckInBadge() {
     if (closeBtn) {
       closeBtn.addEventListener('click', closeBadgeModal);
     }
-    const downloadBtn = document.getElementById('downloadCheckInBadge');
-    if (downloadBtn) {
-      downloadBtn.addEventListener('click', handleDownload);
+    const refreshBtn = document.getElementById('refreshCheckInBadgeBtn');
+    if (refreshBtn && !refreshBtn.dataset.bound) {
+      refreshBtn.addEventListener('click', refreshBadgeManually);
+      refreshBtn.dataset.bound = 'true';
     }
-    const rotateBtn = document.getElementById('rotateCheckInToken');
-    if (rotateBtn) {
-      rotateBtn.addEventListener('click', handleRotate);
+    const downloadBtn = document.getElementById('downloadCheckInBadgeBtn');
+    if (downloadBtn && !downloadBtn.dataset.bound) {
+      downloadBtn.addEventListener('click', downloadBadgeImage);
+      downloadBtn.dataset.bound = 'true';
     }
     document.addEventListener('keydown', handleKeyDown);
     initialized = true;
   }
-  currentDataUrl = '';
   setBadgeBusy(false);
   setTriggerState();
   lastIssuedPayload = null;
   clearExpiryTimer();
   updateModalFieldsFromState();
+  updateDownloadButtonState();
+  updateRefreshButtonState();
 }
 
 export function refreshCheckInBadge() {
   setTriggerState();
   updateModalFieldsFromState();
+  updateRefreshButtonState();
   if (!appState.currentAdmin || !appState.currentAdmin.uid) {
     if (isModalOpen()) {
       closeBadgeModal();

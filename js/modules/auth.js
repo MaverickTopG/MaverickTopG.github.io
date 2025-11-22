@@ -24,6 +24,7 @@ import {
   showAuthSection,
   initializeDashboard,
   setActiveView,
+  renderDemoAccountNotice,
 } from "./dashboard.js";
 import { showBillingGate, hideBillingGate, bindCheckoutButtons } from "./billing.js";
 import {
@@ -31,6 +32,12 @@ import {
   clearInlineAuthMessage,
   showInlineAuthMessage,
 } from "./ui.js";
+import {
+  shouldHonorLegacyPaidFlag,
+  hasLegacyAccessExpired,
+  formatLegacyAccessDeadline,
+  isDemoAccount,
+} from "./accessControl.js";
 
 const TAB_SESSION_KEY = `auth_${appState.tabId}`;
 const SIGNUP_CHECKOUT_KEY = 'signup_checkout_confirmed';
@@ -481,7 +488,7 @@ function normalizeSubscription(subscription) {
 }
 
 function isSubscriptionActive(subscription, legacyPaid = false) {
-  if (legacyPaid) return true;
+  if (shouldHonorLegacyPaidFlag(legacyPaid)) return true;
   if (!subscription) return false;
   const status = (subscription.status || '').toLowerCase();
   const cancelAtPeriodEnd = Boolean(
@@ -576,14 +583,29 @@ export function setupAuthModule() {
       const adminData = userDoc.data();
       const subscription = normalizeSubscription(adminData.subscription);
       const isActiveSub = isSubscriptionActive(subscription, adminData.paid === true);
+      const legacyOverrideExpired = adminData.paid === true && hasLegacyAccessExpired();
+      const demoAccount = isDemoAccount(adminData);
 
       appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
       appState.currentOrgCode = adminData.organizationCode;
       appState.isAuthenticated = true;
+      renderDemoAccountNotice(appState.currentAdmin);
 
       sessionStorage.setItem(TAB_SESSION_KEY, 'true');
 
       if (!isActiveSub) {
+        if (legacyOverrideExpired) {
+          showMessage(
+            `Legacy access expired on ${formatLegacyAccessDeadline()}. Choose a plan to continue.`,
+            'warning'
+          );
+        }
+        if (demoAccount) {
+          showMessage(
+            'Billing is disabled for the shared demo account. Sign up with your own workspace credentials to subscribe.',
+            'info'
+          );
+        }
         showDashboardSection({ locked: true });
         setActiveView('billing');
         return;

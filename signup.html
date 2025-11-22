@@ -192,7 +192,7 @@
             data-plan-label="Monthly Plan"
             data-plan-amount="$5/month"
           >Start Monthly</button>
-          <small class="plan-note">Includes a 7-day free trial. Auto-renews monthly unless cancelled via the customer portal.</small>
+          <small class="plan-note">Includes a 14-day free trial. Auto-renews monthly unless cancelled via the customer portal.</small>
         </article>
 
         <article class="billing-card billing-card--featured">
@@ -213,7 +213,7 @@
             data-plan-label="Yearly Plan"
             data-plan-amount="$50/year"
           >Upgrade to Yearly</button>
-          <small class="plan-note">Includes a 7-day free trial. Auto-renews yearly unless cancelled.</small>
+          <small class="plan-note">Includes a 14-day free trial. Auto-renews yearly unless cancelled.</small>
         </article>
       </div>
 
@@ -260,6 +260,10 @@
           <button class="nav-item" type="button" data-view="approvals">
             <i class="fas fa-user-check"></i>
             Approvals
+          </button>
+          <button class="nav-item" type="button" data-view="events">
+            <i class="fas fa-calendar-alt"></i>
+            Events
           </button>
           <button class="nav-item" type="button" data-view="billing">
             <i class="fas fa-credit-card"></i>
@@ -544,10 +548,11 @@
           .log-row .log-input[data-field="status"] {
             width: 120px;
           }
-          .log-row .btn-danger-icon {
-            width: 36px; /* Align with the 'Actions' column */
-            flex-shrink: 0;
-          }
+    .log-row .btn-danger-icon {
+      width: 36px; /* Align with the 'Actions' column */
+      flex-shrink: 0;
+    }
+
         </style>
 
         <!-- Styles for Toast Messages -->
@@ -603,6 +608,249 @@
           <section class="approvals-view">
             <div id="approvalsSection" class="approvals-shell"></div>
           </section>
+        </div>
+
+        <div class="view-panel" data-view="events" id="view-events">
+          <header class="page-header">
+            <div class="page-title-block">
+              <h1>Events</h1>
+              <p class="page-subtitle">Publish engaging opportunities for your volunteers. Provide the essentials and we’ll create a polished event card automatically. Click a card any time to review requests and approve volunteers for their preferred slot.</p>
+            </div>
+            <div class="header-actions">
+              <button id="eventDraftsBtn" class="btn-primary" type="button">
+                <i class="fas fa-copy"></i>
+                <span class="btn-label">Drafts</span>
+              </button>
+              <button id="eventToggleFormBtn" class="btn-primary" type="button" aria-expanded="false">
+                <i class="fas fa-plus"></i>
+                <span class="btn-label">New Event</span>
+              </button>
+            </div>
+          </header>
+          <section class="events-view">
+            <div class="events-grid" id="eventsGrid">
+              <form id="eventCreateForm" class="event-create-card is-collapsed" novalidate>
+                <header class="event-form-head">
+                  <div class="event-form-title-row">
+                    <div class="event-form-title-block">
+                      <span class="summary-tag"><i class="fas fa-star"></i> Create a new opportunity</span>
+                      <h2>Event Details</h2>
+                    </div>
+                    <button type="button" id="eventResetBtn" class="btn-tertiary btn-compact event-reset-btn">
+                      <i class="fas fa-eraser"></i>
+                      <span>Clear form</span>
+                    </button>
+                  </div>
+                  <p>Share when and where the opportunity takes place, what volunteers will do, and any requirements they should know ahead of time.</p>
+                </header>
+
+                <fieldset class="event-fieldset" aria-labelledby="eventBasicsHeading">
+                  <legend id="eventBasicsHeading">Basics</legend>
+                  <div class="event-field">
+                    <label for="eventTitle">Event title <span aria-hidden="true">*</span></label>
+                    <input type="text" id="eventTitle" name="eventTitle" placeholder="Our House – Kitchen Volunteer Assistant" required />
+                  </div>
+                  <div class="event-field">
+                    <label for="eventSubtitle">Short headline</label>
+                    <input type="text" id="eventSubtitle" name="eventSubtitle" placeholder="Lead meal prep shifts every Sunday" />
+                  </div>
+                  <div class="event-field-grid">
+                    <div class="event-field">
+                      <label for="eventStartDate">Start date <span aria-hidden="true">*</span></label>
+                      <input type="date" id="eventStartDate" name="eventStartDate" required />
+                    </div>
+                    <div class="event-field">
+                      <label for="eventEndDate">End date</label>
+                      <input type="date" id="eventEndDate" name="eventEndDate" />
+                    </div>
+                  </div>
+                  <div class="event-field-grid">
+                    <div class="event-field">
+                      <label for="eventFrequency">Format</label>
+                      <select id="eventFrequency" name="eventFrequency">
+                        <option value="one-time">One Time</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="bi-weekly">Bi-Weekly</option>
+                      </select>
+                    </div>
+                    <div class="event-field">
+                      <label for="eventSpots">Volunteer spots</label>
+                      <input type="number" id="eventSpots" name="eventSpots" min="0" placeholder="e.g. 12" />
+                    </div>
+                  </div>
+                  <div class="event-field">
+                    <label>Session days</label>
+                    <div class="event-day-picker" role="group" aria-label="Choose active days">
+                      <button type="button" class="event-day-btn" data-event-day="sun" aria-pressed="false">Sun</button>
+                      <button type="button" class="event-day-btn" data-event-day="mon" aria-pressed="false">Mon</button>
+                      <button type="button" class="event-day-btn" data-event-day="tue" aria-pressed="false">Tue</button>
+                      <button type="button" class="event-day-btn" data-event-day="wed" aria-pressed="false">Wed</button>
+                      <button type="button" class="event-day-btn" data-event-day="thu" aria-pressed="false">Thu</button>
+                      <button type="button" class="event-day-btn" data-event-day="fri" aria-pressed="false">Fri</button>
+                      <button type="button" class="event-day-btn" data-event-day="sat" aria-pressed="false">Sat</button>
+                    </div>
+                    <small class="event-help-text">Select the days volunteers can attend. Leave blank for single-date events.</small>
+                  </div>
+                </fieldset>
+
+                <fieldset class="event-fieldset" aria-labelledby="eventLocationHeading">
+                  <legend id="eventLocationHeading">Location</legend>
+                  <div class="event-field">
+                    <label for="eventLocationName">Venue / program name</label>
+                    <input type="text" id="eventLocationName" name="eventLocationName" placeholder="Cascade AIDS Project Community Kitchen" />
+                  </div>
+                  <div class="event-field">
+                    <label for="eventAddress">Street address <span aria-hidden="true">*</span></label>
+                    <input type="text" id="eventAddress" name="eventAddress" placeholder="2727 Southeast Alder Street" required />
+                  </div>
+                  <div class="event-field-grid">
+                    <div class="event-field">
+                      <label for="eventCity">City</label>
+                      <input type="text" id="eventCity" name="eventCity" placeholder="Portland" />
+                    </div>
+                    <div class="event-field">
+                      <label for="eventState">State / Region</label>
+                      <input type="text" id="eventState" name="eventState" placeholder="OR" />
+                    </div>
+                    <div class="event-field">
+                      <label for="eventPostal">Postal code</label>
+                      <input type="text" id="eventPostal" name="eventPostal" placeholder="97214" />
+                    </div>
+                  </div>
+                  <div class="event-field">
+                    <label for="eventLocationNotes">Location notes</label>
+                    <textarea id="eventLocationNotes" name="eventLocationNotes" rows="3" placeholder="Parking is available on the street. Check in at the side entrance." ></textarea>
+                  </div>
+                </fieldset>
+
+                <fieldset class="event-fieldset" aria-labelledby="eventSlotsHeading">
+                  <legend id="eventSlotsHeading">Time slots</legend>
+                  <div id="eventTimeSlots" class="event-slot-list" aria-live="polite"></div>
+                  <button type="button" id="eventAddSlotBtn" class="btn-primary slot-add-btn">
+                    <i class="fas fa-plus"></i>
+                    <span class="btn-label">Add time slot</span>
+                  </button>
+                </fieldset>
+
+                <fieldset class="event-fieldset" aria-labelledby="eventStoryHeading">
+                  <legend id="eventStoryHeading">Story</legend>
+                  <div class="event-field">
+                    <label for="eventOverview">Overview <span aria-hidden="true">*</span></label>
+                    <textarea id="eventOverview" name="eventOverview" rows="4" placeholder="Share what this event is about and why volunteers matter." required></textarea>
+                  </div>
+                  <div class="event-field">
+                    <label for="eventVolunteerTasks">What volunteers will do</label>
+                    <textarea id="eventVolunteerTasks" name="eventVolunteerTasks" rows="4" placeholder="List the primary tasks, expectations, or shift details."></textarea>
+                  </div>
+                  <div class="event-field">
+                    <label for="eventRequirements">Requirements & checklist</label>
+                    <textarea id="eventRequirements" name="eventRequirements" rows="4" placeholder="Example: Closed-toe shoes, background check, food-handling training."></textarea>
+                  </div>
+                </fieldset>
+
+                <fieldset class="event-fieldset" aria-labelledby="eventExtrasHeading">
+                  <legend id="eventExtrasHeading">Extras</legend>
+                  <div class="event-field">
+                    <label>Causes</label>
+                    <div class="event-cause-picker" role="group" aria-label="Select causes">
+                      <button type="button" class="event-cause-chip" data-event-cause="Food" aria-pressed="false">
+                        <i class="fas fa-utensils"></i> Food
+                      </button>
+                      <button type="button" class="event-cause-chip" data-event-cause="Health" aria-pressed="false">
+                        <i class="fas fa-heartbeat"></i> Health
+                      </button>
+                      <button type="button" class="event-cause-chip" data-event-cause="Family" aria-pressed="false">
+                        <i class="fas fa-users"></i> Family
+                      </button>
+                      <button type="button" class="event-cause-chip" data-event-cause="Community Development" aria-pressed="false">
+                        <i class="fas fa-city"></i> Community Development
+                      </button>
+                      <button type="button" class="event-cause-chip" data-event-cause="Education" aria-pressed="false">
+                        <i class="fas fa-graduation-cap"></i> Education
+                      </button>
+                      <button type="button" class="event-cause-chip" data-event-cause="Environment" aria-pressed="false">
+                        <i class="fas fa-leaf"></i> Environment
+                      </button>
+                      <button type="button" class="event-cause-chip" data-event-cause="Custom" aria-pressed="false">
+                        <i class="fas fa-pen"></i> Custom
+                      </button>
+                    </div>
+                  </div>
+                    <div class="event-field-grid">
+                    <div class="event-field">
+                      <label for="eventContactName">Contact person</label>
+                      <input type="text" id="eventContactName" name="eventContactName" placeholder="Primary contact name" />
+                    </div>
+                    <div class="event-field">
+                      <label for="eventContactEmail">Contact email</label>
+                      <input type="email" id="eventContactEmail" name="eventContactEmail" placeholder="contact@example.org" />
+                    </div>
+                  </div>
+                  <div class="event-field">
+                    <label for="eventAdditionalNotes">Additional notes</label>
+                    <textarea id="eventAdditionalNotes" name="eventAdditionalNotes" rows="3" placeholder="Anything else volunteers should bring, wear, or review before arriving."></textarea>
+                  </div>
+                </fieldset>
+
+                <footer class="event-form-actions">
+                  <button type="button" id="eventSaveDraftBtn" class="btn-secondary btn-compact event-save-draft-btn">
+                    <i class="fas fa-save"></i>
+                    <span class="btn-label">Save Draft</span>
+                  </button>
+                  <button type="submit" id="eventPublishBtn" class="btn-primary event-submit-btn">
+                    <span class="btn-label">Publish Event</span>
+                  </button>
+                </footer>
+              </form>
+
+              <aside class="events-list-card" id="eventsListCard">
+                <div id="eventsList" class="events-list">
+                  <div class="empty-state">
+                    <i class="fas fa-calendar-circle-plus"></i>
+                    <h3>No events yet</h3>
+                    <p>Create your first opportunity to help volunteers find their next shift.</p>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <div id="eventDraftsPanel" class="drafts-panel" hidden>
+            <div class="drafts-panel-content">
+              <header class="drafts-panel-head">
+                <h2>Event Drafts</h2>
+                <button type="button" id="eventDraftsCloseBtn" class="btn-icon drafts-close-btn" aria-label="Close drafts panel">
+                  <i class="fas fa-times"></i>
+                </button>
+              </header>
+              <div id="eventDraftsList" class="drafts-list">
+                <div class="empty-state">
+                  <i class="fas fa-clipboard-list"></i>
+                  <h3>No drafts yet</h3>
+                  <p>Start a new event and we’ll save it here when you hide the form.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="view-panel" data-view="event-detail" id="view-event-detail">
+          <div class="event-detail-wrapper">
+            <div class="event-detail-page" id="eventDetailPage">
+              <header class="event-detail-head">
+                <button type="button" class="btn-tertiary event-detail-back" id="eventDetailBackBtn">
+                  <i class="fas fa-arrow-left"></i>
+                  <span class="btn-label">Back to events</span>
+                </button>
+                <div class="event-detail-title-group">
+                  <span class="event-detail-tag">Event Overview</span>
+                  <h2 id="eventDetailTitle">Selected Event</h2>
+                </div>
+              </header>
+              <div class="event-detail-scroll" id="eventDetailContent"></div>
+            </div>
+          </div>
         </div>
 
         <div class="view-panel" data-view="billing" id="view-billing">
@@ -690,6 +938,12 @@
             <div class="page-title-block">
               <h1>Volunteer Management</h1>
             </div>
+            <div class="header-actions">
+              <button id="volunteerRequestsBtn" class="btn-primary" type="button">
+                <i class="fas fa-user-plus"></i>
+                <span class="btn-label">New Volunteer Requests</span>
+              </button>
+            </div>
           </header>
           <section class="volunteers-view">
             <div id="volunteersBoard" class="volunteers-shell">
@@ -713,6 +967,49 @@
             </div>
           </section>
         </div>
+
+        <div class="view-panel" data-view="volunteer-requests" id="view-volunteer-requests">
+          <header class="page-header">
+            <div class="page-title-block">
+              <h1>New Volunteer Requests</h1>
+              <p class="page-subtitle" id="volunteerRequestsSubtitle">Review incoming volunteers and decide who joins your organization.</p>
+            </div>
+            <div class="header-actions">
+              <button id="volunteerRequestsBackBtn" class="btn-primary" type="button">
+                <i class="fas fa-arrow-left"></i>
+                <span class="btn-label">Back to Volunteers</span>
+              </button>
+            </div>
+          </header>
+          <section class="volunteers-view">
+            <div class="volunteers-shell">
+              <div class="volunteers-toolbar single-row">
+                <div class="volunteers-section-copy">
+                  <h2>Pending approvals</h2>
+                  <span id="volunteerRequestsCount" class="volunteer-requests-count" hidden></span>
+                </div>
+              </div>
+              <div class="volunteers-table-wrapper">
+                <table class="volunteers-table volunteers-requests-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Requested</th>
+                      <th class="centered-header">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="volunteerRequestsTableBody">
+                    <tr>
+                      <td colspan="4" class="empty-table-row">No pending requests.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+
       </section>
     </div>
   </div>
@@ -983,11 +1280,61 @@
     margin-top: 1.5rem;
 }
 
+.header-actions .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: auto;
+    margin-top: 0;
+    padding-inline: 1.5rem;
+}
+
+.header-actions .btn-primary.btn-has-pending {
+    box-shadow: 0 10px 28px rgba(255, 139, 107, 0.35);
+}
+
 .btn-primary:hover:not(:disabled) {
     transform: translateY(-3px);
     box-shadow: 0 12px 30px rgba(255, 139, 107, 0.32);
 }
-    
+
+.default-share-btn.btn-active {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.92) 0%, rgba(60, 80, 220, 0.92) 100%);
+    color: #fff;
+    box-shadow: 0 16px 32px rgba(79, 70, 229, 0.28);
+}
+
+.default-share-btn.btn-active .count-pill {
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+
+.btn-tertiary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.65rem 1.2rem;
+    border-radius: 12px;
+    border: 1px solid rgba(54, 34, 8, 0.16);
+    background: rgba(255, 255, 255, 0.6);
+    font-weight: 600;
+    color: rgba(74, 44, 0, 0.78);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.btn-tertiary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 26px rgba(104, 62, 0, 0.14);
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.btn-compact {
+    padding: 0.5rem 1rem;
+    font-size: 0.88rem;
+}
+
 
     .btn-ghost {
         background-color: transparent;
@@ -1166,17 +1513,16 @@
             <span class="checkin-badge-note" id="checkInBadgeUpdatedAt">Ready to scan.</span>
           </div>
         </div>
-      </div>
-      <div class="modal-actions checkin-badge-actions">
-        <button type="button" class="btn-secondary" id="rotateCheckInToken">
-          <i class="fas fa-arrows-rotate"></i>
-          Refresh QR
-        </button>
-        <span class="actions-spacer" aria-hidden="true"></span>
-        <button type="button" class="btn-primary" id="downloadCheckInBadge">
-          <i class="fas fa-download"></i>
-          Download PNG
-        </button>
+        <div class="checkin-badge-actions">
+          <button type="button" class="btn-outline" id="refreshCheckInBadgeBtn">
+            <i class="fas fa-rotate-right"></i>
+            <span>Refresh Badge</span>
+          </button>
+          <button type="button" class="btn-primary" id="downloadCheckInBadgeBtn" disabled aria-disabled="true">
+            <i class="fas fa-file-arrow-down"></i>
+            <span>Download Badge</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -1512,6 +1858,65 @@
       max-width: 540px;
     }
 
+    .page-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .page-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      border-radius: 999px;
+      padding: 10px 18px;
+    }
+
+    .page-action-btn i {
+      font-size: 0.95rem;
+    }
+
+    .page-action-btn.btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      width: auto;
+      margin-top: 0;
+      padding: 10px 24px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #ffb347 0%, #ff8b6b 100%);
+      color: #2a1b05;
+      box-shadow: 0 12px 28px rgba(255, 139, 107, 0.3);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .page-action-btn.btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 36px rgba(255, 139, 107, 0.34);
+    }
+
+    .page-action-btn.btn-primary .count-pill {
+      background: rgba(255, 255, 255, 0.22);
+      color: #3a2600;
+    }
+
+    .count-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: rgba(255, 139, 107, 0.18);
+      color: #a5460b;
+      font-size: 0.75rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
     .filter-row {
       display: flex;
       flex-wrap: wrap;
@@ -1581,6 +1986,8 @@
     .header-actions {
       display: flex;
       gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
     }
 
     .btn-icon {
@@ -2147,22 +2554,16 @@
     }
 
     .checkin-badge-actions {
+      margin-top: 24px;
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
-      padding: 22px 28px 28px;
-      background: rgba(255, 255, 255, 0.96);
+      justify-content: flex-end;
+      gap: 16px;
+      flex-wrap: wrap;
     }
 
-    .checkin-badge-actions .actions-spacer {
-      flex: 1;
-    }
-
-    .checkin-badge-actions .btn-secondary i,
-    .checkin-badge-actions .btn-outline i,
-    .checkin-badge-actions .btn-primary i {
-      margin-right: 6px;
+    .checkin-badge-actions button {
+      min-width: 0;
     }
 
     @media (max-width: 640px) {
@@ -2173,10 +2574,6 @@
       .checkin-badge-actions {
         flex-direction: column;
         align-items: stretch;
-      }
-
-      .checkin-badge-actions .actions-spacer {
-        display: none;
       }
 
       .checkin-badge-hero {
@@ -2390,13 +2787,17 @@
       backdrop-filter: blur(20px) saturate(180%);
     }
 
-    .approvals-toolbar,
-    .volunteers-toolbar {
+.approvals-toolbar,
+.volunteers-toolbar {
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
       flex-wrap: wrap;
       gap: 18px;
+    }
+
+    .volunteers-toolbar.single-row {
+      align-items: center;
     }
 
     .approvals-toolbar-left,
@@ -2464,6 +2865,1521 @@
       font-size: 1.1rem;
       font-weight: 600;
       color: #3a2600;
+    }
+
+    .volunteers-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+
+    .volunteers-section-copy h2 {
+      margin: 0;
+      font-size: clamp(1.45rem, 2.4vw, 1.8rem);
+      font-weight: 700;
+      color: #3a2600;
+    }
+
+    .volunteers-section-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .volunteers-section-copy p {
+      margin: 6px 0 0;
+      color: rgba(74, 44, 0, 0.64);
+      font-size: 0.96rem;
+    }
+
+    .volunteer-requests-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      background: rgba(255, 179, 71, 0.18);
+      color: rgba(74, 44, 0, 0.78);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .volunteer-request-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+
+    .request-action-btn {
+      padding: 0.45rem 1rem;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+
+    .request-action-btn.approve {
+      background: linear-gradient(135deg, rgba(34, 197, 94, 0.16) 0%, rgba(22, 101, 52, 0.1) 100%);
+      color: #166534;
+      border-color: rgba(22, 101, 52, 0.28);
+      box-shadow: 0 8px 16px rgba(22, 101, 52, 0.12);
+    }
+
+    .request-action-btn.approve:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(22, 101, 52, 0.16);
+      border-color: rgba(22, 101, 52, 0.4);
+    }
+
+    .request-action-btn.decline {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.16) 0%, rgba(185, 28, 28, 0.08) 100%);
+      color: #b91c1c;
+      border-color: rgba(185, 28, 28, 0.24);
+      box-shadow: 0 8px 16px rgba(185, 28, 28, 0.12);
+    }
+
+    .request-action-btn.decline:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(185, 28, 28, 0.16);
+      border-color: rgba(185, 28, 28, 0.36);
+    }
+
+    .volunteers-requests-table td:last-child {
+      text-align: center;
+    }
+
+    .btn-outline.btn-active,
+    .btn-outline.has-pending {
+      background: linear-gradient(135deg, rgba(255, 179, 71, 0.16) 0%, rgba(255, 214, 164, 0.16) 100%);
+      border-color: rgba(255, 179, 71, 0.45);
+      color: rgba(74, 44, 0, 0.85);
+      box-shadow: 0 12px 24px rgba(255, 179, 71, 0.18);
+    }
+
+    .btn-outline.btn-active:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 30px rgba(255, 179, 71, 0.24);
+    }
+
+    .request-action-btn.is-loading,
+    .request-action-btn:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    .share-requests-list {
+      display: grid;
+      gap: clamp(14px, 1.4vw, 22px);
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .share-request-pending {
+      display: grid;
+      gap: clamp(14px, 1.4vw, 22px);
+    }
+
+    .share-request-card {
+      border: 1px solid rgba(255, 179, 71, 0.22);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.92);
+      padding: clamp(16px, 1.6vw, 22px);
+      display: grid;
+      gap: clamp(12px, 1.2vw, 18px);
+      box-shadow: 0 10px 26px rgba(80, 55, 0, 0.08);
+    }
+
+    .share-request-card--pending {
+      border-color: rgba(99, 102, 241, 0.24);
+      background: linear-gradient(140deg, rgba(99, 102, 241, 0.1), rgba(196, 181, 253, 0.14));
+      box-shadow: 0 14px 32px rgba(99, 102, 241, 0.12);
+    }
+
+    .share-request-card--resolved {
+      background: rgba(255, 250, 241, 0.88);
+    }
+
+    .share-request-card--approved {
+      border-color: rgba(22, 101, 52, 0.28);
+      background: rgba(34, 197, 94, 0.12);
+    }
+
+    .share-request-card--rejected {
+      border-color: rgba(220, 38, 38, 0.26);
+      background: rgba(248, 113, 113, 0.12);
+    }
+
+    .share-request-card--revoked {
+      border-color: rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.14);
+    }
+
+    .share-request-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: clamp(12px, 1.2vw, 18px);
+    }
+
+    .share-request-header h3 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #3a2600;
+    }
+
+    .share-request-email {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: rgba(74, 44, 0, 0.78);
+      font-size: 0.9rem;
+    }
+
+    .share-request-email--muted {
+      color: rgba(74, 44, 0, 0.45);
+    }
+
+    .share-request-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .share-request-status-block {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .share-request-status--pending {
+      background: rgba(255, 179, 71, 0.14);
+      border-color: rgba(255, 179, 71, 0.32);
+      color: rgba(118, 62, 6, 0.85);
+    }
+
+    .share-request-status--approved {
+      background: rgba(34, 197, 94, 0.16);
+      border-color: rgba(22, 101, 52, 0.28);
+      color: #166534;
+    }
+
+    .share-request-status--rejected {
+      background: rgba(248, 113, 113, 0.18);
+      border-color: rgba(220, 38, 38, 0.26);
+      color: #b91c1c;
+    }
+
+    .share-request-status--revoked {
+      background: rgba(148, 163, 184, 0.16);
+      border-color: rgba(148, 163, 184, 0.28);
+      color: rgba(30, 41, 59, 0.75);
+    }
+
+    .share-request-message {
+      background: rgba(255, 229, 188, 0.24);
+      border: 1px solid rgba(221, 160, 87, 0.26);
+      border-radius: 14px;
+      padding: clamp(12px, 1.2vw, 18px);
+    }
+
+    .share-request-message strong {
+      display: block;
+      font-size: 0.85rem;
+      letter-spacing: 0.02em;
+      color: rgba(74, 44, 0, 0.72);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    .share-request-message p {
+      margin: 0;
+      font-size: 0.92rem;
+      color: rgba(41, 20, 0, 0.82);
+      line-height: 1.5;
+    }
+
+    .share-request-message--empty {
+      background: rgba(148, 163, 184, 0.12);
+      border-color: rgba(148, 163, 184, 0.22);
+    }
+
+    .share-request-timestamp {
+      font-size: 0.82rem;
+      color: rgba(74, 44, 0, 0.55);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .share-request-decision {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-top: 1px dashed rgba(148, 101, 33, 0.26);
+      padding-top: 10px;
+    }
+
+    .share-request-decider {
+      font-size: 0.8rem;
+      color: rgba(74, 44, 0, 0.55);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .share-request-note {
+      margin: 0;
+      font-size: 0.88rem;
+      color: rgba(41, 20, 0, 0.75);
+      line-height: 1.45;
+    }
+
+    .share-request-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.85rem;
+      color: rgba(74, 44, 0, 0.62);
+    }
+
+    .share-request-meta i,
+    .share-request-status-block i,
+    .share-request-decider i {
+      color: rgba(149, 81, 17, 0.66);
+    }
+
+    .share-request-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .empty-share-request {
+      padding: clamp(14px, 1.4vw, 20px);
+      border-radius: 14px;
+      background: rgba(226, 232, 240, 0.32);
+      color: rgba(74, 44, 0, 0.62);
+      font-size: 0.92rem;
+      text-align: center;
+    }
+
+    .default-share-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .default-share-btn .count-pill {
+      margin-left: 4px;
+      background: rgba(255, 255, 255, 0.22);
+      color: #1f2937;
+    }
+
+    .default-share-panel {
+      margin-top: clamp(24px, 2.6vw, 36px);
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 22px;
+      border: 1px solid rgba(255, 179, 71, 0.18);
+      box-shadow: 0 18px 38px rgba(80, 55, 0, 0.08);
+      padding: clamp(20px, 2.2vw, 30px);
+      display: flex;
+      flex-direction: column;
+      gap: clamp(16px, 1.6vw, 24px);
+      min-height: 320px;
+    }
+
+    .default-share-panel[hidden] {
+      display: none !important;
+    }
+
+    .default-share-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .default-share-header h2 {
+      margin: 0;
+      font-size: clamp(1.45rem, 2.3vw, 1.85rem);
+      font-weight: 700;
+      color: #3a2600;
+    }
+
+    .default-share-header p {
+      margin: 6px 0 0;
+      color: rgba(74, 44, 0, 0.62);
+      font-size: 0.94rem;
+    }
+
+    .events-view {
+      width: 100%;
+    }
+
+    .events-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: clamp(22px, 3vw, 34px);
+      align-items: flex-start;
+    }
+
+    .event-create-card,
+    .events-list-card {
+      background: var(--card-bg);
+      border-radius: 24px;
+      border: 1px solid rgba(255, 179, 71, 0.16);
+      box-shadow: 0 22px 44px rgba(80, 55, 0, 0.12);
+      padding: clamp(22px, 2.2vw, 32px);
+      display: flex;
+      flex-direction: column;
+      gap: clamp(18px, 1.8vw, 26px);
+      backdrop-filter: blur(16px) saturate(160%);
+      transition: max-height 0.3s ease, opacity 0.3s ease;
+    }
+
+    .event-create-card.is-collapsed {
+      display: none;
+    }
+
+    .event-form-head-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .event-form-head h2 {
+      margin: 6px 0 0;
+      font-size: clamp(1.6rem, 2.7vw, 2rem);
+      font-weight: 800;
+      color: #3a2600;
+    }
+
+    .event-form-head p {
+      margin: 6px 0 0;
+      color: rgba(74, 44, 0, 0.65);
+      font-size: 0.98rem;
+    }
+
+    .event-fieldset {
+      border: 1px solid rgba(255, 179, 71, 0.18);
+      border-radius: 20px;
+      padding: clamp(18px, 2vw, 26px);
+      display: grid;
+      gap: clamp(16px, 1.5vw, 20px);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .event-fieldset legend {
+      font-size: 0.85rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(90, 58, 0, 0.62);
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .event-field {
+      display: grid;
+      gap: 8px;
+    }
+
+    .event-field-grid {
+      display: grid;
+      gap: clamp(14px, 1.4vw, 20px);
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    }
+
+    .event-field label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: rgba(58, 38, 0, 0.85);
+    }
+
+    .event-field input,
+    .event-field select,
+    .event-field textarea {
+      font: inherit;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: rgba(255, 255, 255, 0.92);
+      color: rgba(58, 38, 0, 0.9);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .event-field textarea {
+      resize: vertical;
+      min-height: 110px;
+    }
+
+    .event-field input:focus,
+    .event-field select:focus,
+    .event-field textarea:focus {
+      outline: none;
+      border-color: rgba(255, 179, 71, 0.6);
+      box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.25);
+    }
+
+    .slot-input-error {
+      border-color: rgba(220, 38, 38, 0.65) !important;
+      box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18) !important;
+    }
+
+    .event-help-text {
+      color: rgba(74, 44, 0, 0.55);
+      font-size: 0.82rem;
+    }
+
+    .event-day-picker {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+      gap: 8px;
+    }
+
+    .event-day-btn {
+      border: 1px solid rgba(255, 179, 71, 0.26);
+      background: rgba(255, 179, 71, 0.12);
+      border-radius: 12px;
+      padding: 10px 0;
+      font-weight: 600;
+      color: rgba(74, 44, 0, 0.78);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .event-day-btn.is-active {
+      background: linear-gradient(135deg, rgba(255, 179, 71, 0.28) 0%, rgba(255, 214, 164, 0.32) 100%);
+      border-color: rgba(255, 179, 71, 0.6);
+      color: #3a2600;
+      box-shadow: 0 10px 18px rgba(255, 179, 71, 0.18);
+    }
+
+    .event-slot-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .event-slot-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      align-items: flex-end;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(255, 179, 71, 0.22);
+      border-radius: 16px;
+      padding: 16px;
+    }
+
+    .event-slot-row.slot-row-error {
+      border-color: rgba(220, 38, 38, 0.55);
+      box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
+    }
+
+    .event-slot-row .slot-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .slot-add-btn,
+    .slot-remove-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      width: auto;
+      padding-inline: 1.2rem;
+    }
+
+    .slot-remove-btn {
+      min-width: auto;
+      padding-inline: 1rem;
+    }
+
+    .event-cause-picker {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .event-cause-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 179, 71, 0.26);
+      background: rgba(255, 179, 71, 0.12);
+      padding: 10px 14px;
+      font-weight: 600;
+      color: rgba(74, 44, 0, 0.8);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .event-cause-chip.is-active {
+      background: rgba(255, 179, 71, 0.24);
+      border-color: rgba(255, 179, 71, 0.55);
+      color: #3a2600;
+      box-shadow: 0 10px 20px rgba(255, 179, 71, 0.18);
+    }
+
+    .event-form-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: auto;
+    }
+
+    .event-reset-btn {
+      min-width: auto;
+      margin-left: auto;
+      color: rgba(74, 44, 0, 0.72);
+      font-size: 0.78rem;
+      padding: 0.35rem 0.9rem;
+      border-radius: 999px;
+    }
+
+    .event-save-draft-btn {
+      min-width: auto;
+    }
+
+    .event-submit-btn {
+      min-width: 180px;
+    }
+
+    .event-form-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .event-form-title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .event-form-title-block h2 {
+      margin: 0;
+    }
+
+    .events-list-card {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      padding: 0;
+      display: grid;
+      gap: clamp(18px, 1.6vw, 24px);
+    }
+
+    .events-list-card.events-list-hidden {
+      display: none;
+    }
+
+    .events-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: clamp(20px, 2.6vw, 36px);
+      align-items: stretch;
+      position: relative;
+    }
+
+    .event-card {
+      border-radius: 28px;
+      border: 1px solid rgba(203, 152, 74, 0.32);
+      padding: clamp(26px, 2.6vw, 36px);
+      padding-bottom: clamp(96px, 9vw, 118px);
+      background: #fcebd8;
+      box-shadow: 0 30px 60px rgba(150, 102, 33, 0.2);
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .event-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+    }
+
+    .event-card-header-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
+
+    .event-card-header-meta > * {
+      display: inline-flex;
+    }
+
+    .event-card-subtitle {
+      color: rgba(74, 44, 0, 0.62);
+      margin-top: 6px;
+    }
+
+    .event-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: rgba(220, 53, 69, 0.12);
+      color: #b91c1c;
+    }
+
+    .event-card-title {
+      font-weight: 800;
+      font-size: 1.35rem;
+      color: #291400;
+      margin: 0;
+    }
+
+    .event-card-subtitle {
+      margin-top: 6px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: rgba(41, 20, 0, 0.75);
+    }
+
+    .event-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 0.9rem;
+      color: rgba(74, 44, 0, 0.66);
+      border-top: 1px dashed rgba(148, 101, 33, 0.22);
+      padding-top: 16px;
+      margin-top: auto;
+    }
+
+    .event-meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 202, 134, 0.32);
+      border: 1px solid rgba(221, 160, 87, 0.26);
+      font-weight: 600;
+      color: rgba(74, 44, 0, 0.78);
+    }
+
+    .event-slot-chip {
+      background: rgba(255, 229, 188, 0.38);
+      border-color: rgba(221, 180, 116, 0.32);
+    }
+
+    .event-card-body p {
+      margin: 0;
+      font-size: 0.95rem;
+      color: rgba(58, 38, 0, 0.78);
+      line-height: 1.55;
+    }
+
+    .event-card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 18px;
+      font-size: 0.92rem;
+      color: rgba(74, 44, 0, 0.68);
+    }
+
+    .event-card-footer-meta {
+      display: grid;
+      gap: 8px;
+      flex: 1 1 auto;
+    }
+
+    .event-card-actions {
+      position: absolute;
+      bottom: clamp(20px, 2.4vw, 28px);
+      right: clamp(20px, 2.6vw, 32px);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .event-card-actions .btn-tertiary,
+    .event-card-actions .btn-outline {
+      min-width: 0;
+      padding: 0.38rem 0.9rem;
+      font-size: 0.78rem;
+      border-radius: 999px;
+      box-shadow: none;
+    }
+
+    .event-card-actions .btn-tertiary {
+      background: #fff;
+      border: 1px solid rgba(74, 44, 0, 0.18);
+      color: rgba(74, 44, 0, 0.82);
+    }
+
+    .event-card-actions .btn-tertiary:hover {
+      background: rgba(255, 255, 255, 0.92);
+      border-color: rgba(74, 44, 0, 0.28);
+    }
+
+    .event-card-actions .btn-outline {
+      border-color: rgba(220, 38, 38, 0.26);
+      color: #c81e1e;
+      background: rgba(255, 239, 235, 0.7);
+    }
+
+    .event-card-actions .btn-outline:hover {
+      border-color: rgba(220, 38, 38, 0.42);
+      background: rgba(255, 239, 235, 0.92);
+    }
+
+    .event-frequency-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0.38rem 1.05rem;
+      border-radius: 999px;
+      background: rgba(255, 210, 167, 0.22);
+      border: 1px solid rgba(203, 152, 74, 0.36);
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #8b5512;
+      box-shadow: 0 8px 18px rgba(203, 152, 74, 0.18);
+      letter-spacing: 0.01em;
+    }
+
+    .event-frequency-pill i {
+      font-size: 0.82rem;
+      color: rgba(139, 85, 18, 0.9);
+    }
+
+    .event-pending-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0.32rem 0.9rem;
+      border-radius: 999px;
+      background: rgba(76, 59, 207, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.28);
+      color: #4338ca;
+      font-size: 0.75rem;
+      font-weight: 700;
+      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.16);
+    }
+
+    .event-pending-chip i {
+      font-size: 0.82rem;
+    }
+
+    .event-pending-note {
+      margin: 14px 0 0;
+      font-size: 0.9rem;
+      color: rgba(67, 56, 202, 0.9);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.16);
+      border-radius: 14px;
+      padding: 10px 14px;
+    }
+
+    .event-pending-note i {
+      font-size: 0.85rem;
+    }
+
+    .event-slot-requests {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px dashed rgba(206, 149, 68, 0.28);
+      display: grid;
+      gap: 12px;
+    }
+
+    .event-slot-requests-head {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: rgba(74, 44, 0, 0.75);
+      font-size: 0.92rem;
+    }
+
+    .event-slot-requests-head i {
+      color: rgba(200, 38, 38, 0.68);
+    }
+
+    .event-slot-requests-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .slot-request-card {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 244, 227, 0.82);
+      border: 1px solid rgba(221, 180, 116, 0.32);
+    }
+
+    .slot-request-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      word-break: break-word;
+      font-size: 0.85rem;
+      color: rgba(74, 44, 0, 0.72);
+    }
+
+    .slot-request-name {
+      font-weight: 700;
+      color: rgba(55, 33, 0, 0.92);
+      font-size: 0.95rem;
+    }
+
+    .slot-request-email {
+      color: rgba(74, 44, 0, 0.78);
+      text-decoration: none;
+    }
+
+    .slot-request-email:hover {
+      text-decoration: underline;
+    }
+
+    .slot-request-email--muted {
+      opacity: 0.6;
+      cursor: default;
+      text-decoration: none !important;
+    }
+
+    .slot-request-slot {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 229, 188, 0.5);
+      color: rgba(74, 44, 0, 0.78);
+      font-weight: 600;
+      font-size: 0.78rem;
+      width: fit-content;
+    }
+
+    .slot-request-time {
+      font-size: 0.75rem;
+      color: rgba(74, 44, 0, 0.52);
+    }
+
+    .slot-request-note {
+      font-size: 0.78rem;
+      color: rgba(74, 44, 0, 0.6);
+    }
+
+    .slot-request-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .slot-request-action {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+    }
+
+    .slot-request-action.accept {
+      background: rgba(34, 197, 94, 0.18);
+      color: #166534;
+      box-shadow: 0 6px 14px rgba(34, 197, 94, 0.18);
+    }
+
+    .slot-request-action.accept:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(34, 197, 94, 0.22);
+    }
+
+    .slot-request-action.decline {
+      background: rgba(239, 68, 68, 0.18);
+      color: #b91c1c;
+      box-shadow: 0 6px 14px rgba(239, 68, 68, 0.18);
+    }
+
+    .slot-request-action.decline:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(239, 68, 68, 0.22);
+    }
+
+    .slot-request-action.is-loading {
+      opacity: 0.55;
+      pointer-events: none;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    .event-card-archived {
+      opacity: 0.75;
+    }
+
+    .event-card-causes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .event-cause-pill {
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(108, 87, 248, 0.12);
+      color: rgba(55, 48, 163, 0.82);
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+
+
+    .event-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      background: linear-gradient(150deg, rgba(255, 214, 163, 0.18), transparent 60%);
+      opacity: 0.65;
+    }
+
+    .event-card-variant-2,
+    .event-card-variant-3 {
+      background: inherit;
+      box-shadow: inherit;
+      transform: none;
+    }
+
+    .event-detail-page {
+      display: grid;
+      gap: clamp(24px, 2.8vw, 32px);
+      padding: clamp(26px, 3vw, 40px);
+      max-width: min(1024px, 100%);
+      margin: 0 auto;
+    }
+
+    .event-detail-wrapper {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: clamp(24px, 4vw, 48px) clamp(16px, 4vw, 48px);
+      min-height: calc(100vh - 160px);
+      background: linear-gradient(145deg, #fffdf8 0%, var(--cream) 45%, #ffe6c7 100%);
+    }
+
+    .event-detail-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 0;
+      gap: 18px;
+      flex-wrap: wrap;
+      width: 100%;
+    }
+
+    .event-detail-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1 1 260px;
+    }
+
+    .event-detail-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: rgba(74, 44, 0, 0.65);
+    }
+
+    .event-detail-head h2 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.6vw, 2rem);
+      color: #231300;
+      font-weight: 800;
+    }
+
+    .event-detail-title-group {
+      order: 1;
+    }
+
+    .event-detail-back {
+      order: 2;
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(74, 44, 0, 0.75);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(203, 152, 74, 0.32);
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-weight: 600;
+      box-shadow: 0 12px 24px rgba(74, 44, 0, 0.12);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .event-detail-back:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 32px rgba(74, 44, 0, 0.18);
+    }
+
+    .event-detail-scroll {
+      display: grid;
+      gap: clamp(20px, 2.6vw, 32px);
+    }
+
+    .event-detail-summary {
+      display: grid;
+      gap: 18px;
+      padding: clamp(20px, 2.4vw, 30px);
+      border-radius: 26px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(203, 152, 74, 0.26);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+
+    .event-detail-image {
+      width: 100%;
+      border-radius: 22px;
+      overflow: hidden;
+      border: 1px solid rgba(203, 152, 74, 0.24);
+      background: rgba(255, 255, 255, 0.65);
+      max-height: 340px;
+    }
+
+    .event-detail-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .event-detail-summary h3 {
+      margin: 0;
+      font-size: 1.35rem;
+      color: #271401;
+      font-weight: 800;
+    }
+
+    .event-detail-overview {
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: rgba(48, 28, 2, 0.82);
+    }
+
+    .event-detail-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .event-detail-meta .event-meta-chip {
+      background: rgba(255, 255, 255, 0.9);
+      border-color: rgba(203, 152, 74, 0.32);
+    }
+
+    .event-detail-body {
+      display: grid;
+      gap: clamp(18px, 2.4vw, 28px);
+    }
+
+    .event-detail-section {
+      background: rgba(255, 255, 255, 0.86);
+      border-radius: 24px;
+      border: 1px solid rgba(203, 152, 74, 0.22);
+      padding: clamp(20px, 2.4vw, 28px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+      display: grid;
+      gap: 16px;
+    }
+
+    .event-detail-slot-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .event-detail-empty {
+      font-size: 0.85rem;
+      color: rgba(58, 38, 0, 0.6);
+    }
+
+    .event-detail-slot-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: 18px;
+      background: rgba(255, 244, 227, 0.85);
+      border: 1px solid rgba(203, 152, 74, 0.3);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+
+    .event-detail-slot-head {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: rgba(58, 38, 0, 0.82);
+    }
+
+    .event-detail-slot-head strong {
+      font-size: 0.95rem;
+      color: #2b1701;
+    }
+
+    .event-detail-slot-head span {
+      font-size: 0.82rem;
+      color: rgba(58, 38, 0, 0.7);
+    }
+
+    .event-detail-slot-count {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: rgba(74, 44, 0, 0.78);
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(203, 152, 74, 0.28);
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+
+    .event-detail-section h4 {
+      margin: 0;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #2b1701;
+    }
+
+    .event-detail-columns {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr);
+      gap: clamp(22px, 3vw, 36px);
+    }
+
+    .event-detail-roster {
+      display: grid;
+      gap: 16px;
+      position: sticky;
+      top: clamp(16px, 2vw, 28px);
+      align-self: start;
+    }
+
+    .event-detail-roster h3 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #2f1b03;
+    }
+
+    .event-roster-group {
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 20px;
+      border: 1px solid rgba(203, 152, 74, 0.22);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .event-roster-group header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .event-roster-group header h4 {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #3a2204;
+    }
+
+    .event-roster-empty {
+      font-size: 0.85rem;
+      color: rgba(58, 38, 0, 0.6);
+    }
+
+    .event-roster-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .event-roster-slot-group {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid rgba(203, 152, 74, 0.22);
+    }
+
+    .event-roster-slot-group header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.85rem;
+      color: rgba(74, 44, 0, 0.68);
+    }
+
+    .event-roster-slot-group header h4 {
+      margin: 0;
+      font-size: 0.9rem;
+      color: #2f1b03;
+    }
+
+    .event-roster-card {
+      display: grid;
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(255, 244, 227, 0.85);
+      border: 1px solid rgba(203, 152, 74, 0.28);
+    }
+
+    .event-roster-card strong {
+      font-size: 0.95rem;
+      color: #2f1b03;
+    }
+
+    .event-roster-card span {
+      font-size: 0.82rem;
+      color: rgba(58, 38, 0, 0.7);
+    }
+
+    .event-roster-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .event-roster-actions .btn-outline,
+    .event-roster-actions .btn-tertiary {
+      padding: 0.35rem 0.9rem;
+      font-size: 0.78rem;
+      min-width: 0;
+    }
+
+    .event-roster-actions .btn-tertiary {
+      background: rgba(34, 197, 94, 0.18);
+      color: #166534;
+      border-color: rgba(34, 197, 94, 0.32);
+    }
+
+    .event-roster-actions .btn-outline {
+      background: rgba(239, 68, 68, 0.18);
+      color: #b91c1c;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    .event-roster-actions .slot-request-action {
+      width: auto;
+      height: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+    }
+
+    .event-detail-divider {
+      height: 1px;
+      background: linear-gradient(90deg, rgba(203, 152, 74, 0.12), rgba(203, 152, 74, 0.4), rgba(203, 152, 74, 0.12));
+    }
+
+    .drafts-panel {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(18px, 4vw, 32px);
+      z-index: 1100;
+      backdrop-filter: blur(6px);
+    }
+
+    .drafts-panel[hidden] {
+      display: none;
+    }
+
+    .drafts-panel-content {
+      width: min(720px, 96vw);
+      background: #ffffff;
+      border-radius: 28px;
+      box-shadow: 0 32px 60px rgba(15, 23, 42, 0.28);
+      padding: clamp(22px, 3vw, 32px);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .drafts-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .drafts-panel-head h2 {
+      margin: 0;
+      font-size: clamp(1.4rem, 2vw, 1.8rem);
+    }
+
+    .drafts-close-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.92);
+      color: rgba(74, 44, 0, 0.7);
+      box-shadow: 0 10px 18px rgba(15, 23, 42, 0.18);
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+      font-size: 0.75rem;
+    }
+
+    .drafts-close-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 26px rgba(15, 23, 42, 0.2);
+    }
+
+    .drafts-list {
+      display: grid;
+      gap: 16px;
+      max-height: min(70vh, 520px);
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .draft-card {
+      border-radius: 18px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(249, 250, 251, 0.96);
+      padding: 18px 20px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .draft-card header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .draft-card-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0;
+    }
+
+    .draft-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: rgba(15, 23, 42, 0.55);
+    }
+
+    .draft-card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .events-list .empty-state {
+      text-align: center;
+      padding: clamp(32px, 6vw, 56px);
+      border-radius: 20px;
+      border: 1px dashed rgba(255, 179, 71, 0.32);
+      background: rgba(255, 255, 255, 0.8);
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+      color: rgba(74, 44, 0, 0.6);
+    }
+
+    .events-list .empty-state i {
+      font-size: 2.5rem;
+      color: rgba(255, 179, 71, 0.7);
+    }
+
+    @media (max-width: 1200px) {
+      .events-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .event-fieldset {
+        padding: 18px;
+      }
+      .event-form-actions {
+        justify-content: stretch;
+      }
+      .event-reset-btn,
+      .event-save-draft-btn,
+      .event-submit-btn {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 960px) {
+      .event-detail-panel {
+        width: min(96vw, 720px);
+      }
+      .event-detail-columns {
+        grid-template-columns: 1fr;
+      }
+      .event-detail-roster {
+        position: static;
+      }
     }
 
     .summary-actions {
@@ -2651,6 +4567,59 @@
       gap: 10px;
     }
 
+    .host-meta-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .host-meta-primary {
+      font-weight: 600;
+      color: rgba(58, 38, 0, 0.95);
+    }
+
+    .host-meta-note {
+      font-size: 0.75rem;
+      color: rgba(74, 44, 0, 0.55);
+      line-height: 1.2;
+    }
+
+    .incoming-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(76, 59, 207, 0.12);
+      color: rgba(49, 32, 106, 0.85);
+      font-size: 0.75rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .incoming-chip i {
+      font-size: 0.82rem;
+      color: rgba(76, 59, 207, 0.75);
+    }
+
+    .host-meta .incoming-chip {
+      margin-left: auto;
+    }
+
+    .approval-row.incoming-log {
+      background: linear-gradient(90deg, rgba(255, 179, 71, 0.08), rgba(255, 214, 170, 0.05));
+    }
+
+    .approval-row.incoming-log td {
+      border-top-color: rgba(255, 179, 71, 0.22);
+    }
+
+    .status-chip.status-shared {
+      background: rgba(76, 59, 207, 0.12);
+      border: 1px solid rgba(76, 59, 207, 0.18);
+      color: rgba(49, 39, 117, 0.88);
+    }
+
     .host-avatar {
       width: 32px;
       height: 32px;
@@ -2730,6 +4699,15 @@
     .table-actions .btn-icon {
       width: 32px;
       height: 32px;
+    }
+
+    .table-actions .share-indicator {
+      color: #4C3BCF;
+    }
+
+    .table-actions .share-indicator:hover {
+      background-color: rgba(76, 59, 207, 0.12);
+      color: #312E81;
     }
 
     .empty-table-row {
@@ -3095,6 +5073,51 @@
       gap: 1rem;
     }
 
+    .demo-plan-notice {
+      margin: 0;
+      padding: 0.75rem 1rem;
+      border-radius: 16px;
+      background: rgba(255, 179, 71, 0.12);
+      border: 1px dashed rgba(255, 179, 71, 0.5);
+      color: #a06301;
+      font-weight: 600;
+    }
+
+    .demo-account-banner {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1.5rem;
+      border-radius: 20px;
+      background: rgba(255, 179, 71, 0.18);
+      border: 1px solid rgba(255, 179, 71, 0.35);
+      color: #8a4d00;
+      box-shadow: 0 22px 45px rgba(116, 76, 0, 0.08);
+    }
+
+    .demo-account-banner i {
+      font-size: 1.2rem;
+      color: inherit;
+    }
+
+    .demo-account-banner__content {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .demo-account-banner__content strong {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.9rem;
+    }
+
+    .demo-account-banner__content p {
+      margin: 0;
+      font-weight: 500;
+    }
+
     .billing-summary-head {
       display: flex;
       justify-content: space-between;
@@ -3208,6 +5231,34 @@
     }
 
     .btn-secondary:disabled {
+      opacity: 0.55;
+      pointer-events: none;
+      box-shadow: none;
+    }
+
+    .btn-outline {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.8rem;
+      border-radius: 14px;
+      border: 1px solid rgba(54, 34, 8, 0.22);
+      background: transparent;
+      font-weight: 600;
+      color: rgba(54, 34, 8, 0.78);
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .btn-outline:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 34px rgba(104, 62, 0, 0.16);
+      background: rgba(255, 255, 255, 0.6);
+      border-color: rgba(54, 34, 8, 0.32);
+    }
+
+    .btn-outline:disabled {
       opacity: 0.55;
       pointer-events: none;
       box-shadow: none;

@@ -17,10 +17,16 @@ const ADMIN_QR_SECRET = defineSecret('ADMIN_QR_SECRET');
 
 const DEFAULT_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
 const DEFAULT_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
+const DEFAULT_QR_TTL_SECONDS = 3153600000; // 100 years
+const DEMO_ACCOUNT_EMAILS = new Set(['x@gmail.com']);
 
 initializeApp();
 const db = getFirestore();
 const authAdmin = getAuth();
+
+function isDemoEmail(value) {
+  return DEMO_ACCOUNT_EMAILS.has(String(value || '').trim().toLowerCase());
+}
 
 function safeSecretValue(secret, fallback) {
   try {
@@ -879,8 +885,13 @@ export const createCheckout = onRequest(
     const normalizedEmail = (decodedToken?.email || email || '').trim().toLowerCase();
     const customerUid = decodedToken?.uid || uid || '';
 
+    if (isDemoEmail(normalizedEmail)) {
+      res.status(403).json({ error: 'Demo access cannot initiate billing.' });
+      return;
+    }
+
     const shouldEvaluateTrial = Boolean(trialRequested);
-    const TRIAL_PERIOD_DAYS = 7;
+    const TRIAL_PERIOD_DAYS = 14;
     let shouldApplyTrial = false;
 
     if (shouldEvaluateTrial) {
@@ -1006,6 +1017,10 @@ export const createPortal = onRequest(
       }
 
       const userData = userDoc.data() || {};
+      if (isDemoEmail(userData.email)) {
+        res.status(403).json({ error: 'Demo accounts cannot access billing.' });
+        return;
+      }
       const subscription = userData.subscription || {};
       const customerId = subscription.customerId
         || subscription.customer_id
@@ -1219,6 +1234,10 @@ export const cancelSubscription = onRequest(
       }
 
       const userData = userDoc.data() || {};
+      if (isDemoEmail(userData.email)) {
+        res.status(403).json({ error: 'Demo accounts cannot modify billing.' });
+        return;
+      }
       const subscription = userData.subscription || {};
       const subscriptionId = subscription.id || null;
 
@@ -1383,7 +1402,9 @@ export const issueAdminQr = onRequest(
       }
 
       const nowSec = Math.floor(Date.now() / 1000);
-      const ttl = ttlSeconds ? Math.max(60, Math.min(ttlSeconds, 600)) : 600;
+      const ttl = ttlSeconds
+        ? Math.max(60, Math.min(ttlSeconds, DEFAULT_QR_TTL_SECONDS))
+        : DEFAULT_QR_TTL_SECONDS;
 
       const nonce = typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -1479,7 +1500,16 @@ export const verifyAdminQr = onCall({ secrets: [ADMIN_QR_SECRET] }, async (reque
     return { ok: false, message: 'QR verification not configured.', adminValid: false };
   }
 
-  const canonical = canonicalJson(payload);
+  const canonicalPayload = {
+    v: payload.v,
+    orgAccessCode: payload.orgAccessCode,
+    adminId: payload.adminId,
+    nonce: payload.nonce,
+    issuedAt: payload.issuedAt,
+    exp: payload.exp,
+  };
+
+  const canonical = canonicalJson(canonicalPayload);
   const expectedSig = crypto.createHmac('sha256', secret).update(canonical).digest('hex');
 
   if (!timingSafeHexEquals(expectedSig, sig)) {
@@ -1494,12 +1524,12 @@ export const verifyAdminQr = onCall({ secrets: [ADMIN_QR_SECRET] }, async (reque
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  const version = Number(payload.v);
+  const version = Number(canonicalPayload.v);
   if (version !== 1) {
     return { ok: false, message: 'Unsupported QR version.', adminValid: false };
   }
-  const exp = Number(payload.exp);
-  const issuedAt = Number(payload.issuedAt);
+  const exp = Number(canonicalPayload.exp);
+  const issuedAt = Number(canonicalPayload.issuedAt);
   if (!Number.isFinite(exp) || exp <= nowSec - 5) {
     return { ok: false, message: 'QR code expired.', adminValid: true };
   }
@@ -1507,9 +1537,9 @@ export const verifyAdminQr = onCall({ secrets: [ADMIN_QR_SECRET] }, async (reque
     return { ok: false, message: 'QR issue time is invalid.', adminValid: true };
   }
 
-  const orgAccessCode = String(payload.orgAccessCode || '').trim().toUpperCase();
-  const adminId = String(payload.adminId || '').trim();
-  const nonce = String(payload.nonce || '').trim();
+  const orgAccessCode = String(canonicalPayload.orgAccessCode || '').trim().toUpperCase();
+  const adminId = String(canonicalPayload.adminId || '').trim();
+  const nonce = String(canonicalPayload.nonce || '').trim();
 
   if (!orgAccessCode || !adminId || !nonce || nonce.length < 8) {
     return { ok: false, message: 'QR payload missing required fields.', adminValid: false };
@@ -1539,37 +1569,6 @@ export const verifyAdminQr = onCall({ secrets: [ADMIN_QR_SECRET] }, async (reque
   const adminData = adminSnap.data() || {};
   if (adminData.allowedCheckin === false) {
     return { ok: false, message: 'Admin check-in access is disabled.', adminValid: false };
-  }
-
-  let nonceUsed = false;
-  try {
-    nonceUsed = await db.runTransaction(async (transaction) => {
-      const nonceRef = orgDoc.ref.collection('used_nonces').doc(nonce);
-      const nonceSnap = await transaction.get(nonceRef);
-      if (nonceSnap.exists) {
-        return true;
-      }
-      transaction.set(nonceRef, {
-        createdAt: Timestamp.now(),
-        exp: Timestamp.fromMillis(exp * 1000),
-        adminId,
-      });
-      return false;
-    });
-  } catch (error) {
-    logger.error('Failed to store QR nonce', error);
-    return { ok: false, message: 'Unable to register QR usage.', adminValid: true };
-  }
-
-  if (nonceUsed) {
-    return {
-      ok: false,
-      message: 'QR code has already been used.',
-      adminValid: true,
-      orgDocId: orgDoc.id,
-      orgName: orgData.name || null,
-      linkedOrgId: orgDoc.id,
-    };
   }
 
   return {

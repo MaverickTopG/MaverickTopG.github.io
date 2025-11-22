@@ -3,11 +3,28 @@ import { showMessage, animateNumber, setTextContent, formatEmailForDisplay } fro
 import {
   initVolunteerEditView,
   resetVolunteerListener,
+  resetVolunteerRequestsListener,
   loadVolunteersData,
+  loadVolunteerRequests,
   registerVolunteersUpdateHandler,
+  registerVolunteerRequestsUpdateHandler,
   computeInitials,
-  displayVolunteers as renderVolunteersPanel
+  displayVolunteers as renderVolunteersPanel,
+  displayVolunteerRequests,
+  getVolunteerDisplayName,
 } from './volunteerOps.js';
+import {
+  initEventsView,
+  resetEventsListener,
+  resetEventSlotRequestsListener,
+  loadEvents,
+  loadEventSlotRequests,
+  resetEventSignupsListener,
+  loadEventSignups,
+  registerEventsUpdateHandler,
+  displayEvents,
+  closeEventDetail,
+} from './events.js';
 import {
   resetActivityListener,
   loadActivityData,
@@ -18,6 +35,7 @@ import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
 import { hideBillingGate, initBillingModule } from './billing.js';
 import { refreshCheckInBadge } from './checkInBadge.js';
+import { isDemoAccount, getDemoAccountDescription } from './accessControl.js';
 
 const VOLUNTEER_HOUR_VALUE = 28.27;
 let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
@@ -60,12 +78,17 @@ export function initDashboardNavigation() {
 }
 
 export function setActiveView(view) {
+  const previousView = activeView;
   if (appState.isSubscriptionLocked && view !== 'billing' && view !== 'logout') {
     showMessage('Activate your subscription to access this area.', 'warning');
     view = 'billing';
   }
 
   activeView = view;
+
+  if (previousView === 'event-detail' && view !== 'event-detail') {
+    closeEventDetail({ skipNavigation: true });
+  }
   document.querySelectorAll('.sidebar-nav .nav-item[data-view]')
     .forEach(i => i.classList.toggle('active', i.dataset.view === view));
   document.querySelectorAll('.view-panel')
@@ -79,6 +102,10 @@ export function setActiveView(view) {
     renderTopVolunteers();
     renderEventActivityChart();
     renderCalendarHeatmap();
+  } else if (view === 'volunteer-requests') {
+    displayVolunteerRequests();
+  } else if (view === 'events') {
+    displayEvents();
   } else if (view === 'billing') {
     initBillingModule();
   }
@@ -96,6 +123,7 @@ export function showAuthSection() {
   activeView = 'overview';
   appState.isSubscriptionLocked = false;
   refreshCheckInBadge();
+  renderDemoAccountNotice(null);
 }
 
 export function showDashboardSection(options = {}) {
@@ -125,6 +153,10 @@ export function showDashboardSection(options = {}) {
       }
     }
   });
+
+  if (appState.currentAdmin) {
+    displayAdminInfo();
+  }
 }
 
 
@@ -132,6 +164,7 @@ export function showDashboardSection(options = {}) {
 
 export async function initializeDashboard() {
   initVolunteerEditView();
+  initEventsView();
   try {
     displayAdminInfo();
     initDashboardNavigation();
@@ -148,6 +181,14 @@ export async function initializeDashboard() {
       refreshAnalytics();
     });
 
+    registerVolunteerRequestsUpdateHandler(() => {
+      displayVolunteerRequests();
+    });
+
+    registerEventsUpdateHandler(() => {
+      displayEvents();
+    });
+
     registerActivityUpdateHandler((source) => {
       renderAttendanceChart();
       renderEventActivityChart();
@@ -160,6 +201,10 @@ export async function initializeDashboard() {
 
     resetRealtimeListeners();
     loadVolunteersData();
+    loadVolunteerRequests();
+    loadEvents();
+    loadEventSlotRequests();
+    loadEventSignups();
     loadActivityData();
     initApprovalsModule();
 
@@ -170,6 +215,8 @@ export async function initializeDashboard() {
     renderCalendarHeatmap();
     renderApprovalQueue();
     renderVolunteersPanel();
+    displayVolunteerRequests();
+    displayEvents();
   } catch (err) {
     console.error('Error initializing dashboard:', err);
     showMessage('Error loading dashboard. Please refresh the page.', 'error');
@@ -178,25 +225,76 @@ export async function initializeDashboard() {
 
 function resetRealtimeListeners() {
   resetVolunteerListener();
+  resetVolunteerRequestsListener();
+  resetEventsListener();
+  resetEventSlotRequestsListener();
+  resetEventSignupsListener();
   resetActivityListener();
   // approvals lives in its own module
 }
 
 function displayAdminInfo() {
   const { email = '', organizationName = 'Organization' } = appState.currentAdmin || {};
-  const orgCode = appState.currentOrgCode || 'XXXXXXXX';
+  const orgCode = String(appState.currentOrgCode || 'XXXXXXXX').toUpperCase();
+  const demoAccountActive = isDemoAccount(appState.currentAdmin);
 
   setTextContent('sidebarUserEmail', formatEmailForDisplay(email));
   const sidebarEmailEl = document.getElementById('sidebarUserEmail');
   if (sidebarEmailEl) {
     sidebarEmailEl.title = email || '';
   }
+  const sidebarRoleEl = document.querySelector('#dashboardSection .sidebar-role');
+  if (sidebarRoleEl) {
+    sidebarRoleEl.textContent = demoAccountActive ? 'Demo Account' : 'Administrator';
+  }
   setTextContent('sidebarOrgName', organizationName);
   setTextContent('sidebarOrgCode', orgCode);
   setTextContent('sidebarAvatar', computeInitials(email, organizationName));
   refreshCheckInBadge();
+  renderDemoAccountNotice(appState.currentAdmin);
 }
 
+export function renderDemoAccountNotice(admin = appState.currentAdmin) {
+  const bannerId = 'demoAccountBanner';
+  const existingBanner = document.getElementById(bannerId);
+  const isDemo = isDemoAccount(admin);
+  if (!isDemo) {
+    existingBanner?.remove();
+    return;
+  }
+
+  const mainArea = document.querySelector('#dashboardSection .main-area');
+  const description = getDemoAccountDescription(admin)
+    || 'This shared login is for demo purposes only.';
+  const copy = `${description} Billing is disabled until you activate your own workspace.`;
+
+  if (!mainArea) {
+    if (existingBanner) existingBanner.textContent = `Demo account — ${copy}`;
+    return;
+  }
+
+  let banner = existingBanner;
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = bannerId;
+    banner.className = 'demo-account-banner';
+    banner.innerHTML = `
+      <i class="fas fa-eye"></i>
+      <div class="demo-account-banner__content">
+        <strong>Demo account</strong>
+        <p></p>
+      </div>
+    `;
+    mainArea.prepend(banner);
+  }
+
+  const textEl = banner.querySelector('p');
+  if (textEl) {
+    textEl.textContent = copy;
+  } else {
+    banner.textContent = `Demo account — ${copy}`;
+  }
+}
 
 /** ── STAT METRICS ─────────────────────────────────────────────────────────── */
 
@@ -225,27 +323,26 @@ function buildMetrics() {
   const busiest = max > 0 ? weeklyLabels[weeklyData.indexOf(max)] : '—';
 
   // Map roles to skip org-admins
-  const roles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
+  const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
+  const roles = new Map(nonAdminVolunteers.map(v => [v.id, v.role]));
 
   // who logged this week?
   const activeSet = new Set();
   appState.activityData.forEach(log => {
     const logDate = normalizeDateValue(log.date);
     // FIX: Correct variable names `startOfWeek` and `endOfWeek` were not being used.
-    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.get(log.user_id) !== 'org-admin') {
+    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin') {
       activeSet.add(log.user_id);
     }
   });
 
-  const nonAdmins = appState.volunteersData.filter(v => v.role !== 'org-admin');
-  const totalVols = nonAdmins.length;  
+  const totalVols = nonAdminVolunteers.length;
   // FIX: Calculate total hours from all approved logs, not just the current week.
   // The previous logic was flawed. This correctly sums up the pre-calculated totalHours
   // from each volunteer, which already respects the 'approved' status.
-  const totalApprovedHours = appState.volunteersData
-    .filter(v => v.role !== 'org-admin')
-    .reduce((sum, v) => sum + (v.totalHours || 0), 0);
-  const uniqEvt = getUniqueEventCount(appState.activityData);
+  const totalApprovedHours = nonAdminVolunteers.reduce((sum, v) => sum + (v.totalHours || 0), 0);
+  const eventCount = Array.isArray(appState.events) ? appState.events.length : 0;
+  const uniqEvt = Math.max(eventCount, getUniqueEventCount(appState.activityData));
   const donation = calculateDonationValue(totalApprovedHours);
 
   return {
@@ -337,7 +434,8 @@ function renderTopVolunteers() {
   const list = document.getElementById('topEmployeesList');
   if (!list) return;
 
-  const top5 = [...appState.volunteersData]
+  const top5 = appState.volunteersData
+    .filter(v => (v.role || 'volunteer') !== 'org-admin')
     .sort((a,b) => (b.totalHours||0) - (a.totalHours||0))
     .slice(0,5);
 
@@ -347,16 +445,19 @@ function renderTopVolunteers() {
   }
 
   list.innerHTML = top5.map(v => {
-    const name = v.firstName || v.email || 'Volunteer';
+    const name = getVolunteerDisplayName(v);
     const initials = computeInitials(name, v.email);
     const hrs = (v.totalHours||0).toFixed(1);
+    const normalizedEmail = (v.email || '').trim();
+    const emailLabel = normalizedEmail || '—';
+
     return `
       <li>
         <div class="employee-meta">
           <div class="employee-avatar">${initials}</div>
           <div class="employee-text">
             <div class="employee-name">${name}</div>
-            <div class="subtle-text" title="${v.email || ''}">${formatEmailForDisplay(v.email || '')}</div>
+            <div class="subtle-text" title="${normalizedEmail || emailLabel}">${emailLabel}</div>
           </div>
         </div>
         <div class="employee-hours">${hrs} hrs</div>
@@ -378,18 +479,19 @@ function renderEventActivityChart() {
   // This logic was previously split and incorrect, causing the chart to show 0.
   // Also, ensure we only count approved logs for active volunteers.
   const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
-  const roles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
+  const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
+  const roles = new Map(nonAdminVolunteers.map(v => [v.id, v.role]));
   const activeSet = new Set();
   appState.activityData.forEach(log => {
     const logDate = normalizeDateValue(log.date);
     const status = (log.approve || 'pending').toLowerCase();
-    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.get(log.user_id) !== 'org-admin' && (status === 'approved' || status === 'accepted')) {
+    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin' && (status === 'approved' || status === 'accepted')) {
       activeSet.add(log.user_id);
     }
   });
 
   const engaged = activeSet.size;
-  const totalVolunteers = appState.volunteersData.filter(v => v.role !== 'org-admin').length;
+  const totalVolunteers = nonAdminVolunteers.length;
   const inactive = Math.max(0, totalVolunteers - engaged);
   const pct = totalVolunteers > 0 ? Math.round((engaged / totalVolunteers) * 100) : 0;
 
@@ -435,14 +537,15 @@ function buildWeeklyAttendanceData() {
   const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const data   = new Array(7).fill(0);
 
-  const roles = new Map(appState.volunteersData.map(v => [v.id, v.role]));
+  const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
+  const roles = new Map(nonAdminVolunteers.map(v => [v.id, v.role]));
 
   // FIX: Ensure only approved hours are counted in the weekly chart.
   const approvedLogs = appState.activityData.filter(log => ['approved', 'accepted'].includes((log.approve || 'pending').toLowerCase()));
 
   approvedLogs.forEach(log => {
     const d = normalizeDateValue(log.date);
-    if (d && d >= weekStart && d < weekEnd && roles.get(log.user_id) !== 'org-admin') {
+    if (d && d >= weekStart && d < weekEnd && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin') {
       // FIX: Use getUTCDay() to align with the UTC-based week boundaries.
       data[d.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
     }

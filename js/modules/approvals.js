@@ -1,24 +1,36 @@
 import { appState } from './state.js';
 import { showMessage, triggerListAnimation } from './ui.js';
 import { db } from './firebase.js';
-import { doc, updateDoc, arrayUnion, serverTimestamp } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
-import { editVolunteerHours } from './volunteerOps.js';
+import {
+  doc,
+  updateDoc,
+  arrayUnion,
+  serverTimestamp,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  getDocs,
+} from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
+import { editVolunteerHours, notifyVolunteersUpdate } from './volunteerOps.js';
 
 const SECTION_ID = 'approvalsSection';
 
 const approvalsState = {
   filters: {
     person: 'all',
-    status: 'all',
+    status: 'pending',
     startDate: '',
     endDate: ''
   },
   expandedIds: new Set(),
   initialized: false,
-  eventsBound: false
+  eventsBound: false,
+  defaultShareActive: false,
 };
 
 export function initApprovalsModule() {
+  loadDefaultShareRequests();
   renderApprovalQueue();
   bindApprovalEvents();
 }
@@ -34,7 +46,10 @@ export function renderApprovalQueue(options = {}) {
   pruneSelections(dataset.filteredLogs);
   updateFiltersUI(dataset);
   updateSummary(dataset);
+  renderDefaultShareRequests(dataset.shareRequests);
+  toggleDefaultShareView();
   updateTable(dataset, options);
+  bindDefaultShareEvents();
 }
 
 function ensureBaseLayout(host) {
@@ -43,58 +58,55 @@ function ensureBaseLayout(host) {
   }
 
   host.innerHTML = `
-    <div class="approvals-shell">
-      <div class="approvals-summary">
-        <div class="summary-text" id="approvalsSummaryText">Total Hours: 0h 00m</div>
-        <div class="summary-actions">
-        </div>
-      </div>
-      <div class="approvals-filters-row">
-        <div class="filter-field">
-          <label for="approvalPeopleFilter">People</label>
-          <select id="approvalPeopleFilter"></select>
-        </div>
-        <div class="filter-field">
-          <label for="approvalStatusFilter">Status</label>
-          <select id="approvalStatusFilter">
-            <option value="all">All statuses</option>
-            <option value="pending">Pending only</option>
-            <option value="approved">Approved</option>
-            <option value="denied">Denied</option>
-            <option value="changes-requested">Needs changes</option>
-          </select>
-        </div>
-      </div>
-      <div class="approvals-table-wrapper">
-        <table class="approvals-table">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Who</th>
-              <th>Hours</th>
-              <th>Status</th>
-              <th>Event</th>
-              <th>Host</th>
-              <th>Checked In</th>
-              <th class="centered-header">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="approvalsTableBody"></tbody>
-        </table>
+    <div class="approvals-summary">
+      <div class="summary-text" id="approvalsSummaryText">Pending hours awaiting review: 0h 00m</div>
+      <div class="summary-actions">
+        <button type="button" class="btn-primary default-share-btn" id="defaultShareModalBtn">
+          <i class="fas fa-share-nodes"></i>
+          <span class="btn-label" id="defaultShareBtnLabel">Default Sharing</span>
+          <span class="count-pill" id="defaultShareCount" hidden>0</span>
+        </button>
       </div>
     </div>
+    <div class="approvals-table-wrapper" id="approvalsTableWrapper">
+      <table class="approvals-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Who</th>
+            <th>Hours</th>
+            <th>Status</th>
+            <th>Event</th>
+            <th>Host</th>
+            <th>Checked In</th>
+            <th class="centered-header">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="approvalsTableBody"></tbody>
+      </table>
+    </div>
+    <section class="default-share-panel" id="defaultSharePanel" hidden>
+      <header class="default-share-header">
+        <div>
+          <h2>Default Sharing Requests</h2>
+          <p id="defaultShareSubtitle">Volunteers can ask to auto-share their approved hours.</p>
+        </div>
+      </header>
+      <div id="defaultShareQueue" class="share-requests-list"></div>
+    </section>
   `;
 
   approvalsState.initialized = true;
 }
 
 function buildApprovalsDataset() {
-  const allLogs = (appState.activityData || [])
+  const actionableLogs = (appState.activityData || [])
     .filter((log) => log && log.id)
     .map((log) => ({ ...log }));
 
-  const peopleIndex = buildPeopleIndex(allLogs);
-  const filteredLogs = applyFilters(allLogs, approvalsState.filters);
+  const pendingLogs = actionableLogs.filter((log) => normalizeStatus(log.approve) === 'pending');
+  const peopleIndex = buildPeopleIndex(pendingLogs);
+  const filteredLogs = applyFilters(pendingLogs, approvalsState.filters);
 
   filteredLogs.sort((a, b) => {
     const dateA = getLogTimestamp(b);
@@ -104,11 +116,31 @@ function buildApprovalsDataset() {
 
   const totalHours = filteredLogs.reduce((sum, log) => sum + getLogHours(log), 0);
 
+  const shareRequests = buildShareRequestsDataset();
+
   return {
-    allLogs,
+    actionableLogs,
     filteredLogs,
     peopleIndex,
-    totalHours
+    totalHours,
+    shareRequests,
+  };
+}
+
+function buildShareRequestsDataset() {
+  const records = Array.isArray(appState.defaultShareRequests)
+    ? appState.defaultShareRequests.map((request) => ({ ...request }))
+    : [];
+
+  records.sort((a, b) => parseRequestTimestamp(b) - parseRequestTimestamp(a));
+
+  const pending = records.filter((request) => normalizeShareRequestStatus(request.status) === 'pending');
+  const resolved = records.filter((request) => normalizeShareRequestStatus(request.status) !== 'pending');
+
+  return {
+    all: records,
+    pending,
+    resolved,
   };
 }
 
@@ -123,8 +155,10 @@ function buildPeopleIndex(logs) {
 
     if (!map.has(volunteerId)) {
       const volunteer = appState.volunteersData.find((member) => member.id === volunteerId);
-      const fallbackEmail = log.volunteer_email || log.email || '';
-      const fallbackName = volunteer ? volunteer.firstName : log.volunteer_name || (fallbackEmail.includes('@') ? fallbackEmail.split('@')[0] : fallbackEmail || 'Volunteer');
+      const fallbackEmail = (log.volunteer_email || log.email || '').trim();
+      const fallbackName = volunteer
+        ? volunteer.firstName
+        : log.volunteer_name || fallbackEmail || 'Volunteer';
       map.set(volunteerId, {
         id: volunteerId,
         name: volunteer ? (volunteer.firstName || volunteer.email || fallbackName) : fallbackName,
@@ -165,20 +199,11 @@ function applyFilters(logs, filters) {
     const volunteerId = getVolunteerId(log);
     const timestamp = getLogTimestamp(log);
 
-    if (filters.person !== 'all' && volunteerId !== filters.person) {
+    if (status !== 'pending') {
       return false;
     }
 
-    if (filters.status === 'pending' && status !== 'pending') {
-      return false;
-    }
-    if (filters.status === 'approved' && status !== 'approved') {
-      return false;
-    }
-    if (filters.status === 'denied' && status !== 'denied') {
-      return false;
-    }
-    if (filters.status === 'changes-requested' && status !== 'changes-requested') {
+    if (filters.person !== 'all' && volunteerId !== filters.person) {
       return false;
     }
 
@@ -194,21 +219,6 @@ function applyFilters(logs, filters) {
 }
 
 function updateFiltersUI(dataset) {
-  const peopleSelect = document.getElementById('approvalPeopleFilter');
-  if (peopleSelect) {
-    const options = buildPeopleOptions(dataset.peopleIndex);
-    peopleSelect.innerHTML = options.markup;
-    if (!options.values.includes(approvalsState.filters.person)) {
-      approvalsState.filters.person = 'all';
-    }
-    peopleSelect.value = approvalsState.filters.person;
-  }
-
-  const statusSelect = document.getElementById('approvalStatusFilter');
-  if (statusSelect) {
-    statusSelect.value = approvalsState.filters.status;
-  }
-
   const startInput = document.getElementById('approvalStartDate');
   if (startInput) {
     startInput.value = approvalsState.filters.startDate;
@@ -220,20 +230,6 @@ function updateFiltersUI(dataset) {
   }
 }
 
-function buildPeopleOptions(peopleIndex) {
-  const values = ['all'];
-  let markup = '<option value="all">All People</option>';
-
-  const entries = Array.from(peopleIndex.values()).sort((a, b) => a.name.localeCompare(b.name));
-  entries.forEach((entry) => {
-    values.push(entry.id);
-    const pendingTag = entry.pendingCount ? ` (${entry.pendingCount} pending)` : '';
-    markup += `<option value="${entry.id}">${escapeHtml(entry.name)}${pendingTag}</option>`;
-  });
-
-  return { markup, values };
-}
-
 function updateSummary(dataset) {
   const summaryElement = document.getElementById('approvalsSummaryText');
   if (!summaryElement) {
@@ -241,25 +237,291 @@ function updateSummary(dataset) {
   }
 
   const totalHours = dataset.totalHours;
-  let label = 'Total Hours';
-
-  if (approvalsState.filters.status === 'pending') {
-    label = 'Total Pending Hours';
-  } else if (approvalsState.filters.status === 'approved') {
-    label = 'Total Approved Hours';
-  } else if (approvalsState.filters.status === 'denied') {
-    label = 'Total Denied Hours';
-  } else if (approvalsState.filters.status === 'changes-requested') {
-    label = 'Total Hours Needing Changes';
-  }
+  let label = 'Pending hours awaiting review';
 
   if (approvalsState.filters.person !== 'all') {
     const personEntry = dataset.peopleIndex.get(approvalsState.filters.person);
     const personName = personEntry ? personEntry.name : 'Volunteer';
-    label += ` for ${personName}`;
+    label = `Pending hours for ${personName}`;
   }
 
-  summaryElement.textContent = `${label}: ${formatHourDuration(totalHours)}`;
+  const shareRequestCount = dataset.shareRequests
+    ? dataset.shareRequests.pending.length
+    : 0;
+  const shareSuffix = shareRequestCount
+    ? ` • Default sharing requests: ${shareRequestCount}`
+    : '';
+
+  summaryElement.textContent = `${label}: ${formatHourDuration(totalHours)}${shareSuffix}`;
+}
+
+function renderDefaultShareRequests(shareDataset = { pending: [], resolved: [] }) {
+  const list = document.getElementById('defaultShareQueue');
+  const subtitle = document.getElementById('defaultShareSubtitle');
+  const countBadge = document.getElementById('defaultShareCount');
+  if (!list) {
+    return;
+  }
+
+  const pending = Array.isArray(shareDataset.pending) ? shareDataset.pending : [];
+  if (countBadge) {
+    if (pending.length > 0) {
+      countBadge.hidden = false;
+      countBadge.textContent = `${pending.length}`;
+    } else {
+      countBadge.hidden = true;
+      countBadge.textContent = '0';
+    }
+  }
+
+  if (subtitle) {
+    subtitle.textContent = pending.length
+      ? `${pending.length} pending request${pending.length === 1 ? '' : 's'} awaiting review.`
+      : 'All caught up — no pending requests right now.';
+  }
+
+  const pendingMarkup = pending.length
+    ? pending.map((request) => renderShareRequestCard(request, { resolved: false })).join('')
+    : '<div class="empty-share-request">No pending requests.</div>';
+
+  list.innerHTML = `
+    <div class="share-request-pending">
+      ${pendingMarkup}
+    </div>
+  `;
+}
+
+function toggleDefaultShareView() {
+  const tableWrapper = document.getElementById('approvalsTableWrapper');
+  const sharePanel = document.getElementById('defaultSharePanel');
+  const defaultShareBtn = document.getElementById('defaultShareModalBtn');
+  const defaultShareBtnLabel = document.getElementById('defaultShareBtnLabel');
+
+  if (approvalsState.defaultShareActive) {
+    if (tableWrapper) tableWrapper.hidden = true;
+    if (sharePanel) sharePanel.hidden = false;
+    if (defaultShareBtn) {
+      defaultShareBtn.classList.add('btn-active');
+      defaultShareBtn.setAttribute('aria-pressed', 'true');
+    }
+    if (defaultShareBtnLabel) {
+      defaultShareBtnLabel.textContent = 'Go back to Approvals';
+    }
+  } else {
+    if (tableWrapper) tableWrapper.hidden = false;
+    if (sharePanel) sharePanel.hidden = true;
+    if (defaultShareBtn) {
+      defaultShareBtn.classList.remove('btn-active');
+      defaultShareBtn.setAttribute('aria-pressed', 'false');
+    }
+    if (defaultShareBtnLabel) {
+      defaultShareBtnLabel.textContent = 'Default Sharing';
+    }
+  }
+}
+
+function bindDefaultShareEvents() {
+  const openBtn = document.getElementById('defaultShareModalBtn');
+  if (openBtn && !openBtn.dataset.bound) {
+    openBtn.addEventListener('click', () => {
+      approvalsState.defaultShareActive = !approvalsState.defaultShareActive;
+      renderApprovalQueue({ skipAnimation: true });
+    });
+    openBtn.dataset.bound = 'true';
+  }
+
+  const panel = document.getElementById('defaultSharePanel');
+  if (panel && !panel.dataset.bound) {
+    panel.addEventListener('click', (event) => {
+      const approveBtn = event.target.closest('[data-share-request-approve]');
+      if (approveBtn) {
+        approveDefaultShareRequest(approveBtn.dataset.shareRequestApprove).catch((error) => {
+          console.error('approve default share error', error);
+          showMessage('Unable to approve default sharing request. Please try again.', 'error');
+        });
+        return;
+      }
+      const rejectBtn = event.target.closest('[data-share-request-reject]');
+      if (rejectBtn) {
+        rejectDefaultShareRequest(rejectBtn.dataset.shareRequestReject).catch((error) => {
+          console.error('reject default share error', error);
+          showMessage('Unable to decline default sharing request. Please try again.', 'error');
+        });
+      }
+    });
+    panel.dataset.bound = 'true';
+  }
+}
+
+function renderShareRequestCard(request, { resolved }) {
+  const status = normalizeShareRequestStatus(request.status);
+  const statusLabel = formatShareRequestStatus(status);
+  const volunteerName = request.user_name || request.volunteer_name || request.volunteerName || 'Volunteer';
+  const volunteerEmail = request.user_email || request.volunteer_email || request.email || '';
+  const message = typeof request.message === 'string' && request.message.trim()
+    ? request.message.trim()
+    : '';
+  const requestedAt = formatShareRequestTimestamp(request);
+  const decisionNote = resolved && typeof request.decision_note === 'string' && request.decision_note.trim()
+    ? request.decision_note.trim()
+    : '';
+  const decisionBy = resolved && (request.decision_by_email || request.decision_by || null);
+
+  const cardClasses = ['share-request-card'];
+  if (!resolved) {
+    cardClasses.push('share-request-card--pending');
+  }
+  if (resolved) {
+    cardClasses.push('share-request-card--resolved', `share-request-card--${status}`);
+  }
+
+  const emailMarkup = volunteerEmail
+    ? `<a class="share-request-email" href="mailto:${encodeURIComponent(volunteerEmail)}">${escapeHtml(volunteerEmail)}</a>`
+    : '<span class="share-request-email share-request-email--muted">No email provided</span>';
+
+  const messageMarkup = message
+    ? `<div class="share-request-message"><strong>Message</strong><p>${escapeHtml(message)}</p></div>`
+    : '<div class="share-request-message share-request-message--empty"><strong>Message</strong><p>No message provided.</p></div>';
+
+  const actionMarkup = resolved
+    ? ''
+    : `
+      <div class="share-request-actions">
+        <button type="button" class="btn-primary" data-share-request-approve="${request.id}">
+          <i class="fas fa-check"></i>
+          <span>Approve</span>
+        </button>
+        <button type="button" class="btn-outline" data-share-request-reject="${request.id}">
+          <i class="fas fa-ban"></i>
+          <span>Decline</span>
+        </button>
+      </div>
+    `;
+
+  const decisionMarkup = resolved
+    ? `
+      <div class="share-request-decision">
+        <div class="share-request-status-block">
+          <span class="share-request-status share-request-status--${status}">${statusLabel}</span>
+          <span class="share-request-timestamp"><i class="fas fa-clock"></i> ${escapeHtml(requestedAt)}</span>
+        </div>
+        ${decisionBy ? `<span class="share-request-decider"><i class="fas fa-user-shield"></i> ${escapeHtml(decisionBy)}</span>` : ''}
+        ${decisionNote ? `<p class="share-request-note">${escapeHtml(decisionNote)}</p>` : ''}
+      </div>
+    `
+    : `
+      <div class="share-request-meta">
+        <span class="share-request-timestamp"><i class="fas fa-clock"></i> ${escapeHtml(requestedAt)}</span>
+      </div>
+    `;
+
+  return `
+    <article class="${cardClasses.join(' ')}" data-share-request-id="${escapeHtml(request.id || '')}" data-share-status="${escapeHtml(status)}">
+      <header class="share-request-header">
+        <div>
+          <h3>${escapeHtml(volunteerName)}</h3>
+          ${emailMarkup}
+        </div>
+        ${resolved ? '' : `<span class="share-request-status share-request-status--${status}">${statusLabel}</span>`}
+      </header>
+      ${messageMarkup}
+      ${decisionMarkup}
+      ${actionMarkup}
+    </article>
+  `;
+}
+
+function resetDefaultShareRequestsListener() {
+  if (appState.defaultShareRequestsUnsub) {
+    try {
+      appState.defaultShareRequestsUnsub();
+    } catch (error) {
+      console.warn('defaultShareRequestsUnsub error', error);
+    }
+    appState.defaultShareRequestsUnsub = null;
+  }
+}
+
+function loadDefaultShareRequests() {
+  resetDefaultShareRequestsListener();
+
+  const normalizedOrgCode = (appState.currentOrgCode || '').trim().toUpperCase();
+  const admin = appState.currentAdmin || {};
+  const orgId = admin.organizationId
+    || admin.organization_id
+    || admin.linkedOrgId
+    || admin.orgId
+    || null;
+
+  if (!normalizedOrgCode && !orgId) {
+    appState.defaultShareRequests = [];
+    renderApprovalQueue({ skipAnimation: true });
+    notifyVolunteersUpdate();
+    return;
+  }
+
+  const requestMap = new Map();
+  const subscriptions = [];
+  const requestsRef = collection(db, 'default_share_requests');
+
+  const handleSnapshot = (snapshot) => {
+    let mutated = false;
+    snapshot.docChanges().forEach((change) => {
+      const docId = change.doc.id;
+      if (change.type === 'removed') {
+        if (requestMap.delete(docId)) {
+          mutated = true;
+        }
+        return;
+      }
+      const data = change.doc.data() || {};
+      requestMap.set(docId, { id: docId, ...data });
+      mutated = true;
+    });
+
+    if (mutated) {
+      appState.defaultShareRequests = Array.from(requestMap.values());
+      renderApprovalQueue({ skipAnimation: true });
+      notifyVolunteersUpdate();
+    }
+  };
+
+  const subscribe = (constraint) => {
+    try {
+      const unsub = onSnapshot(query(requestsRef, constraint), handleSnapshot, (error) => {
+        console.error('default share requests listener error', error);
+        showMessage(`Unable to load default sharing requests: ${error.message || error}`, 'error');
+      });
+      subscriptions.push(unsub);
+    } catch (error) {
+      console.error('default share requests listener setup failed', error);
+      showMessage(`Unable to subscribe to default sharing requests: ${error.message || error}`, 'error');
+    }
+  };
+
+  if (normalizedOrgCode) {
+    subscribe(where('org_access_code', '==', normalizedOrgCode));
+  }
+
+  if (orgId) {
+    subscribe(where('org_id', '==', orgId));
+  }
+
+  if (!subscriptions.length) {
+    appState.defaultShareRequests = [];
+    renderApprovalQueue({ skipAnimation: true });
+    return;
+  }
+
+  appState.defaultShareRequestsUnsub = () => {
+    subscriptions.forEach((unsub) => {
+      try {
+        unsub();
+      } catch (error) {
+        console.warn('defaultShareRequests unsubscribe error', error);
+      }
+    });
+  };
 }
 
 function updateTable(dataset, options = {}) {
@@ -268,7 +530,7 @@ function updateTable(dataset, options = {}) {
   }
 
   if (!dataset.filteredLogs.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-table-row">No submissions match your filters yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-table-row">All caught up! No pending approvals right now.</td></tr>';
     const selectAll = document.getElementById('approvalSelectAll');
     if (selectAll) {
       selectAll.checked = false;
@@ -287,7 +549,7 @@ function updateTable(dataset, options = {}) {
 
 function renderApprovalRow(log) {
   const logId = log.id;
-  const status = normalizeStatus(log.approve);  
+  const status = normalizeStatus(log.approve);
   const isExpanded = approvalsState.expandedIds.has(logId);
   const timestamp = getLogTimestamp(log);
   const displayDate = timestamp ? timestamp.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -305,6 +567,18 @@ function renderApprovalRow(log) {
     rowClasses.push('expanded');
   }
 
+  const statusChip = `<span class="status-chip status-${status}">${statusLabel}</span>`;
+  const actionsMarkup = `
+    <div class="approval-actions">
+      <button class="btn-icon" type="button" data-action="approve-row" data-log-id="${logId}" title="Approve">
+        <i class="fas fa-check"></i>
+      </button>
+      <button class="btn-icon" type="button" data-action="deny-row" data-log-id="${logId}" title="Deny">
+        <i class="fas fa-ban"></i>
+      </button>
+    </div>
+  `;
+
   return `
     <tr class="${rowClasses.join(' ')}" data-log-id="${logId}">
       <td>
@@ -317,12 +591,12 @@ function renderApprovalRow(log) {
       </td>
       <td>${escapeHtml(volunteerName)}</td>
       <td>${hoursLabel}</td>
-      <td><span class="status-chip status-${status}">${statusLabel}</span></td>
+      <td>${statusChip}</td>
       <td>${escapeHtml(eventName)}</td>
       <td>
         <div class="host-meta">
           <span class="host-avatar">${hostInitials}</span>
-          <span>${escapeHtml(hostName)}</span>
+          <span class="host-meta-primary">${escapeHtml(hostName)}</span>
         </div>
       </td>
       <td>
@@ -331,16 +605,7 @@ function renderApprovalRow(log) {
           ${escapeHtml(checkInInfo.label)}
         </span>
       </td>
-      <td>
-        <div class="approval-actions">
-          <button class="btn-icon" type="button" data-action="approve-row" data-log-id="${logId}" title="Approve">
-            <i class="fas fa-check"></i>
-          </button>
-          <button class="btn-icon" type="button" data-action="deny-row" data-log-id="${logId}" title="Deny">
-            <i class="fas fa-ban"></i>
-          </button>
-        </div>
-      </td>
+      <td>${actionsMarkup}</td>
     </tr>
   `;
 }
@@ -530,17 +795,6 @@ function handleApprovalsChange(event) {
     return;
   }
 
-  if (target.id === 'approvalPeopleFilter') {
-    approvalsState.filters.person = target.value || 'all';
-    renderApprovalQueue();
-    return;
-  }
-
-  if (target.id === 'approvalStatusFilter') {
-    approvalsState.filters.status = target.value || 'all';
-    renderApprovalQueue();
-    return;
-  }
 }
 
 function handleApprovalsClick(event) {
@@ -671,13 +925,39 @@ function getVolunteerDisplayName(log) {
   if (volunteerId) {
     const volunteer = appState.volunteersData.find((member) => member.id === volunteerId);
     if (volunteer) {
-      return volunteer.firstName || volunteer.email || volunteerId;
+      const first = (volunteer.firstName || '').trim();
+      const last = (volunteer.lastName || '').trim();
+      const combinedName = [first, last].filter(Boolean).join(' ').trim();
+      if (combinedName) {
+        return combinedName;
+      }
+      return volunteer.email || volunteerId;
     }
   }
-  return log.volunteer_name || log.firstName || log.volunteer_email || log.email || 'Volunteer';
+  const fallbackFirst = (log.volunteer_name || log.firstName || '').trim();
+  const fallbackLast = (log.lastName || log.last_name || '').trim();
+  const combinedFallback = [fallbackFirst, fallbackLast].filter(Boolean).join(' ').trim();
+  if (combinedFallback) {
+    return combinedFallback;
+  }
+  return log.volunteer_email || log.email || 'Volunteer';
 }
 
 function getHostName(log) {
+  if (log.__meta && log.__meta.isIncoming) {
+    if (log.__meta.owningOrgName) {
+      return log.__meta.owningOrgName;
+    }
+    if (log.host) {
+      return log.host;
+    }
+    if (log.host_name) {
+      return log.host_name;
+    }
+    if (log.__meta.owningOrgCode) {
+      return log.__meta.owningOrgCode;
+    }
+  }
   if (log.host) {
     return log.host;
   }
@@ -757,6 +1037,233 @@ function formatHourDuration(totalHours) {
   const wholeHours = Math.floor(hoursValue);
   const minutes = Math.round((hoursValue - wholeHours) * 60);
   return `${wholeHours}h ${String(minutes).padStart(2, '0')}m`;
+}
+
+function normalizeShareRequestStatus(status) {
+  const raw = (status || 'pending').toString().toLowerCase().trim();
+  if (!raw || raw === 'pending') return 'pending';
+  if (raw === 'approved' || raw === 'accept' || raw.startsWith('accept') || raw.startsWith('approve') || raw === 'granted') {
+    return 'approved';
+  }
+  if (raw === 'rejected' || raw === 'declined' || raw === 'denied' || raw.startsWith('reject') || raw.startsWith('deny')) {
+    return 'rejected';
+  }
+  if (raw.startsWith('revoke') || raw === 'revoked') {
+    return 'revoked';
+  }
+  return 'pending';
+}
+
+function formatShareRequestStatus(status) {
+  switch (normalizeShareRequestStatus(status)) {
+    case 'approved':
+      return 'Approved';
+    case 'rejected':
+      return 'Declined';
+    case 'revoked':
+      return 'Revoked';
+    case 'pending':
+    default:
+      return 'Pending';
+  }
+}
+
+function extractTimestampMillis(value) {
+  if (!value) return 0;
+  try {
+    if (typeof value.toDate === 'function') {
+      const date = value.toDate();
+      const millis = date.getTime();
+      if (!Number.isNaN(millis)) return millis;
+    }
+    if (typeof value.toMillis === 'function') {
+      const millis = value.toMillis();
+      if (Number.isFinite(millis)) return millis;
+    }
+  } catch (error) {
+    console.warn('extractTimestampMillis error', error);
+  }
+
+  const date = new Date(value);
+  const millis = date.getTime();
+  return Number.isNaN(millis) ? 0 : millis;
+}
+
+function parseRequestTimestamp(request) {
+  if (!request) return 0;
+  const fields = [
+    request.submitted_at,
+    request.created_at,
+    request.createdAt,
+    request.requested_at,
+    request.requestedAt,
+    request.updated_at,
+    request.updatedAt,
+    request.decision_at,
+  ];
+
+  for (const field of fields) {
+    const millis = extractTimestampMillis(field);
+    if (millis) return millis;
+  }
+
+  return 0;
+}
+
+function formatShareRequestTimestamp(request) {
+  const millis = parseRequestTimestamp(request);
+  if (!millis) {
+    return 'Requested just now';
+  }
+  const date = new Date(millis);
+  return `Requested ${date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })}`;
+}
+
+function findDefaultShareRequest(requestId) {
+  if (!requestId) return null;
+  return (appState.defaultShareRequests || []).find((request) => request && request.id === requestId) || null;
+}
+
+async function resolveUserOrganizationDoc(request) {
+  const userId = request?.user_id;
+  if (!userId) return null;
+
+  try {
+    const snapshot = await getDocs(query(collection(db, 'user_organizations'), where('user_id', '==', userId)));
+    const requestCodes = [
+      request.org_access_code,
+      request.org_accessCode,
+      request.orgCode,
+    ].map((value) => (value ? String(value).trim().toUpperCase() : null)).filter(Boolean);
+    const requestOrgId = request.org_id ? String(request.org_id) : null;
+
+    let match = null;
+    snapshot.forEach((docSnap) => {
+      if (match) return;
+      const data = docSnap.data() || {};
+      const candidateCodes = [
+        data.access_code,
+        data.organizationCode,
+        data.org_access_code,
+      ].map((value) => (value ? String(value).trim().toUpperCase() : null)).filter(Boolean);
+      const codesMatch = requestCodes.some((code) => candidateCodes.includes(code));
+
+      const candidateIds = [
+        data.linked_org_id,
+        data.organization_id,
+        data.org_id,
+        docSnap.id,
+      ].map((value) => (value ? String(value) : null)).filter(Boolean);
+      const idsMatch = requestOrgId && candidateIds.includes(requestOrgId);
+
+      if (codesMatch || idsMatch) {
+        match = {
+          ref: docSnap.ref,
+          id: docSnap.id,
+          data,
+        };
+      }
+    });
+
+    return match;
+  } catch (error) {
+    console.error('resolveUserOrganizationDoc error', error);
+    return null;
+  }
+}
+
+async function approveDefaultShareRequest(requestId) {
+  const request = findDefaultShareRequest(requestId);
+  if (!request) {
+    showMessage('Default sharing request not found.', 'error');
+    return;
+  }
+
+  if (normalizeShareRequestStatus(request.status) !== 'pending') {
+    showMessage('This request has already been processed.', 'info');
+    return;
+  }
+
+  const admin = appState.currentAdmin || {};
+
+  try {
+    await updateDoc(doc(db, 'default_share_requests', requestId), {
+      status: 'approved',
+      decision_at: serverTimestamp(),
+      decision_by: admin.uid || null,
+      decision_by_email: admin.email || null,
+      decision_note: null,
+    });
+
+    const userOrg = await resolveUserOrganizationDoc(request);
+    if (userOrg) {
+      await updateDoc(userOrg.ref, {
+        default_auto_share: true,
+        default_share_status: 'approved',
+        default_share_rejection_reason: null,
+        default_share_request_message: request.message || null,
+        default_share_requested_at: request.created_at || request.createdAt || serverTimestamp(),
+      });
+    }
+
+    showMessage('Default sharing approved.', 'success');
+  } catch (error) {
+    console.error('approve default share error', error);
+    showMessage('Unable to approve the request. Please try again.', 'error');
+    throw error;
+  }
+}
+
+async function rejectDefaultShareRequest(requestId) {
+  const request = findDefaultShareRequest(requestId);
+  if (!request) {
+    showMessage('Default sharing request not found.', 'error');
+    return;
+  }
+
+  if (normalizeShareRequestStatus(request.status) !== 'pending') {
+    showMessage('This request has already been processed.', 'info');
+    return;
+  }
+
+  const reasonInput = window.prompt('Optional note to the volunteer about this decision (leave blank to skip):', '');
+  if (reasonInput === null) {
+    return;
+  }
+  const reason = reasonInput.trim();
+  const admin = appState.currentAdmin || {};
+
+  try {
+    await updateDoc(doc(db, 'default_share_requests', requestId), {
+      status: 'rejected',
+      decision_at: serverTimestamp(),
+      decision_by: admin.uid || null,
+      decision_by_email: admin.email || null,
+      decision_note: reason || null,
+    });
+
+    const userOrg = await resolveUserOrganizationDoc(request);
+    if (userOrg) {
+      await updateDoc(userOrg.ref, {
+        default_auto_share: false,
+        default_share_status: 'rejected',
+        default_share_rejection_reason: reason || 'Request declined by admin',
+        default_share_requested_at: request.created_at || request.createdAt || serverTimestamp(),
+      });
+    }
+
+    showMessage('Default sharing request declined.', 'info');
+  } catch (error) {
+    console.error('reject default share error', error);
+    showMessage('Unable to decline the request. Please try again.', 'error');
+    throw error;
+  }
 }
 
 function computeInitials(name) {
