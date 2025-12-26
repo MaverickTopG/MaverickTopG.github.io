@@ -1,0 +1,157 @@
+---
+import Layout from '~/layouts/PageLayout.astro';
+
+import Hero2 from '~/components/widgets/Hero2.astro';
+import CallToAction from '~/components/widgets/CallToAction.astro';
+import Features3 from '~/components/widgets/Features3.astro';
+import Content from '~/components/widgets/Content.astro';
+import Stats from '~/components/widgets/Stats.astro';
+import Steps from '~/components/widgets/Steps.astro';
+
+import Button from '~/components/ui/Button.astro';
+import Image from '~/components/common/Image.astro';
+import photoImage from '~/assets/images/photo.png';
+
+const appStoreImg = '~/assets/images/app-store.png';
+const appStoreDownloadLink = 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone';
+const aspectRatio = photoImage.width / photoImage.height;
+
+const metadata = {
+  title: 'NexoLink App',
+};
+---
+
+<Layout metadata={metadata}>
+  <Hero2
+    tagline="Volunteer magic, in your pocket"
+    image={{
+      src: photoImage,
+      alt: 'NexoLink mobile experience',
+      height: 600,
+      width: 300,
+    }}
+  >
+    <Fragment slot="bg">
+      <div class="absolute -top-20 left-[-8%] h-56 w-56 rounded-full bg-secondary/15 blur-3xl animate-float-medium"></div>
+      <div class="absolute -bottom-28 right-[-6%] h-72 w-72 rounded-full bg-accent/10 blur-3xl animate-pulse-soft"></div>
+    </Fragment>
+    <Fragment slot="title">
+      Launch <span class="text-accent dark:text-white">NexoLink</span> and match passion with impact anywhere.
+    </Fragment>
+
+    <Fragment slot="subtitle">
+      The NexoLink app puts discovery, hour logging, and recognition in the palm of your hand. Animated dashboards
+      mirror the admin portal, giving every volunteer an immersive home for service.
+    </Fragment>
+
+    <div slot="actions" class="flex max-w-sm gap-4">
+      <Button variant="link" href={appStoreDownloadLink}>
+        <Image src={appStoreImg} alt="Download on the App Store" width={200} />
+      </Button>
+    </div>
+  </Hero2>
+
+  <Features3
+    title="Cards that orbit your volunteer journey"
+    subtitle="The same mosaic energy from our landing page now guides mobile users with glass cards, joyful gradients, and motion cues."
+    tagline="Volunteer experience"
+    columns={2}
+    items={[
+      {
+        title: 'Curated opportunities',
+        description: 'Swipe through missions that match causes, skills, and schedules. Each card pulses with live availability.',
+        icon: 'tabler:compass',
+      },
+      {
+        title: 'Recognition reels',
+        description: 'Celebrate milestones with animated badges, streaks, and shareable highlight cards.',
+        icon: 'tabler:trophy',
+      },
+      {
+        title: 'Progress dashboards',
+        description: 'Hours, impact stats, and goal trackers animate into view every time volunteers check in.',
+        icon: 'tabler:chart-line',
+      },
+    ]}
+    image={{
+      src: 'https://images.unsplash.com/photo-1521517407911-565264e7d82d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2069&q=80',
+      alt: 'Volunteer mission cards',
+    }}
+  />
+
+  <Content
+    isReversed
+    items={[
+      {
+        title: 'Smart discovery',
+        description: 'Location-aware cards, cause filters, and best-fit highlights surface opportunities instantly.',
+        icon: 'tabler:map-pin',
+      },
+      {
+        title: 'Lightning logbooks',
+        description: 'Log hours in seconds, add notes or photos, and watch approvals glow green as admins review.',
+        icon: 'tabler:bolt',
+      },
+      {
+        title: 'Joyful recognition',
+        description: 'Unlock celebrations, view streaks, and receive animated kudos that sync to your transcript.',
+        icon: 'tabler:star',
+      },
+      {
+        title: 'Privacy built-in',
+        description: 'Minimal data, encrypted sync, and transparent controls keep volunteers protected.',
+        icon: 'tabler:shield-lock',
+      },
+    ]}
+    image={{
+      src: 'https://images.unsplash.com/photo-1576153192621-7a3be10b356e?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1674&q=80',
+      alt: 'NexoLink app interface',
+    }}
+  >
+    <Fragment slot="content">
+      <h3 class="text-2xl font-bold tracking-tight dark:text-white sm:text-3xl mb-2">Designed for volunteers, loved by admins.</h3>
+    </Fragment>
+  </Content>
+
+  <Steps
+    title="How the experience flows"
+    tagline="Mobile flow"
+    items={[
+      {
+        title: 'Discover causes that resonate',
+        description: 'Tap through curated cards, filter by impact area, and join events with live capacity indicators.',
+        icon: 'tabler:number-1',
+      },
+      {
+        title: 'Stay inspired',
+        description: 'Push notifications celebrate milestones, recommend new missions, and spotlight community wins.',
+        icon: 'tabler:number-2',
+      },
+    ]}
+    image={{
+      src: 'https://images.unsplash.com/photo-1453738773917-9c3eff1db985?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80',
+      alt: 'Volunteer community gathering',
+    }}
+  />
+
+  <Stats
+    title="Volunteer momentum in motion"
+    stats={[
+      { amount: '22k+', title: 'Hours logged in-app' },
+      { amount: '5.0', title: 'Volunteer rating' },
+      { amount: '3 clicks', title: 'To log hours' },
+    ]}
+  />
+
+  <CallToAction
+    title="Ready to volunteer with style?"
+    subtitle="Download NexoLink and bring the volunteer stats universe to your phone. Thousands of lights, one joyful orchestration."
+  >
+    <div slot="actions" class="flex max-w-sm gap-4">
+      <Button variant="link" href={appStoreDownloadLink}>
+        <Image src={appStoreImg} alt="Get the App" width={200} />
+      </Button>
+      <Button href="/admin/login" variant="primary">Manage as an Admin</Button>
+    </div>
+  </CallToAction>
+</Layout>

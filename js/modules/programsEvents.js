@@ -10,6 +10,9 @@ import { showMessage } from './ui.js';
 import { notifyVolunteersUpdate, syncVolunteerHoursFromActivity } from './volunteerOps.js';
 
 let activityUpdateHandler = () => {};
+let primaryActivity = [];
+let secondaryActivity = [];
+let tertiaryActivity = [];
 
 export function registerActivityUpdateHandler(handler) {
   activityUpdateHandler = typeof handler === 'function' ? handler : () => {};
@@ -39,7 +42,27 @@ export function resetActivityListener() {
     }
     appState.logsUnsub = null;
   }
+  if (appState.altLogsUnsub) {
+    try {
+      appState.altLogsUnsub();
+    } catch (error) {
+      console.warn('altLogsUnsub error', error);
+    }
+    appState.altLogsUnsub = null;
+  }
+  if (appState.linkedLogsUnsub) {
+    try {
+      appState.linkedLogsUnsub();
+    } catch (error) {
+      console.warn('linkedLogsUnsub error', error);
+    }
+    appState.linkedLogsUnsub = null;
+  }
   resetSharedLogsListener();
+  appState.schoolActivityLogs = [];
+  primaryActivity = [];
+  secondaryActivity = [];
+  tertiaryActivity = [];
 }
 
 function parseDateForSort(log) {
@@ -152,16 +175,67 @@ function buildCombinedActivity(baseLogs, sharedEntries) {
   return [...base, ...normalizedShared];
 }
 
+function activityLogKey(log) {
+  if (!log) return '';
+  if (log.id) return String(log.id);
+  const user = log.user_id || log.uid || log.volunteer_id || log.volunteer_email || log.email || 'unknown';
+  const event = log.event_id || log.eventId || log.event || '';
+  const date = log.date || log.created_at || log.createdAt || log.submitted_at || log.timestamp || '';
+  const hours = log.hours_contributed ?? log.hours ?? 0;
+  return `${user}__${date}__${event}__${hours}`;
+}
+
+export function getActivityLogsForOrg(options = {}) {
+  const includeSchoolExtras = typeof options === 'object'
+    ? Boolean(options.includeSchoolExtras)
+    : Boolean(options);
+  const baseLogs = Array.isArray(appState.activityData) ? appState.activityData : [];
+  if (!includeSchoolExtras) return baseLogs;
+
+  const schoolExtras = Array.isArray(appState.schoolActivityLogs) ? appState.schoolActivityLogs : [];
+  if (!schoolExtras.length) return baseLogs;
+
+  const seen = new Set(baseLogs.map(activityLogKey));
+  const merged = [...baseLogs];
+  schoolExtras.forEach((log) => {
+    const key = activityLogKey(log);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    merged.push(log);
+  });
+  return merged;
+}
+
 function updateVolunteerAggregates() {
   const combined = buildCombinedActivity(appState.activityData, appState.sharedLogs);
   syncVolunteerHoursFromActivity(combined);
   notifyVolunteersUpdate();
 }
 
+function emitActivity() {
+  const merged = [...primaryActivity];
+  const seen = new Set(merged.map((log) => log.id));
+  secondaryActivity.forEach((log) => {
+    if (!seen.has(log.id)) {
+      merged.push(log);
+    }
+  });
+  tertiaryActivity.forEach((log) => {
+    if (!seen.has(log.id)) {
+      merged.push(log);
+    }
+  });
+  merged.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
+  appState.activityData = merged;
+  updateVolunteerAggregates();
+  notifyActivityUpdate();
+}
+
 export function loadActivityData() {
   resetActivityListener();
 
   const normalizedOrgCode = (appState.currentOrgCode || '').trim().toUpperCase();
+  const linkedOrgId = (appState.currentAdmin?.organizationId || appState.currentAdmin?.organization_id || '').trim();
   if (!normalizedOrgCode) {
     appState.activityData = [];
     appState.sharedLogs = [];
@@ -175,13 +249,18 @@ export function loadActivityData() {
     where('organization_id', '==', normalizedOrgCode),
   );
 
+  const altLogsQuery = query(
+    collection(db, 'volunteer_logs'),
+    where('organizationCode', '==', normalizedOrgCode),
+  );
+
   appState.logsUnsub = onSnapshot(
     logsQuery,
     (snapshot) => {
       const activity = [];
       snapshot.forEach((doc) => {
         const logData = doc.data() || {};
-        if (logData.approve === undefined) {
+        if (!logData.approve) {
           logData.approve = 'pending';
         }
         activity.push({
@@ -189,18 +268,70 @@ export function loadActivityData() {
           ...logData,
         });
       });
-
       activity.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
-
-      appState.activityData = activity;
-      updateVolunteerAggregates();
-      notifyActivityUpdate();
+      primaryActivity = activity;
+      emitActivity();
     },
     (error) => {
       console.error('logs onSnapshot error:', error);
       showMessage(`Error listening for activity: ${error.message || error}`, 'error');
     },
   );
+
+  appState.altLogsUnsub = onSnapshot(
+    altLogsQuery,
+    (snapshot) => {
+      const activity = [];
+      snapshot.forEach((doc) => {
+        const logData = doc.data() || {};
+        if (!logData.approve) {
+          logData.approve = 'pending';
+        }
+        activity.push({
+          id: doc.id,
+          ...logData,
+        });
+      });
+      activity.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
+      secondaryActivity = activity;
+      emitActivity();
+    },
+    (error) => {
+      console.error('alt logs onSnapshot error:', error);
+      showMessage(`Error listening for activity: ${error.message || error}`, 'error');
+    },
+  );
+
+  if (linkedOrgId) {
+    const linkedQuery = query(
+      collection(db, 'volunteer_logs'),
+      where('linked_org_id', '==', linkedOrgId),
+    );
+
+    appState.linkedLogsUnsub = onSnapshot(
+      linkedQuery,
+      (snapshot) => {
+        const activity = [];
+        snapshot.forEach((doc) => {
+          const logData = doc.data() || {};
+          if (!logData.approve) {
+            logData.approve = 'pending';
+          }
+          activity.push({
+            id: doc.id,
+            ...logData,
+          });
+        });
+        activity.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
+        tertiaryActivity = activity;
+        emitActivity();
+      },
+      (error) => {
+        console.error('linked logs onSnapshot error:', error);
+        showMessage(`Error listening for linked activity: ${error.message || error}`, 'error');
+      },
+    );
+  }
 
   loadSharedLogs(normalizedOrgCode);
 }

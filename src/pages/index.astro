@@ -1,0 +1,200 @@
+---
+import Layout from '~/layouts/PageLayout.astro';
+
+import Hero from '~/components/widgets/Hero.astro';
+import Note from '~/components/widgets/Note.astro';
+import Features from '~/components/widgets/Features.astro';
+import Content from '~/components/widgets/Content.astro';
+import Steps from '~/components/widgets/Steps.astro';
+import Stats from '~/components/widgets/Stats.astro';
+import CallToAction from '~/components/widgets/CallToAction.astro';
+import ImageModal from '~/components/widgets/ImageModal.astro';
+import dashboardImage from '~/assets/images/dashboard.png';
+
+const metadata = {
+  title: 'NexoLink - Connect. Volunteer. Impact.',
+  ignoreTitleTemplate: true,
+};
+---
+
+<Layout metadata={metadata}>
+  <Hero
+    actions={[
+      {
+        variant: 'primary',
+        text: 'Get the App',
+        href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
+        target: '_blank',
+        icon: 'tabler:brand-apple',
+      },
+      { text: 'Admin Portal', href: '/admin/login', icon: 'tabler:shield-check' },
+    ]}
+    image={{ src: '~/assets/images/hero-image.png', alt: 'NexoLink admin portal preview' }}
+  >
+    <Fragment slot="bg">
+      <div class="absolute -top-20 right-[-8%] h-64 w-64 rounded-full bg-primary/15 blur-3xl animate-float-slow"></div>
+      <div class="absolute -bottom-24 left-[-6%] h-72 w-72 rounded-full bg-accent/10 blur-3xl animate-pulse-soft"></div>
+    </Fragment>
+    <Fragment slot="title">
+      Connect passionate people with <span class="text-accent dark:text-white">real-world change</span>.
+    </Fragment>
+
+    <Fragment slot="subtitle">
+      NexoLink pairs purpose-driven volunteers with organizations across education, social services, animal care, and
+      beyond. Manage programs, approve hours, and showcase measurable impact through a single, intuitive workspace.
+    </Fragment>
+  </Hero>
+
+  <Note
+    title="Volunteer impact, orchestrated"
+    description="Dashboards mirror our admin portal so leaders can visualize volunteer momentum, unlock bottlenecks, and celebrate wins."
+  />
+
+  <Features
+    id="features"
+    tagline="Admin Portal"
+    title="Everything your volunteer ecosystem needs."
+    subtitle="Our Admin Portal channels the volunteer stats aesthetic - glassmorphic surfaces, adaptive layouts, and joyful animation cues that celebrate progress."
+    items={[
+      {
+        title: 'Volunteer Command Center',
+        description:
+          'Filter, search, and segment with precision. See attendance streaks, upcoming commitments, and sentiment in one lovingly designed view.',
+        icon: 'tabler:users',
+      },
+      {
+        title: 'Organization-first Tools',
+        description: 'Onboard staff instantly, automate approvals, manage roles, and export polished reports.',
+        icon: 'tabler:building',
+      },
+      {
+        title: 'Recognition that Resonates',
+        description: 'Celebrate milestones with animated badges, leaderboards, and storytelling prompts.',
+        icon: 'tabler:star',
+      },
+      {
+        title: 'Smart onboarding',
+        description: 'Guide new admins with progressive checklists, confetti feedback, and a shimmering progress halo.',
+        icon: 'tabler:list-check',
+      },
+      {
+        title: 'Volunteer spotlights',
+        description: 'Auto-generate highlight cards that showcase top hours, heartfelt testimonials, and photos.',
+        icon: 'tabler:heart',
+      },
+      {
+        title: 'Realtime sync',
+        description: 'Firebase-backed updates shimmer into place, so approvals and logs stay perfectly aligned.',
+        icon: 'tabler:arrows-right-left',
+      },
+    ]}
+  />
+
+  <Content
+    isReversed
+    tagline="Admin experience"
+    title="Cards that orbit your mission."
+    items={[
+      {
+        title: 'Performance pulses',
+        description: 'Watch KPIs slide into place with smooth keyframes inspired by the Volunteer Stats charts.',
+      },
+      {
+        title: 'Volunteer insights',
+        description: 'Realtime snapshots keep active volunteers, logged hours, and programs front and center.',
+      },
+      {
+        title: 'Impact reporting',
+        description: 'Export-ready visuals make quarterly updates effortless for boards and partners.',
+      },
+    ]}
+  >
+    <Fragment slot="image">
+      <ImageModal
+        image={{
+          src: dashboardImage,
+          alt: 'Glassmorphic dashboard visuals',
+          widths: [400, 768, 1200, 1800, 2560, 3840],
+          sizes: '(max-width: 768px) 100vw, 50vw',
+        }}
+      />
+    </Fragment>
+    <Fragment slot="content">
+      Each glass tile mirrors a live module inside the admin portal, floating with the same velvet animation you see
+      inside the Volunteer Stats experience.
+    </Fragment>
+
+    <Fragment slot="bg">
+      <div class="absolute inset-0 bg-blue-50/70 dark:bg-transparent"></div>
+      <div class="absolute -top-20 left-[-8%] h-56 w-56 rounded-full bg-secondary/10 blur-3xl animate-drift-left"></div>
+    </Fragment>
+  </Content>
+
+  <Stats
+    id="impact"
+    title="Impact you can feel"
+    stats={[
+      { title: 'Volunteer hours approved this month', amount: '4,200+' },
+      { title: 'Reduction in time spent validating hours', amount: '65%' },
+      { title: 'Increase in volunteer retention', amount: '3.5x' },
+      { title: 'Uptime across analytics, approvals, and messaging', amount: '99.9%' },
+    ]}
+  >
+    <Fragment slot="bg">
+      <div class="absolute -bottom-20 right-[-10%] h-64 w-64 rounded-full bg-primary/10 blur-3xl animate-float-medium"></div>
+    </Fragment>
+  </Stats>
+
+  <Steps
+    title="How NexoLink elevates your flow."
+    tagline="Workflow"
+    items={[
+      {
+        title: 'Discover aligned opportunities',
+        description: "Explore curated events, programs, and campaigns that fit each volunteer's interests and availability.",
+        icon: 'tabler:number-1',
+      },
+      {
+        title: 'Track hours with confidence',
+        description: 'QR check-ins, automated reminders, and secure logs keep your data clean.',
+        icon: 'tabler:number-2',
+      },
+      {
+        title: 'Approve & celebrate quickly',
+        description: 'Glass cards highlight pending activity while smart suggestions speed up approvals.',
+        icon: 'tabler:number-3',
+      },
+      {
+        title: 'Share the impact story',
+        description: 'Export-ready visuals and insights make it effortless to update boards and community partners.',
+        icon: 'tabler:number-4',
+      },
+    ]}
+    image={{
+      src: 'https://images.unsplash.com/photo-1616198814651-e71f960c3180?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=987&q=80',
+      alt: 'Team coordinating volunteer impact',
+    }}
+  />
+
+  <CallToAction
+    actions={[
+      {
+        variant: 'primary',
+        text: 'Launch the App',
+        href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
+        target: '_blank',
+      },
+      {
+        text: 'Enter Admin Experience',
+        href: '/admin/login',
+      },
+    ]}
+  >
+    <Fragment slot="title">Ready to orchestrate impactful volunteering?</Fragment>
+
+    <Fragment slot="subtitle">
+      Join organizations and volunteers already thriving inside our animated, glassmorphic workspace inspired by
+      NexoLink's Volunteer Stats portal.
+    </Fragment>
+  </CallToAction>
+</Layout>

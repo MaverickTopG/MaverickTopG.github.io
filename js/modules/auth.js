@@ -33,11 +33,10 @@ import {
   showInlineAuthMessage,
 } from "./ui.js";
 import {
-  shouldHonorLegacyPaidFlag,
-  hasLegacyAccessExpired,
   formatLegacyAccessDeadline,
   isDemoAccount,
 } from "./accessControl.js";
+import { billingService } from "./billingService.js";
 
 const TAB_SESSION_KEY = `auth_${appState.tabId}`;
 const SIGNUP_CHECKOUT_KEY = 'signup_checkout_confirmed';
@@ -45,8 +44,16 @@ const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
 const SIGNUP_FORCE_FORM_KEY = 'signup_force_form';
 const SIGNUP_SUCCESS_DATA_KEY = 'signup_success_payload';
 const AUTH_MESSAGE_KEY = 'auth_last_message';
+const USERS_COLLECTION = 'user_organizations';
+const LEGACY_USERS_COLLECTION = 'users';
 
 let authFormHandlersRegistered = false;
+
+function isAdminRole(data) {
+  if (!data) return false;
+  const role = typeof data.role === 'string' ? data.role.toLowerCase() : '';
+  return role === 'admin';
+}
 
 function storeAuthMessage(type, text) {
   if (typeof window === 'undefined') return;
@@ -224,6 +231,88 @@ function hasCompletedSignupCheckout() {
   return sessionStorage.getItem(SIGNUP_CHECKOUT_KEY) === 'true';
 }
 
+async function handleMissingAdminAccess(user, fallbackEmail = '') {
+  const email = (user?.email || fallbackEmail || '').trim();
+  let hasPaidClaim = false;
+
+  try {
+    const tokenResult = user ? await user.getIdTokenResult() : null;
+    hasPaidClaim = tokenResult?.claims?.paid === true;
+  } catch (error) {
+    console.warn('Unable to read ID token claims for admin verification', error);
+  }
+
+  if (hasPaidClaim) {
+    try {
+      sessionStorage.setItem(SIGNUP_CHECKOUT_KEY, 'true');
+      sessionStorage.setItem(SIGNUP_FORCE_FORM_KEY, 'signup');
+      if (email) {
+        sessionStorage.setItem(SIGNUP_CHECKOUT_EMAIL_KEY, email);
+      }
+    } catch (storageError) {
+      console.warn('Unable to persist paid signup unlock state', storageError);
+    }
+
+    storeAuthMessage(
+      'success',
+      'Your organization is set up. Finish creating your admin login to access the dashboard.'
+    );
+  } else {
+    storeAuthMessage('error', 'This account does not have admin access.');
+  }
+
+  await signOut(auth);
+}
+
+async function getAdminSnapshot(uid) {
+  if (!uid) return { snapshot: null, collection: null };
+
+  try {
+    const primaryRef = doc(db, USERS_COLLECTION, uid);
+    const primarySnap = await getDoc(primaryRef);
+    if (primarySnap.exists()) {
+      return { snapshot: primarySnap, collection: USERS_COLLECTION };
+    }
+  } catch (error) {
+    console.warn('Unable to read admin profile from primary collection', error);
+  }
+
+  try {
+    const legacyRef = doc(db, LEGACY_USERS_COLLECTION, uid);
+    const legacySnap = await getDoc(legacyRef);
+    if (legacySnap.exists()) {
+      return { snapshot: legacySnap, collection: LEGACY_USERS_COLLECTION };
+    }
+  } catch (error) {
+    console.warn('Unable to read admin profile from legacy collection', error);
+  }
+
+  return { snapshot: null, collection: null };
+}
+
+async function writeAdminProfile(uid, payload, options = {}) {
+  await setDoc(doc(db, USERS_COLLECTION, uid), payload, options);
+  try {
+    await setDoc(doc(db, LEGACY_USERS_COLLECTION, uid), payload, options);
+  } catch (error) {
+    console.warn('Unable to mirror admin profile to legacy collection', error);
+  }
+}
+
+async function mergeIntoAdminProfile(uid, payload) {
+  await setDoc(doc(db, USERS_COLLECTION, uid), payload, { merge: true });
+  try {
+    await setDoc(doc(db, LEGACY_USERS_COLLECTION, uid), payload, { merge: true });
+  } catch (error) {
+    console.warn('Unable to mirror admin merge to legacy collection', error);
+  }
+}
+
+function isSchoolSubscription(subscription = {}) {
+  const planKey = (subscription.planKey || subscription.plan_key || '').toString().trim().toLowerCase();
+  return planKey === 'school';
+}
+
 function ensureSignupControls() {
   if (typeof document === 'undefined') return;
   const gate = document.getElementById('signupPlanGate');
@@ -260,7 +349,13 @@ function ensureSignupControls() {
     }
 
     if (signupForm && signupForm.dataset.unlockNotified !== 'true') {
-      showInlineAuthMessage('Checkout confirmed! Finish creating your admin account below.', 'success');
+      showInlineAuthMessage('Checkout confirmed! Click "Create Account" to finish setting up your admin account.', 'success');
+      try {
+        // Also trigger a toast for clarity after checkout
+        showMessage('Checkout confirmed! Click "Create Account" to finish creating your account.', 'success');
+      } catch (error) {
+        /* no-op if showMessage is unavailable */
+      }
       signupForm.dataset.unlockNotified = 'true';
     }
   } else if (signupForm) {
@@ -278,6 +373,11 @@ export function toggleForm(type) {
   const signupToggle = document.getElementById("signupToggle");
   const authHeader = document.querySelector('.auth-header h2');
   const authSubHeader = document.querySelector('.auth-header p');
+
+  if (type === 'signup' && !hasCompletedSignupCheckout()) {
+    window.location.href = 'pricing.html';
+    return;
+  }
 
   if (
     !signInForm ||
@@ -413,12 +513,9 @@ export function registerAuthFormHandlers() {
       /* noop */
     }
   } else {
-    // If we are on the signup page but haven't completed checkout,
-    // default to the sign-in form to avoid showing a disabled signup form.
     const currentPage = window.location.pathname.split('/').pop();
     if (currentPage === 'signup.html' || currentPage === '') {
-      const activeToggle = document.querySelector('.toggle-buttons button.active');
-      if (!activeToggle || activeToggle.id !== 'signInToggle') toggleForm('signIn');
+      toggleForm('signIn');
     }
   }
 
@@ -441,98 +538,6 @@ export function registerAuthFormHandlers() {
   }
 }
 
-function normalizeSubscription(subscription) {
-  if (!subscription) {
-    return { status: 'inactive' };
-  }
-
-  const normalized = { ...subscription };
-  const timestampFields = [
-    'currentPeriodEnd',
-    'current_period_end',
-    'trialEnd',
-    'trial_end',
-    'cancelAt',
-    'cancel_at'
-  ];
-
-  timestampFields.forEach((field) => {
-    if (!normalized[field]) return;
-    const value = normalized[field];
-    if (typeof value?.toDate === 'function') {
-      normalized[field] = value.toDate();
-    } else if (typeof value === 'number') {
-      normalized[field] = new Date(value * (value < 1e12 ? 1000 : 1));
-    }
-  });
-
-  if (normalized.current_period_end && !normalized.currentPeriodEnd) {
-    normalized.currentPeriodEnd = normalized.current_period_end;
-  }
-  if (normalized.trial_end && !normalized.trialEnd) {
-    normalized.trialEnd = normalized.trial_end;
-  }
-  if (normalized.cancel_at && !normalized.cancelAt) {
-    normalized.cancelAt = normalized.cancel_at;
-  }
-
-  normalized.cancelAtPeriodEnd = Boolean(
-    normalized.cancelAtPeriodEnd
-    || normalized.cancel_at_period_end
-    || subscription.cancelAtPeriodEnd
-    || subscription.cancel_at_period_end
-  );
-
-  normalized.status = (normalized.status || 'inactive').toLowerCase();
-  return normalized;
-}
-
-function isSubscriptionActive(subscription, legacyPaid = false) {
-  if (shouldHonorLegacyPaidFlag(legacyPaid)) return true;
-  if (!subscription) return false;
-  const status = (subscription.status || '').toLowerCase();
-  const cancelAtPeriodEnd = Boolean(
-    subscription.cancelAtPeriodEnd
-    || subscription.cancel_at_period_end
-  );
-  const cancelAt = subscription.cancelAt instanceof Date
-    ? subscription.cancelAt
-    : subscription.cancel_at instanceof Date
-      ? subscription.cancel_at
-      : null;
-
-  if (status === 'trialing' && (cancelAtPeriodEnd || (cancelAt && cancelAt.getTime() <= Date.now()))) {
-    return false;
-  }
-
-  const activeStatuses = ['active', 'trialing'];
-  if (!activeStatuses.includes(status)) {
-    return false;
-  }
-  try {
-    const periodEnd = subscription.currentPeriodEnd
-      || subscription.current_period_end
-      || subscription.trialEnd
-      || subscription.trial_end
-      || null;
-
-    if (!periodEnd) {
-      return true;
-    }
-
-    const normalizedEnd = periodEnd instanceof Date
-      ? periodEnd
-      : new Date(periodEnd);
-
-    if (Number.isNaN(normalizedEnd.getTime())) {
-      return true;
-    }
-    return normalizedEnd.getTime() > Date.now();
-  } catch (error) {
-    return true;
-  }
-}
-
 export function setupAuthModule() {
   if (appState.authInitialized) return;
 
@@ -541,74 +546,120 @@ export function setupAuthModule() {
       if (!user) {
         appState.isAuthenticated = false;
         appState.currentAdmin = null;
-      appState.currentOrgCode = null;
-      sessionStorage.removeItem(TAB_SESSION_KEY);
-      hideBillingGate();
-      showAuthSection();
+        appState.currentOrgCode = null;
+        sessionStorage.removeItem(TAB_SESSION_KEY);
+        billingService.detachSubscriptionListener();
+        hideBillingGate();
+        showAuthSection();
 
-      const successData = readSignupSuccessData();
-      if (successData) {
-        renderSuccessState(
-          successData.organizationCode,
-          successData.email,
-          successData.organizationName
-        );
-        const signInEmail = document.getElementById('signInEmail');
-        if (signInEmail && successData.email) {
-          signInEmail.value = successData.email;
+        let forceSignup = false;
+        try {
+          forceSignup = sessionStorage.getItem(SIGNUP_FORCE_FORM_KEY) === 'signup';
+        } catch (error) {
+          console.warn('Unable to read signup force flag', error);
         }
-        return;
-      }
 
-      toggleForm('signIn');
+        if (forceSignup && !hasCompletedSignupCheckout()) {
+          try {
+            sessionStorage.setItem(SIGNUP_CHECKOUT_KEY, 'true');
+          } catch (error) {
+            console.warn('Unable to unlock signup view for paid account', error);
+          }
+        }
 
-      const storedMessage = consumeAuthMessage();
-      if (storedMessage) {
-        showInlineAuthMessage(storedMessage.text, storedMessage.type);
-      } else {
+        const successData = readSignupSuccessData();
+        if (successData) {
+          renderSuccessState(
+            successData.organizationCode,
+            successData.email,
+            successData.organizationName
+          );
+          const signInEmail = document.getElementById('signInEmail');
+          if (signInEmail && successData.email) {
+            signInEmail.value = successData.email;
+          }
+          return;
+        }
+
+        if (forceSignup) {
+          toggleForm('signup');
+        } else {
+          toggleForm('signIn');
+        }
+
+        const storedMessage = consumeAuthMessage();
+        if (storedMessage) {
+          showInlineAuthMessage(storedMessage.text, storedMessage.type);
+        } else if (forceSignup) {
+          showInlineAuthMessage(
+            'Your organization is set up. Finish creating your admin login to continue.',
+            'success'
+          );
+        } else {
           showInlineAuthMessage('Sign in to continue.', 'info');
         }
         return;
       }
 
-      const userDocRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userDocRef);
+      const adminSnapshot = await getAdminSnapshot(user.uid);
+      const userDoc = adminSnapshot.snapshot;
 
-      if (!userDoc.exists() || userDoc.data().role !== 'admin') {
-        storeAuthMessage('error', 'This account does not have admin access.');
-        await signOut(auth);
+      if (!userDoc || !userDoc.exists() || !isAdminRole(userDoc.data())) {
+        await handleMissingAdminAccess(user, user.email);
         return;
       }
 
+      billingService.setupSubscriptionListener(user.uid);
+      const { status: subscriptionStatus, subscription } = await billingService.getSubscriptionStatus();
+      const isActiveSub = subscriptionStatus === 'active';
+
       const adminData = userDoc.data();
-      const subscription = normalizeSubscription(adminData.subscription);
-      const isActiveSub = isSubscriptionActive(subscription, adminData.paid === true);
-      const legacyOverrideExpired = adminData.paid === true && hasLegacyAccessExpired();
       const demoAccount = isDemoAccount(adminData);
+      const isSchoolPlan = isSchoolSubscription(subscription);
 
       appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
       appState.currentOrgCode = adminData.organizationCode;
       appState.isAuthenticated = true;
       renderDemoAccountNotice(appState.currentAdmin);
 
+      try {
+        sessionStorage.removeItem(SIGNUP_FORCE_FORM_KEY);
+      } catch (error) {
+        console.warn('Unable to clear signup force flag after admin login', error);
+      }
+
+      if (isSchoolPlan) {
+        const needsDefaultShare =
+          adminData.default_auto_share !== true
+          || (adminData.default_share_policy || '').toLowerCase() !== 'required'
+          || (adminData.default_share_status || '').toLowerCase() !== 'approved';
+
+        if (needsDefaultShare) {
+          try {
+            const schoolDefaults = {
+              default_auto_share: true,
+              default_share_policy: 'required',
+              default_share_status: 'approved',
+              planKey: adminData.planKey || adminData.plan_key || 'school',
+              plan_key: adminData.plan_key || adminData.planKey || 'school',
+            };
+            await mergeIntoAdminProfile(user.uid, schoolDefaults);
+            appState.currentAdmin = { ...appState.currentAdmin, ...schoolDefaults };
+          } catch (error) {
+            console.warn('Unable to enforce school default sharing flags', error);
+          }
+        }
+      }
+
       sessionStorage.setItem(TAB_SESSION_KEY, 'true');
 
       if (!isActiveSub) {
-        if (legacyOverrideExpired) {
-          showMessage(
-            `Legacy access expired on ${formatLegacyAccessDeadline()}. Choose a plan to continue.`,
-            'warning'
-          );
-        }
         if (demoAccount) {
           showMessage(
             'Billing is disabled for the shared demo account. Sign up with your own workspace credentials to subscribe.',
             'info'
           );
         }
-        showDashboardSection({ locked: true });
-        setActiveView('billing');
-        return;
       }
 
       hideBillingGate();
@@ -620,6 +671,7 @@ export function setupAuthModule() {
       console.error("onAuthStateChanged error:", error);
       sessionStorage.removeItem(TAB_SESSION_KEY);
       appState.isAuthenticated = false;
+      billingService.detachSubscriptionListener();
       hideBillingGate();
       showAuthSection();
       toggleForm("signIn");
@@ -644,14 +696,22 @@ function generateOrganizationCode() {
 }
 
 async function isOrganizationCodeUnique(code) {
-  const usersRef = collection(db, "users");
-  const q = query(
-    usersRef,
-    where("organizationCode", "==", code),
+  const normalizedCode = (code || '').trim();
+  const primaryQuery = query(
+    collection(db, USERS_COLLECTION),
+    where("organizationCode", "==", normalizedCode),
     where("role", "==", "admin")
   );
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.empty;
+  const legacyQuery = query(
+    collection(db, LEGACY_USERS_COLLECTION),
+    where("organizationCode", "==", normalizedCode),
+    where("role", "==", "admin")
+  );
+  const [primarySnapshot, legacySnapshot] = await Promise.all([
+    getDocs(primaryQuery),
+    getDocs(legacyQuery),
+  ]);
+  return primarySnapshot.empty && legacySnapshot.empty;
 }
 
 async function generateUniqueOrganizationCode() {
@@ -671,14 +731,22 @@ async function generateUniqueOrganizationCode() {
 }
 
 async function isOrganizationNameUnique(name) {
-  const usersRef = collection(db, "users");
-  const q = query(
-    usersRef,
-    where("organizationName", "==", name),
+  const normalizedName = (name || '').trim();
+  const primaryQuery = query(
+    collection(db, USERS_COLLECTION),
+    where("organizationName", "==", normalizedName),
     where("role", "==", "admin")
   );
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.empty;
+  const legacyQuery = query(
+    collection(db, LEGACY_USERS_COLLECTION),
+    where("organizationName", "==", normalizedName),
+    where("role", "==", "admin")
+  );
+  const [primarySnapshot, legacySnapshot] = await Promise.all([
+    getDocs(primaryQuery),
+    getDocs(legacyQuery),
+  ]);
+  return primarySnapshot.empty && legacySnapshot.empty;
 }
 
 export async function signup() {
@@ -691,8 +759,7 @@ export async function signup() {
   clearInlineAuthMessage();
 
   if (!hasCompletedSignupCheckout()) {
-    showInlineAuthMessage("Choose a plan and complete checkout before creating your account.", "info");
-    ensureSignupControls();
+    window.location.href = 'pricing.html';
     return;
   }
 
@@ -740,12 +807,14 @@ export async function signup() {
     );
     const user = userCredential.user;
 
-    await setDoc(doc(db, "users", user.uid), {
+    await writeAdminProfile(user.uid, {
       uid: user.uid,
       email,
       role: "admin",
       organizationCode,
       organizationName,
+      access_code: organizationCode,
+      name: organizationName,
       volunteers: [],
       createdAt: serverTimestamp(),
     });
@@ -754,7 +823,7 @@ export async function signup() {
       const pendingRef = doc(db, 'pendingSubscriptions', email.toLowerCase());
       const pendingSnap = await getDoc(pendingRef);
       if (pendingSnap.exists()) {
-        await setDoc(doc(db, 'users', user.uid), pendingSnap.data(), { merge: true });
+        await mergeIntoAdminProfile(user.uid, pendingSnap.data());
         await deleteDoc(pendingRef);
       }
     } catch (err) {
@@ -777,17 +846,23 @@ export async function signup() {
     } catch (signOutError) {
       console.warn("Post-signup signOut failed:", signOutError);
     }
+    window.location.href = '/admin/login';
     return;
   } catch (error) {
     console.error("Signup error:", error);
     let errorMessage;
     if (error.code === 'auth/email-already-in-use') {
-      errorMessage = "This email address is already in use.";
+      errorMessage = "This email address is already in use. Please sign in to link your subscription.";
+      showInlineAuthMessage(errorMessage, "error");
+      toggleForm('signIn');
+      const signInEmail = document.getElementById('signInEmail');
+      if (signInEmail) {
+        signInEmail.value = email;
+      }
     } else {
       errorMessage = `Error: ${error.message || "An unknown error occurred."}`;
+      showInlineAuthMessage(errorMessage, "error");
     }
-    showInlineAuthMessage(errorMessage, "error");
-
   } finally {
     if (signupBtn) {
       signupBtn.disabled = false;
@@ -919,12 +994,12 @@ export async function signIn() {
     // The `onAuthStateChanged` listener is the single source of truth.
     // We only need to verify the user is an admin here. If they are not,
     // we sign them out, which will trigger the listener to show an error.
-    const userDocRef = doc(db, "users", user.uid);
-    const userDoc = await getDoc(userDocRef);
+    const adminSnapshot = await getAdminSnapshot(user.uid);
+    const userDoc = adminSnapshot.snapshot;
 
-    if (!userDoc.exists() || userDoc.data().role !== "admin") {
+    if (!userDoc || !userDoc.exists() || !isAdminRole(userDoc.data())) {
       console.log("User is not an admin or does not exist. Signing out.");
-      await signOut(auth);
+      await handleMissingAdminAccess(user, email);
       // The onAuthStateChanged listener will handle the UI update and error message.
       return;
     }

@@ -1,0 +1,25 @@
+---
+import Layout from '~/layouts/Layout.astro';
+
+const metadata = {
+  title: 'Create Account - Admin Portal',
+};
+---
+
+<Layout metadata={metadata}>
+  <section class="relative min-h-screen">
+    <a
+      href="/"
+      class="absolute left-6 top-6 z-10 inline-flex items-center rounded-full border border-gray-200 bg-white/90 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:-translate-y-0.5 hover:border-gray-300 hover:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-200 dark:hover:border-gray-600 dark:hover:bg-gray-900"
+    >
+      Back to Website
+    </a>
+    <iframe
+      src="/admin/signup/index.html"
+      title="Create Account"
+      class="w-full h-screen border-0"
+      loading="lazy"
+    ></iframe>
+  </section>
+</Layout>
+

@@ -6,6 +6,8 @@ import { notifyVolunteersUpdate } from './volunteerOps.js';
 
 const SECTION_ID = 'rolesManagerSection';
 const ROLE_MODAL_ID = 'roleModal';
+const PEOPLE_COLLECTION = 'user_organizations';
+const LEGACY_PEOPLE_COLLECTION = 'users';
 
 export function initRolesManager() {
   renderRolesManager();
@@ -157,11 +159,17 @@ async function applyRoleChange(roleId) {
     if (!member.id) return null;
     try {
       const currentAdmin = appState.currentAdmin || {};
-      await updateDoc(doc(db, 'users', member.id), {
+      const payload = {
         role: roleId,
         roleUpdatedAt: serverTimestamp(),
         roleUpdatedBy: currentAdmin.uid || null
-      });
+      };
+      await updateDoc(doc(db, PEOPLE_COLLECTION, member.id), payload);
+      try {
+        await updateDoc(doc(db, LEGACY_PEOPLE_COLLECTION, member.id), payload);
+      } catch (legacyError) {
+        console.warn('Legacy role update failed (non-blocking):', legacyError);
+      }
       return true;
     } catch (error) {
       console.error('Role update failed', error);

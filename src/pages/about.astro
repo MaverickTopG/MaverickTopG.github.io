@@ -1,0 +1,119 @@
+---
+import Hero from '~/components/widgets/Hero.astro';
+import Stats from '~/components/widgets/Stats.astro';
+import Features3 from '~/components/widgets/Features3.astro';
+import Steps2 from '~/components/widgets/Steps2.astro';
+import CallToAction from '~/components/widgets/CallToAction.astro';
+import Layout from '~/layouts/PageLayout.astro';
+
+const metadata = {
+  title: 'About Us',
+};
+---
+
+<Layout metadata={metadata}>
+  <Hero
+    tagline="About NexoLink"
+    image={{
+      src: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1740&q=80',
+      alt: 'Community volunteers collaborating',
+    }}
+  >
+    <Fragment slot="bg">
+      <div class="absolute -top-24 right-[-8%] h-64 w-64 rounded-full bg-primary/15 blur-3xl animate-float-slow"></div>
+      <div class="absolute -bottom-28 left-[-6%] h-72 w-72 rounded-full bg-secondary/10 blur-3xl animate-pulse-soft"></div>
+    </Fragment>
+    <Fragment slot="title">
+      Connect passionate people with <span class="text-accent dark:text-white">real-world change</span>.
+    </Fragment>
+
+    <Fragment slot="subtitle">
+      NexoLink pairs purpose-driven volunteers with organizations across education, social services, animal care, and
+      beyond. The admin portal, mobile experience, and analytics all work together to celebrate every hour of impact.
+    </Fragment>
+  </Hero>
+
+  <Stats
+    title="Impact you can feel"
+    stats={[
+      { title: 'Volunteer hours approved this month', amount: '4,200+' },
+      { title: 'Reduction in time spent validating hours', amount: '65%' },
+      { title: 'Increase in volunteer retention', amount: '3.5x' },
+      { title: 'Uptime across analytics, approvals, and messaging', amount: '99.9%' },
+    ]}
+  />
+
+  <Features3
+    title="What powers NexoLink"
+    subtitle="Every surface echoes the Volunteer Stats experience, keeping leaders and volunteers aligned."
+    columns={3}
+    items={[
+      {
+        title: 'Volunteer Command Center',
+        description: 'Filter, search, and segment with precision across programs and roles.',
+        icon: 'tabler:users',
+      },
+      {
+        title: 'Organization-first Tools',
+        description: 'Onboard staff, automate approvals, and export polished reports for stakeholders.',
+        icon: 'tabler:building',
+      },
+      {
+        title: 'Recognition that Resonates',
+        description: 'Celebrate milestones with animated badges, leaderboards, and spotlight cards.',
+        icon: 'tabler:star',
+      },
+      {
+        title: 'Smart onboarding',
+        description: 'Progressive checklists and guided workflows keep every admin confident.',
+        icon: 'tabler:list-check',
+      },
+      {
+        title: 'Realtime sync',
+        description: 'Firebase-backed updates keep approvals, logs, and messaging in lockstep.',
+        icon: 'tabler:arrows-right-left',
+      },
+      {
+        title: 'Impact reporting',
+        description: 'Export-ready visuals make updates effortless for boards and community partners.',
+        icon: 'tabler:chart-bar',
+      },
+    ]}
+  />
+
+  <Steps2
+    title="How NexoLink elevates your flow"
+    subtitle="From discovery to reporting, every step feels calm, guided, and actionable."
+    items={[
+      {
+        title: 'Discover aligned opportunities',
+        description: 'Explore curated events and programs that match volunteer interests and availability.',
+      },
+      {
+        title: 'Track hours with confidence',
+        description: 'QR check-ins, automated reminders, and secure logs keep data clean and reliable.',
+      },
+      {
+        title: 'Approve & celebrate quickly',
+        description: 'Smart suggestions speed up approvals and recognition moments.',
+      },
+    ]}
+  />
+
+  <CallToAction
+    title="Ready to orchestrate impactful volunteering?"
+    subtitle="Launch the app or step into the admin portal to see NexoLink in action."
+    actions={[
+      {
+        variant: 'primary',
+        text: 'Launch the App',
+        href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
+        target: '_blank',
+      },
+      {
+        text: 'Admin Portal',
+        href: '/admin/login',
+      },
+    ]}
+  />
+</Layout>

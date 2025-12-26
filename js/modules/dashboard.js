@@ -29,13 +29,15 @@ import {
   resetActivityListener,
   loadActivityData,
   registerActivityUpdateHandler,
-  getCurrentWeekBoundaries
+  getCurrentWeekBoundaries,
+  getActivityLogsForOrg
 } from './programsEvents.js';
 import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
 import { hideBillingGate, initBillingModule } from './billing.js';
 import { refreshCheckInBadge } from './checkInBadge.js';
 import { isDemoAccount, getDemoAccountDescription } from './accessControl.js';
+import { isSchoolOrgActive } from './volunteerOps.js';
 
 const VOLUNTEER_HOUR_VALUE = 28.27;
 let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
@@ -59,14 +61,6 @@ export function initDashboardNavigation() {
     });
     navItems.forEach(item => {
       item.addEventListener('click', (event) => {
-        if (item.classList.contains('nav-item--disabled')) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (appState.isSubscriptionLocked) {
-            showMessage('Activate your subscription to access this area.', 'warning');
-          }
-          return;
-        }
         const next = item.dataset.view;
         if (next && next !== activeView) setActiveView(next);
       });
@@ -79,10 +73,6 @@ export function initDashboardNavigation() {
 
 export function setActiveView(view) {
   const previousView = activeView;
-  if (appState.isSubscriptionLocked && view !== 'billing' && view !== 'logout') {
-    showMessage('Activate your subscription to access this area.', 'warning');
-    view = 'billing';
-  }
 
   activeView = view;
 
@@ -137,22 +127,7 @@ export function showDashboardSection(options = {}) {
   hideBillingGate();
   document.body.classList.remove('has-aurora');
   initDashboardNavigation();
-  appState.isSubscriptionLocked = Boolean(locked);
-
-  const navItems = document.querySelectorAll('.sidebar-nav .nav-item[data-view]');
-  navItems.forEach(item => {
-    const view = item.dataset.view;
-    if (view !== 'billing' && view !== 'logout') {
-      item.classList.toggle('nav-item--disabled', locked);
-      if (locked) {
-        item.setAttribute('aria-disabled', 'true');
-        item.setAttribute('tabindex', '-1');
-      } else {
-        item.removeAttribute('aria-disabled');
-        item.removeAttribute('tabindex');
-      }
-    }
-  });
+  appState.isSubscriptionLocked = false;
 
   if (appState.currentAdmin) {
     displayAdminInfo();
@@ -317,6 +292,8 @@ function buildMetrics() {
   // This now correctly calculates metrics over all time, independent of the weekly chart's view.
   const { labels: weeklyLabels, data: weeklyData } = buildWeeklyAttendanceData();
   const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries(); // Use current week for "weekly active"
+  const schoolPlan = isSchoolOrgActive();
+  const activityLogs = getActivityLogsForOrg({ includeSchoolExtras: schoolPlan });
 
   // busiest day
   const max = Math.max(...weeklyData);
@@ -328,7 +305,7 @@ function buildMetrics() {
 
   // who logged this week?
   const activeSet = new Set();
-  appState.activityData.forEach(log => {
+  activityLogs.forEach(log => {
     const logDate = normalizeDateValue(log.date);
     // FIX: Correct variable names `startOfWeek` and `endOfWeek` were not being used.
     if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin') {
@@ -342,7 +319,7 @@ function buildMetrics() {
   // from each volunteer, which already respects the 'approved' status.
   const totalApprovedHours = nonAdminVolunteers.reduce((sum, v) => sum + (v.totalHours || 0), 0);
   const eventCount = Array.isArray(appState.events) ? appState.events.length : 0;
-  const uniqEvt = Math.max(eventCount, getUniqueEventCount(appState.activityData));
+  const uniqEvt = Math.max(eventCount, getUniqueEventCount(activityLogs));
   const donation = calculateDonationValue(totalApprovedHours);
 
   return {
@@ -481,11 +458,14 @@ function renderEventActivityChart() {
   const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
   const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
   const roles = new Map(nonAdminVolunteers.map(v => [v.id, v.role]));
+  const schoolPlan = isSchoolOrgActive();
+  const activityLogs = getActivityLogsForOrg({ includeSchoolExtras: schoolPlan });
   const activeSet = new Set();
-  appState.activityData.forEach(log => {
+  activityLogs.forEach(log => {
     const logDate = normalizeDateValue(log.date);
     const status = (log.approve || 'pending').toLowerCase();
-    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin' && (status === 'approved' || status === 'accepted')) {
+    const statusPass = schoolPlan ? true : (status === 'approved' || status === 'accepted');
+    if (logDate && logDate >= startOfWeek && logDate < endOfWeek && log.user_id && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin' && statusPass) {
       activeSet.add(log.user_id);
     }
   });
@@ -540,16 +520,63 @@ function buildWeeklyAttendanceData() {
   const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
   const roles = new Map(nonAdminVolunteers.map(v => [v.id, v.role]));
 
-  // FIX: Ensure only approved hours are counted in the weekly chart.
-  const approvedLogs = appState.activityData.filter(log => ['approved', 'accepted'].includes((log.approve || 'pending').toLowerCase()));
-
-  approvedLogs.forEach(log => {
-    const d = normalizeDateValue(log.date);
-    if (d && d >= weekStart && d < weekEnd && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin') {
-      // FIX: Use getUTCDay() to align with the UTC-based week boundaries.
-      data[d.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
-    }
+  const schoolPlan = isSchoolOrgActive();
+  const activityLogs = getActivityLogsForOrg({ includeSchoolExtras: schoolPlan });
+  let filteredLogs = activityLogs.filter((log) => {
+    if (schoolPlan) return true;
+    const status = normalizeApprovalStatus(log.approve);
+    return status === 'approved';
   });
+
+  const keyedLogs = filteredLogs.map((log) => {
+    const d = deriveLogDate(log);
+    return { log, date: d };
+  }).filter((entry) => entry.date);
+
+  let latestDate = null;
+  keyedLogs.forEach(({ log, date }) => {
+    const uid = log.user_id || log.volunteer_id || log.uid;
+    // If we have role info, skip org-admins; otherwise include to avoid dropping data.
+    if (roles.size && (!uid || !roles.has(uid) || roles.get(uid) === 'org-admin')) return;
+    if (date >= weekStart && date < weekEnd) {
+      data[date.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
+    }
+    if (!latestDate || date > latestDate) latestDate = date;
+  });
+
+  // If nothing plotted, retry with all logs (ignore approval) to avoid missing school org data.
+  if (data.every((v) => v === 0) && keyedLogs.length === 0 && activityLogs.length > 0) {
+    const allKeyed = activityLogs.map((log) => ({ log, date: deriveLogDate(log) })).filter((e) => e.date);
+    allKeyed.forEach(({ log, date }) => {
+      const uid = log.user_id || log.volunteer_id || log.uid;
+      if (roles.size && (!uid || !roles.has(uid) || roles.get(uid) === 'org-admin')) return;
+      if (date >= weekStart && date < weekEnd) {
+        data[date.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
+      }
+    });
+  }
+
+  // If current week is empty but we have historical logs, show the latest logged week so the chart isn't blank.
+  if (data.every((v) => v === 0) && keyedLogs.length > 0 && weekOffset === 0) {
+    const latest = keyedLogs.reduce((acc, entry) => {
+      if (!acc || entry.date > acc.date) return entry;
+      return acc;
+    }, null);
+    if (latest) {
+      const latestStart = new Date(latest.date);
+      latestStart.setUTCDate(latestStart.getUTCDate() - latestStart.getUTCDay());
+      const latestEnd = new Date(latestStart);
+      latestEnd.setUTCDate(latestStart.getUTCDate() + 7);
+      data.fill(0);
+      keyedLogs.forEach(({ log, date }) => {
+        const uid = log.user_id || log.volunteer_id;
+        if (roles.size && (!uid || !roles.has(uid) || roles.get(uid) === 'org-admin')) return;
+        if (date >= latestStart && date < latestEnd) {
+          data[date.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
+        }
+      });
+    }
+  }
 
   return { labels, data, weekStart, weekEnd };
 }
@@ -606,4 +633,34 @@ function normalizeDateValue(val) {
   }
 
   return null;
+}
+
+function normalizeApprovalStatus(value) {
+  const raw = (value ?? '').toString().trim().toLowerCase();
+  if (!raw) return 'pending';
+  if (raw === 'approved' || raw === 'accepted' || raw.startsWith('approved') || raw.startsWith('approved by') || raw.startsWith('accept')) return 'approved';
+  if (raw === 'denied' || raw.startsWith('denied') || raw === 'rejected' || raw.includes('reject')) return 'denied';
+  return 'pending';
+}
+
+function deriveLogDate(log) {
+  const primary = normalizeDateValue(log?.date);
+  if (primary) return primary;
+  const candidates = [log?.created_at, log?.createdAt, log?.submitted_at, log?.timestamp];
+  for (const c of candidates) {
+    const d = normalizeDateValue(c);
+    if (d) return d;
+  }
+  return null;
+}
+
+function getLatestLogDate(logs) {
+  let latest = null;
+  logs.forEach((log) => {
+    const d = deriveLogDate(log);
+    if (d && (!latest || d > latest)) {
+      latest = d;
+    }
+  });
+  return latest;
 }

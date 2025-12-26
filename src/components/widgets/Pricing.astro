@@ -1,0 +1,522 @@
+---
+import { Icon } from 'astro-icon/components';
+import Button from '~/components/ui/Button.astro';
+import Headline from '~/components/ui/Headline.astro';
+import WidgetWrapper from '~/components/ui/WidgetWrapper.astro';
+import type { Pricing as Props } from '~/types';
+
+const stripePublishableKey = import.meta.env.PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
+const stripePriceMonthly = import.meta.env.PUBLIC_STRIPE_PRICE_MONTHLY || '';
+const stripePriceYearly = import.meta.env.PUBLIC_STRIPE_PRICE_YEARLY || '';
+const stripePriceSchool = import.meta.env.PUBLIC_STRIPE_PRICE_SCHOOL || '';
+const stripePriceSchoolYearly = import.meta.env.PUBLIC_STRIPE_PRICE_SCHOOL_YEARLY || '';
+const stripeProductMonthly = import.meta.env.PUBLIC_STRIPE_PRODUCT_MONTHLY || '';
+const stripeProductYearly = import.meta.env.PUBLIC_STRIPE_PRODUCT_YEARLY || '';
+const stripeProductSchool = import.meta.env.PUBLIC_STRIPE_PRODUCT_SCHOOL || '';
+const stripeProductSchoolYearly = import.meta.env.PUBLIC_STRIPE_PRODUCT_SCHOOL_YEARLY || '';
+
+const {
+  title = '',
+  subtitle = '',
+  tagline = '',
+  prices = [],
+
+  id,
+  isDark = false,
+  classes = {},
+  bg = await Astro.slots.render('bg'),
+} = Astro.props;
+---
+
+<WidgetWrapper id={id} isDark={isDark} containerClass={`max-w-7xl mx-auto ${classes?.container ?? ''}`} bg={bg}>
+  <Headline title={title} subtitle={subtitle} tagline={tagline} />
+  <div class="flex flex-col items-center gap-8" data-pricing-toggle>
+    <div class="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white/80 p-1 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-slate-900/80">
+      <button
+        type="button"
+        data-billing="monthly"
+        aria-pressed="true"
+        class="rounded-full px-4 py-2 text-sm font-semibold transition bg-primary text-white shadow-sm"
+      >
+        Monthly
+      </button>
+      <button
+        type="button"
+        data-billing="yearly"
+        aria-pressed="false"
+        class="rounded-full px-4 py-2 text-sm font-semibold transition text-gray-600 dark:text-slate-300"
+      >
+        Annual
+      </button>
+    </div>
+    <div class="flex items-stretch justify-center w-full">
+      <div
+        class="grid w-full max-w-[860px] mx-auto grid-cols-1 justify-items-center gap-4 dark:text-white sm:grid-cols-2"
+        data-pricing-grid
+      >
+        {
+          prices &&
+            prices.map(
+              ({
+                title,
+                subtitle,
+                price,
+                period,
+                items,
+                callToAction,
+                hasRibbon = false,
+                ribbonTitle,
+                billing = 'monthly',
+                planKey = '',
+              }) => (
+                <div
+                  class={`flex w-full max-w-sm cursor-pointer intersect-once motion-safe:md:intersect:animate-fade motion-safe:md:opacity-0 intersect-quarter ${
+                    billing === 'yearly' ? 'hidden' : ''
+                  }`}
+                  data-pricing-card
+                  data-billing={billing}
+                  data-plan-key={planKey}
+                  data-plan-billing={billing}
+                >
+                  {price && period && (
+                    <div class="rounded-lg backdrop-blur border border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-900 shadow px-6 py-8 flex w-full max-w-sm flex-col justify-between text-center transition duration-300 hover:-translate-y-2 hover:shadow-lg">
+                      {hasRibbon && ribbonTitle && (
+                        <div class="absolute right-[-5px] 2xl:right-[-8px] rtl:right-auto rtl:left-[-8px] rtl:2xl:left-[-10px] top-[-5px] 2xl:top-[-10px] z-[1] h-[100px] w-[100px] overflow-hidden text-right">
+                          <span class="absolute top-[19px] right-[-21px] rtl:right-auto rtl:left-[-21px] block w-full rotate-45 rtl:-rotate-45 bg-green-700 text-center text-[10px] font-bold uppercase leading-5 text-white shadow-[0_3px_10px_-5px_rgba(0,0,0,0.3)] before:absolute before:left-0 before:top-full before:z-[-1] before:border-[3px] before:border-r-transparent before:border-b-transparent before:border-l-green-800 before:border-t-green-800 before:content-[''] after:absolute after:right-0 after:top-full after:z-[-1] after:border-[3px] after:border-l-transparent after:border-b-transparent after:border-r-green-800 after:border-t-green-800 after:content-['']">
+                            {ribbonTitle}
+                          </span>
+                        </div>
+                      )}
+                      <div class="px-2 py-0">
+                        {title && (
+                          <h3 class="text-center text-xl font-semibold uppercase leading-6 tracking-wider mb-2">
+                            {title}
+                          </h3>
+                        )}
+                        {subtitle && <p class="font-light sm:text-lg text-gray-600 dark:text-slate-400">{subtitle}</p>}
+                        <div class="my-8">
+                          <div class="flex items-center justify-center text-center mb-1">
+                            <span class="text-5xl">$</span>
+                            <span class="text-6xl font-extrabold">{price}</span>
+                          </div>
+                          <span class="text-base leading-6 lowercase text-gray-600 dark:text-slate-400">{period}</span>
+                        </div>
+                        {items && (
+                          <ul class="my-8 md:my-10 space-y-2 text-left">
+                            {items.map(
+                              ({ description, icon }) =>
+                                description && (
+                                  <li class="mb-1.5 flex items-start space-x-3 leading-7">
+                                    <div class="rounded-full bg-primary mt-1">
+                                      <Icon
+                                        name={icon ? icon : 'tabler:check'}
+                                        class="w-5 h-5 font-bold p-1 text-white"
+                                      />
+                                    </div>
+                                    <span>{description}</span>
+                                  </li>
+                                )
+                            )}
+                          </ul>
+                        )}
+                      </div>
+                      {callToAction && (
+                        <div class={`flex justify-center`}>
+                          {typeof callToAction === 'string' ? (
+                            <Fragment set:html={callToAction} />
+                          ) : (
+                            callToAction && (
+                              <Button {...(hasRibbon ? { variant: 'primary' } : {})} {...callToAction} />
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            )
+        }
+      </div>
+    </div>
+  </div>
+</WidgetWrapper>
+
+<script define:vars={{ stripePublishableKey, stripePriceMonthly, stripePriceYearly, stripePriceSchool, stripePriceSchoolYearly, stripeProductMonthly, stripeProductYearly, stripeProductSchool, stripeProductSchoolYearly }}>
+  let pricingCheckoutInitialized = false;
+  
+  const initPricingCheckout = () => {
+    // Prevent duplicate initialization
+    if (pricingCheckoutInitialized) return;
+    pricingCheckoutInitialized = true;
+    
+    document.querySelectorAll('[data-pricing-toggle]').forEach((container) => {
+      if (container.dataset.pricingBound === 'true') return;
+      container.dataset.pricingBound = 'true';
+      const buttons = container.querySelectorAll('button[data-billing]');
+      const cards = container.querySelectorAll('[data-pricing-card]');
+
+      const activeClasses = ['bg-primary', 'text-white', 'shadow-sm'];
+      const inactiveClasses = ['text-gray-600', 'dark:text-slate-300'];
+
+      const setActive = (billing) => {
+        if (!billing) return;
+        buttons.forEach((button) => {
+          const isActive = button.getAttribute('data-billing') === billing;
+          button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+          activeClasses.forEach((cls) => button.classList.toggle(cls, isActive));
+          inactiveClasses.forEach((cls) => button.classList.toggle(cls, !isActive));
+        });
+
+        cards.forEach((card) => {
+          const cardBilling = card.getAttribute('data-billing') || 'monthly';
+          const isVisible = cardBilling === billing || cardBilling === 'both';
+          card.classList.toggle('hidden', !isVisible);
+        });
+      };
+
+      setActive('monthly');
+
+      buttons.forEach((button) => {
+        button.addEventListener('click', () => setActive(button.getAttribute('data-billing')));
+      });
+    });
+
+    const STRIPE_PUBLISHABLE_KEY =
+      stripePublishableKey ||
+      window.STRIPE_PUBLISHABLE_KEY ||
+      window.PUBLIC_STRIPE_PUBLISHABLE_KEY ||
+      '';
+
+    const priceMonthly =
+      stripePriceMonthly ||
+      window.STRIPE_PRICE_MONTHLY ||
+      'price_1SDIUBHbGg7F5Ky7Ix6qd5mR';
+    const priceYearly =
+      stripePriceYearly ||
+      window.STRIPE_PRICE_YEARLY ||
+      'price_1SDIUuHbGg7F5Ky7FX58nZEJ';
+    const priceSchool =
+      stripePriceSchool ||
+      window.STRIPE_PRICE_SCHOOL ||
+      'price_1SZIdTHbGg7F5Ky7gJUAu10c';
+    const priceSchoolYearly =
+      stripePriceSchoolYearly ||
+      window.STRIPE_PRICE_SCHOOL_YEARLY ||
+      'price_1ShyF8HbGg7F5Ky7xTVwCMYk';
+    const productMonthly =
+      stripeProductMonthly ||
+      window.STRIPE_PRODUCT_MONTHLY ||
+      'prod_T9bhhZ5vz8MhLv';
+    const productYearly =
+      stripeProductYearly ||
+      window.STRIPE_PRODUCT_YEARLY ||
+      'prod_T9biaGEcIqeRuP';
+    const productSchool =
+      stripeProductSchool ||
+      window.STRIPE_PRODUCT_SCHOOL ||
+      'prod_TWLKsFtSuzboov';
+    const productSchoolYearly =
+      stripeProductSchoolYearly ||
+      window.STRIPE_PRODUCT_SCHOOL_YEARLY ||
+      'prod_TfIqIQg0s7fg9t';
+
+    const priceMap = {
+      monthly: priceMonthly,
+      yearly: priceYearly,
+      school: priceSchool,
+    };
+
+    const productMap = {
+      monthly: productMonthly,
+      yearly: productYearly,
+      school: productSchool,
+    };
+
+    const resolvePriceId = (planKey, billing) => {
+      if (planKey === 'school' && billing === 'yearly') {
+        return priceSchoolYearly || priceYearly;
+      }
+      return priceMap[planKey] || null;
+    };
+
+    const resolveProductId = (planKey, billing) => {
+      if (planKey === 'school' && billing === 'yearly') {
+        return productSchoolYearly || productSchool;
+      }
+      return productMap[planKey] || null;
+    };
+
+    const setPlanMetadata = () => {
+      document.querySelectorAll('[data-plan-key]').forEach((btn) => {
+        const planKey = btn.dataset.planKey || '';
+        const billing = btn.dataset.planBilling || planKey || 'monthly';
+        const priceId = resolvePriceId(planKey, billing);
+        const productId = resolveProductId(planKey, billing);
+        if (priceId) btn.dataset.priceId = priceId;
+        if (productId) btn.dataset.productId = productId;
+      });
+    };
+
+    const loadStripeClient = async (publishableKey) => {
+      if (!publishableKey) return null;
+      if (window.__nexolinkStripePromise) return window.__nexolinkStripePromise;
+      window.__nexolinkStripePromise = new Promise((resolve) => {
+        if (window.Stripe) {
+          resolve(window.Stripe(publishableKey));
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://js.stripe.com/v3/';
+        script.async = true;
+        script.onload = () => resolve(window.Stripe ? window.Stripe(publishableKey) : null);
+        script.onerror = () => resolve(null);
+        document.head.appendChild(script);
+      });
+      return window.__nexolinkStripePromise;
+    };
+
+    // Toast notification system
+    let currentToast = null;
+    
+    const showToast = (message) => {
+      // Remove existing toast if any
+      if (currentToast) {
+        currentToast.remove();
+      }
+      
+      // Create toast container if it doesn't exist
+      let toastContainer = document.getElementById('pricing-toast-container');
+      if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'pricing-toast-container';
+        toastContainer.style.cssText = 'position: fixed; bottom: 24px; right: 24px; z-index: 9999; pointer-events: none;';
+        document.body.appendChild(toastContainer);
+      }
+      
+      // Create toast element
+      const toast = document.createElement('div');
+      toast.className = 'pricing-toast';
+      toast.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: white;
+        color: #1f2937;
+        padding: 16px 20px;
+        border-radius: 12px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1);
+        pointer-events: auto;
+        animation: slideInUp 0.3s ease-out;
+        max-width: 320px;
+        font-size: 14px;
+        font-weight: 500;
+      `;
+      
+      // Loading spinner
+      const spinner = document.createElement('div');
+      spinner.className = 'pricing-toast-spinner';
+      spinner.style.cssText = `
+        width: 20px;
+        height: 20px;
+        border: 3px solid #e5e7eb;
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        flex-shrink: 0;
+      `;
+      
+      // Message text
+      const messageText = document.createElement('span');
+      messageText.textContent = message;
+      
+      toast.appendChild(spinner);
+      toast.appendChild(messageText);
+      toastContainer.appendChild(toast);
+      
+      currentToast = toast;
+      
+      // Add CSS animations if not already added
+      if (!document.getElementById('pricing-toast-styles')) {
+        const style = document.createElement('style');
+        style.id = 'pricing-toast-styles';
+        style.textContent = `
+          @keyframes slideInUp {
+            from {
+              transform: translateY(100%);
+              opacity: 0;
+            }
+            to {
+              transform: translateY(0);
+              opacity: 1;
+            }
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+          .pricing-toast {
+            transition: opacity 0.2s ease-out;
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    };
+    
+    const hideToast = () => {
+      if (currentToast) {
+        currentToast.style.opacity = '0';
+        currentToast.style.transform = 'translateY(100%)';
+        setTimeout(() => {
+          if (currentToast && currentToast.parentNode) {
+            currentToast.remove();
+          }
+          currentToast = null;
+        }, 200);
+      }
+    };
+
+    const setLoadingState = (button, isLoading) => {
+      if (!button) return;
+      // Don't change button text, just disable it
+      button.disabled = isLoading;
+      button.classList.toggle('pointer-events-none', isLoading);
+      button.classList.toggle('opacity-70', isLoading);
+      button.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+    };
+
+    const startCheckout = async (button) => {
+      if (!button) return;
+      const plan = button.dataset.planKey || '';
+      const priceId = button.dataset.priceId || null;
+      const productId = button.dataset.productId || null;
+
+      setLoadingState(button, true);
+      showToast('Opening Stripe...');
+
+      try {
+        sessionStorage.setItem('signup_plan_key', plan);
+      } catch (err) {
+        /* ignore */
+      }
+
+      const bases = [];
+      if (window.API_BASE_URL) {
+        bases.push(window.API_BASE_URL.replace(/\/$/, ''));
+      }
+      bases.push('');
+
+      let lastError = null;
+      for (const base of bases) {
+        try {
+          const url = `${base}/api/checkout`;
+          console.log('[Checkout] Attempting checkout request to:', url, { plan, priceId, productId });
+          
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plan, priceId, productId, trial: true }),
+            credentials: 'omit', // Don't send cookies that might trigger redirects
+          });
+
+          console.log('[Checkout] Response status:', response.status, response.statusText);
+          console.log('[Checkout] Response URL:', response.url);
+          console.log('[Checkout] Response type:', response.type);
+
+          // Check if the response URL indicates a redirect to login
+          if (response.url && (response.url.includes('/login') || response.url.includes('/signin') || response.url.includes('/admin/login'))) {
+            console.error('[Checkout] Redirected to login page:', response.url);
+            throw new Error('Checkout endpoint redirected to login. This should not require authentication.');
+          }
+
+          if (!response.ok) {
+            let errorText = '';
+            try {
+              const errorData = await response.json();
+              errorText = errorData.error || errorData.message || JSON.stringify(errorData);
+              console.error('[Checkout] Error response:', errorData);
+            } catch (parseError) {
+              try {
+                errorText = await response.text();
+                console.error('[Checkout] Error text:', errorText);
+              } catch (textError) {
+                errorText = `Checkout failed (${response.status} ${response.statusText})`;
+              }
+            }
+            throw new Error(errorText || `Checkout failed (${response.status})`);
+          }
+
+          const data = await response.json();
+          console.log('[Checkout] Success response:', data);
+          const checkoutUrl = data.url || data.checkoutUrl || null;
+          const sessionId = data.sessionId || data.id || null;
+
+          if (sessionId && STRIPE_PUBLISHABLE_KEY) {
+            const stripe = await loadStripeClient(STRIPE_PUBLISHABLE_KEY);
+            if (stripe) {
+              console.log('[Checkout] Redirecting to Stripe checkout with sessionId:', sessionId);
+              const result = await stripe.redirectToCheckout({ sessionId });
+              if (!result || !result.error) {
+                console.log('[Checkout] Stripe redirect successful');
+                return;
+              }
+              console.error('[Checkout] Stripe redirect error:', result.error);
+              // If Stripe redirect fails, fall through to use checkoutUrl
+            }
+          }
+
+          if (checkoutUrl) {
+            console.log('[Checkout] Redirecting to checkout URL:', checkoutUrl);
+            window.location.assign(checkoutUrl);
+            return;
+          }
+
+          throw new Error('No checkout URL or session ID returned.');
+        } catch (error) {
+          console.error('[Checkout] Error for base:', base, error);
+          lastError = error;
+          // If it's a network/CORS error, try the next base
+          if (error.name === 'TypeError' || error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
+            continue;
+          }
+          // If we got a meaningful error response, also try the next base
+          continue;
+        }
+      }
+
+      const errorMessage = (lastError && lastError.message) || 'Unable to start checkout. Please try again.';
+      console.error('[Checkout] All attempts failed. Final error:', errorMessage);
+      hideToast();
+      alert(errorMessage);
+      setLoadingState(button, false);
+    };
+
+    setPlanMetadata();
+
+    // Add event listeners only if not already bound
+    document.querySelectorAll('[data-plan-key]').forEach((button) => {
+      if (button.dataset.checkoutBound === 'true') return;
+      button.dataset.checkoutBound = 'true';
+      
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        startCheckout(button);
+      });
+    });
+
+    document.querySelectorAll('[data-pricing-card]').forEach((card) => {
+      // Check if this card already has a listener
+      if (card.dataset.cardCheckoutBound === 'true') return;
+      card.dataset.cardCheckoutBound = 'true';
+      
+      card.addEventListener('click', (event) => {
+        const button = card.querySelector('[data-plan-key]');
+        if (!button) return;
+        event.preventDefault();
+        startCheckout(button);
+      });
+    });
+  };
+
+  window.addEventListener('DOMContentLoaded', initPricingCheckout);
+  document.addEventListener('astro:page-load', initPricingCheckout);
+</script>

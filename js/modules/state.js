@@ -10,12 +10,15 @@ export const appState = {
   eventSlotRequests: {},
   eventSignups: {},
   activityData: [],
+  schoolActivityLogs: [],
   volunteersUnsub: null,
   volunteerRequestsUnsub: null,
   eventsUnsub: null,
   eventSlotRequestsUnsub: null,
   eventSignupsUnsub: null,
   logsUnsub: null,
+  linkedLogsUnsub: null,
+  linkedOrgCodeUnsub: null,
   sharedLogs: [],
   sharedLogsUnsub: null,
   editingVolunteerUnsub: null,
@@ -65,5 +68,8 @@ export const appState = {
   },
   authInitialized: false,
   isSubscriptionLocked: false,
-  signupSuccess: null
+  signupSuccess: null,
+  signupInProgress: false,
+  signupWriteReady: false,
+  suppressAuthRender: false
 };

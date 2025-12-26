@@ -16,6 +16,18 @@ service cloud.firestore {
       allow delete: if hasPaidAccess();
     }
 
+    match /user_organizations/{userId} {
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow read: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
+      allow update: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
+      allow delete: if hasPaidAccess();
+    }
+
+    match /user_organizations/{documentId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.user_id || hasPaidAccess());
+      allow create, update, delete: if hasPaidAccess();
+    }
+
     match /volunteer_logs/{document=**} {
       allow read, write: if hasPaidAccess();
     }

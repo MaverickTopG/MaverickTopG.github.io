@@ -1,7 +1,8 @@
-import { onRequest, onCall } from 'firebase-functions/v2/https';
+import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { defineSecret } from 'firebase-functions/params';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import crypto from 'crypto';
 import Stripe from 'stripe';
 import { initializeApp } from 'firebase-admin/app';
@@ -13,10 +14,16 @@ const STRIPE_WEBHOOK_SECRET = defineSecret('STRIPE_WEBHOOK_SECRET');
 const PUBLIC_BASE_URL = defineSecret('PUBLIC_BASE_URL');
 const STRIPE_PRICE_MONTHLY = defineSecret('STRIPE_PRICE_MONTHLY');
 const STRIPE_PRICE_YEARLY = defineSecret('STRIPE_PRICE_YEARLY');
+const STRIPE_PRICE_SCHOOL = defineSecret('STRIPE_PRICE_SCHOOL');
 const ADMIN_QR_SECRET = defineSecret('ADMIN_QR_SECRET');
 
 const DEFAULT_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
 const DEFAULT_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
+const DEFAULT_PRICE_SCHOOL = 'price_1SXZMfH9sPZuClpwNAJK5Uj2';
+const DEFAULT_PRODUCT_MONTHLY = 'prod_TBnmDFIOr3zqnj';
+const DEFAULT_PRODUCT_YEARLY = 'prod_TBnmbia7RuTkkK';
+const DEFAULT_PRODUCT_SCHOOL = 'prod_TUYT6k3Xq3JUOJ';
+const DEFAULT_STRIPE_SECRET_KEY = 'REDACTED_STRIPE_LIVE_SECRET_KEY';
 const DEFAULT_QR_TTL_SECONDS = 3153600000; // 100 years
 const DEMO_ACCOUNT_EMAILS = new Set(['x@gmail.com']);
 
@@ -35,6 +42,213 @@ function safeSecretValue(secret, fallback) {
   } catch (error) {
     return fallback;
   }
+}
+
+function resolvePublicBase(req, fallback = 'https://nexolink-b8eb5.web.app') {
+  const secretBase = safeSecretValue(PUBLIC_BASE_URL, '');
+  const originHeader = (req?.headers?.origin || '').toString().split(',')[0].trim();
+  const refererHeader = (req?.headers?.referer || '').toString().split(',')[0].trim();
+  let refererOrigin = '';
+  try {
+    if (refererHeader) {
+      refererOrigin = new URL(refererHeader).origin;
+    }
+  } catch {
+    refererOrigin = '';
+  }
+  const base = secretBase || originHeader || refererOrigin || fallback;
+  return base.replace(/\/?$/, '');
+}
+
+function getStripeClient() {
+  const key = process.env.STRIPE_SECRET_KEY || safeSecretValue(STRIPE_SECRET_KEY, DEFAULT_STRIPE_SECRET_KEY);
+  if (!key) {
+    throw new Error('Stripe secret key is not configured.');
+  }
+  return new Stripe(key);
+}
+
+function handleCorsPreflight(req, res, allowedMethods = ['POST']) {
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.set('Access-Control-Allow-Methods', [...allowedMethods, 'OPTIONS'].join(', '));
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.status(204).send('');
+    return true;
+  }
+  return false;
+}
+
+function getWebhookSecret() {
+  return process.env.STRIPE_WEBHOOK_SECRET || safeSecretValue(STRIPE_WEBHOOK_SECRET, '');
+}
+
+const LEGACY_ACCESS_LOCK_TIMESTAMP = Date.UTC(2024, 10, 4, 0, 0, 0); // Nov 4, 2024 UTC
+
+function shouldHonorLegacyPaidFlag(legacyPaid) {
+  if (!legacyPaid) return false;
+  return Date.now() < LEGACY_ACCESS_LOCK_TIMESTAMP;
+}
+
+function normalizeSubscription(subscription) {
+  if (!subscription) {
+    return { status: 'inactive' };
+  }
+
+  const normalized = { ...subscription };
+  const timestampFields = [
+    'currentPeriodEnd',
+    'current_period_end',
+    'trialEnd',
+    'trial_end',
+    'cancelAt',
+    'cancel_at'
+  ];
+
+  timestampFields.forEach((field) => {
+    if (!normalized[field]) return;
+    const value = normalized[field];
+    if (typeof value?.toDate === 'function') {
+      normalized[field] = value.toDate();
+    } else if (typeof value === 'number') {
+      normalized[field] = new Date(value * (value < 1e12 ? 1000 : 1));
+    }
+  });
+
+  if (normalized.current_period_end && !normalized.currentPeriodEnd) {
+    normalized.currentPeriodEnd = normalized.current_period_end;
+  }
+  if (normalized.trial_end && !normalized.trialEnd) {
+    normalized.trialEnd = normalized.trial_end;
+  }
+  if (normalized.cancel_at && !normalized.cancelAt) {
+    normalized.cancelAt = normalized.cancel_at;
+  }
+
+  normalized.cancelAtPeriodEnd = Boolean(
+    normalized.cancelAtPeriodEnd
+    || normalized.cancel_at_period_end
+    || subscription.cancelAtPeriodEnd
+    || subscription.cancel_at_period_end
+  );
+
+  normalized.status = (normalized.status || 'inactive').toLowerCase();
+  return normalized;
+}
+
+function isSubscriptionActive(subscription, legacyPaid = false) {
+  if (shouldHonorLegacyPaidFlag(legacyPaid)) return true;
+  if (!subscription) return false;
+  const status = (subscription.status || '').toLowerCase();
+  const cancelAt = subscription.cancelAt instanceof Date
+    ? subscription.cancelAt
+    : subscription.cancel_at instanceof Date
+      ? subscription.cancel_at
+      : null;
+
+  if (status === 'canceled') {
+    return false;
+  }
+
+  if (status === 'trialing' && cancelAt && cancelAt.getTime() <= Date.now()) {
+    return false;
+  }
+
+  const activeStatuses = ['active', 'trialing'];
+  const isActiveStatus = activeStatuses.includes(status);
+  const paidHint = Boolean(
+    subscription.paid === true
+    || subscription.latest_invoice?.paid === true
+    || (subscription.latest_invoice?.status || '').toLowerCase() === 'paid'
+    || status === 'paid'
+    || status === 'succeeded'
+  );
+  const hasPlanRef = Boolean(
+    subscription.plan
+    || subscription.planId
+    || subscription.plan_id
+    || subscription.planKey
+    || subscription.plan_key
+    || (Array.isArray(subscription.items) && subscription.items.length)
+    || (Array.isArray(subscription.items?.data) && subscription.items.data.length)
+  );
+  try {
+    const periodEnd = subscription.currentPeriodEnd
+      || subscription.current_period_end
+      || subscription.trialEnd
+      || subscription.trial_end
+      || null;
+
+    if (!periodEnd) {
+      return isActiveStatus || (paidHint && hasPlanRef);
+    }
+
+    const normalizedEnd = periodEnd instanceof Date
+      ? periodEnd
+      : new Date(periodEnd);
+
+    if (Number.isNaN(normalizedEnd.getTime())) {
+      return isActiveStatus || (paidHint && hasPlanRef);
+    }
+    const hasTimeRemaining = normalizedEnd.getTime() > Date.now();
+    if (isActiveStatus) return hasTimeRemaining;
+    if (hasPlanRef && hasTimeRemaining) return true;
+    return paidHint && hasPlanRef && hasTimeRemaining;
+  } catch (error) {
+    return isActiveStatus || (paidHint && hasPlanRef);
+  }
+}
+
+export const getSubscriptionStatus = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'The function must be called while authenticated.');
+  }
+
+  const uid = request.auth.uid;
+  const userDoc = await findUserDocByUid(uid);
+
+  if (!userDoc || !userDoc.exists()) {
+    return { status: 'inactive', subscription: null };
+  }
+
+  const userData = userDoc.data() || {};
+  const subscription = normalizeSubscription(userData.subscription);
+  const isActive = isSubscriptionActive(subscription, userData.paid === true);
+
+  return {
+    status: isActive ? 'active' : subscription.status,
+    subscription,
+  };
+});
+
+async function assertPriceExists(stripe, priceId) {
+  try {
+    return await stripe.prices.retrieve(priceId);
+  } catch (error) {
+    const missing = error?.code === 'resource_missing' || error?.statusCode === 404;
+    const reason = missing ? 'Price not found in this Stripe account or mode.' : 'Unable to retrieve price.';
+    error.userMessage = reason;
+    throw error;
+  }
+}
+
+async function getDefaultPriceForProduct(stripe, productId) {
+  if (!productId) return null;
+  try {
+    const product = await stripe.products.retrieve(productId, { expand: ['default_price'] });
+    if (product?.default_price) {
+      return typeof product.default_price === 'string' ? product.default_price : product.default_price.id;
+    }
+  } catch (error) {
+    // fall through to listing prices
+  }
+
+  const { data } = await stripe.prices.list({
+    product: productId,
+    active: true,
+    limit: 1,
+  });
+  return data[0]?.id || null;
 }
 
 function canonicalize(value) {
@@ -218,9 +432,21 @@ async function ensureUserOrganizationLink(orgAccessCode, orgId, adminId, adminUs
 }
 
 function getPriceMap() {
+  const envMonthly = process.env.STRIPE_PRICE_MONTHLY;
+  const envYearly = process.env.STRIPE_PRICE_YEARLY;
+  const envSchool = process.env.STRIPE_PRICE_SCHOOL;
   return {
-    monthly: safeSecretValue(STRIPE_PRICE_MONTHLY, DEFAULT_PRICE_MONTHLY),
-    yearly: safeSecretValue(STRIPE_PRICE_YEARLY, DEFAULT_PRICE_YEARLY),
+    monthly: envMonthly || safeSecretValue(STRIPE_PRICE_MONTHLY, DEFAULT_PRICE_MONTHLY),
+    yearly: envYearly || safeSecretValue(STRIPE_PRICE_YEARLY, DEFAULT_PRICE_YEARLY),
+    school: envSchool || safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
+  };
+}
+
+function getProductMap() {
+  return {
+    monthly: process.env.STRIPE_PRODUCT_MONTHLY || DEFAULT_PRODUCT_MONTHLY,
+    yearly: process.env.STRIPE_PRODUCT_YEARLY || DEFAULT_PRODUCT_YEARLY,
+    school: process.env.STRIPE_PRODUCT_SCHOOL || DEFAULT_PRODUCT_SCHOOL,
   };
 }
 
@@ -239,6 +465,27 @@ function computePaidStatus(status) {
   if (!status) return false;
   const normalized = status.toLowerCase();
   return normalized === 'active' || normalized === 'trialing';
+}
+
+function isSchoolPlanKey(value) {
+  return String(value || '').trim().toLowerCase() === 'school';
+}
+
+function getSchoolPriceIds() {
+  return new Set([
+    DEFAULT_PRICE_SCHOOL,
+    safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
+  ].filter(Boolean));
+}
+
+function isSchoolSubscriptionPayload(payload = {}) {
+  const schoolIds = getSchoolPriceIds();
+  const planKey = String(payload.planKey || payload.plan_key || '').trim().toLowerCase();
+  const planId = payload.plan || payload.planId || payload.plan_id || null;
+
+  if (isSchoolPlanKey(planKey)) return true;
+  if (planId && schoolIds.has(planId)) return true;
+  return false;
 }
 
 function normalizeSubscriptionItems(rawItems = []) {
@@ -652,6 +899,13 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
       stripeCustomerId: subscription.customer,
     };
 
+    if (isSchoolSubscriptionPayload(subscriptionPayload)) {
+      updatePayload.planKey = subscriptionPayload.planKey || 'school';
+      updatePayload.default_share_policy = 'required';
+      updatePayload.default_auto_share = true;
+      updatePayload.default_share_status = 'approved';
+    }
+
     if (invoiceHistory.length) {
       updatePayload.invoiceHistory = invoiceHistory;
     }
@@ -661,6 +915,11 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
     }
 
     await userRef.set(updatePayload, { merge: true });
+    try {
+      await db.collection('user_organizations').doc(userRef.id).set(updatePayload, { merge: true });
+    } catch (mirrorError) {
+      logger.warn('Unable to mirror subscription update to user_organizations', mirrorError);
+    }
     await syncCustomClaimsForUser(userRef.id, subscriptionPayload.paid);
     if (normalizedEmail) {
       await db
@@ -704,6 +963,10 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
             subscriptionHistory: seedHistory,
             paid: subscriptionPayload.paid,
             stripeCustomerId: subscription.customer,
+            default_share_policy: isSchoolSubscriptionPayload(subscriptionPayload) ? 'required' : null,
+            default_auto_share: isSchoolSubscriptionPayload(subscriptionPayload) || null,
+            default_share_status: isSchoolSubscriptionPayload(subscriptionPayload) ? 'approved' : null,
+            updatedAt: Timestamp.now(),
           },
           { merge: true }
         );
@@ -719,6 +982,10 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
             subscriptionHistory: seedHistory,
             paid: subscriptionPayload.paid,
             stripeCustomerId: subscription.customer,
+            default_share_policy: isSchoolSubscriptionPayload(subscriptionPayload) ? 'required' : null,
+            default_auto_share: isSchoolSubscriptionPayload(subscriptionPayload) || null,
+            default_share_status: isSchoolSubscriptionPayload(subscriptionPayload) ? 'approved' : null,
+            updatedAt: Timestamp.now(),
           },
           { merge: true }
         );
@@ -734,6 +1001,10 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
             subscriptionHistory: seedHistory,
             paid: subscriptionPayload.paid,
             stripeCustomerId: subscription.customer,
+            default_share_policy: isSchoolSubscriptionPayload(subscriptionPayload) ? 'required' : null,
+            default_auto_share: isSchoolSubscriptionPayload(subscriptionPayload) || null,
+            default_share_status: isSchoolSubscriptionPayload(subscriptionPayload) ? 'approved' : null,
+            updatedAt: Timestamp.now(),
           },
           { merge: true }
         );
@@ -748,7 +1019,7 @@ async function updateInvoiceInfo(stripe, invoice, statusLabel) {
   if (!enrichedInvoice.lines || !enrichedInvoice.lines.data) {
     try {
       enrichedInvoice = await stripe.invoices.retrieve(invoice.id, {
-        expand: ['lines.data.price.product'],
+        expand: ['lines.data.price'],
       });
     } catch (error) {
       logger.warn('Unable to expand invoice lines', error);
@@ -858,9 +1129,10 @@ async function updateInvoiceInfo(stripe, invoice, statusLabel) {
 export const createCheckout = onRequest(
   {
     cors: true,
-    secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY],
+    secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY, STRIPE_PRICE_SCHOOL],
   },
   async (req, res) => {
+    if (handleCorsPreflight(req, res, ['POST'])) return;
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -877,7 +1149,8 @@ export const createCheckout = onRequest(
     const resolvedPriceId = resolvePriceId(priceId || plan);
 
     if (!resolvedPriceId) {
-      res.status(400).json({ error: 'Invalid price selection.' });
+      logger.error('Checkout price resolution failed', { plan, priceIdInput: priceId, planKey: plan });
+      res.status(400).json({ error: 'Invalid price selection. Please refresh and try again.' });
       return;
     }
 
@@ -940,15 +1213,31 @@ export const createCheckout = onRequest(
     }
 
     try {
-      const stripe = new Stripe(STRIPE_SECRET_KEY.value());
-      const publicBase = PUBLIC_BASE_URL.value().replace(/\/?$/, '');
+      const stripe = getStripeClient();
+      const publicBase = resolvePublicBase(req);
+      let priceToUse = resolvedPriceId;
+      try {
+        await assertPriceExists(stripe, priceToUse);
+      } catch (error) {
+        const productFallback = getProductMap()[planKey] || getProductMap()[plan] || null;
+        if (productFallback) {
+          const altPrice = await getDefaultPriceForProduct(stripe, productFallback);
+          if (altPrice) {
+            priceToUse = altPrice;
+          } else {
+            throw error;
+          }
+        } else {
+          throw error;
+        }
+      }
       const successParams = new URLSearchParams({ checkout: 'success' });
       if (planKey) {
         successParams.set('plan', planKey);
       }
       const successQuery = successParams.toString();
-      const successUrl = `${publicBase}/signup.html?${successQuery}${successQuery ? '&' : ''}session_id={CHECKOUT_SESSION_ID}`;
-      const cancelUrl = `${publicBase}/signup.html?checkout=cancel`;
+      const successUrl = `${publicBase}/admin/create?${successQuery}&session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${publicBase}/admin/create?checkout=cancel`;
 
       const subscriptionData = {
         metadata: {
@@ -965,9 +1254,10 @@ export const createCheckout = onRequest(
 
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
+        payment_method_collection: 'always',
         line_items: [
           {
-            price: resolvedPriceId,
+            price: priceToUse,
             quantity: 1,
           },
         ],
@@ -984,10 +1274,24 @@ export const createCheckout = onRequest(
         subscription_data: subscriptionData,
       });
 
-      res.json({ url: session.url });
+      res.json({ url: session.url, sessionId: session.id });
     } catch (error) {
-      logger.error('Checkout session creation failed', error);
-      res.status(500).json({ error: 'Unable to create checkout session.' });
+      logger.error('Checkout session creation failed', {
+        message: error?.message,
+        type: error?.type,
+        code: error?.code,
+        statusCode: error?.statusCode || error?.raw?.statusCode,
+        priceId: resolvedPriceId,
+        priceUsed: typeof priceToUse !== 'undefined' ? priceToUse : resolvedPriceId,
+        planKey,
+        hint: error?.userMessage,
+      });
+      const statusCode = error?.statusCode || error?.raw?.statusCode || 500;
+      const message = error?.userMessage || error?.message || 'Unable to create checkout session.';
+      res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
+        error: message,
+        code: error?.code || 'checkout_failed',
+      });
     }
   }
 );
@@ -998,6 +1302,7 @@ export const createPortal = onRequest(
     secrets: [STRIPE_SECRET_KEY, PUBLIC_BASE_URL],
   },
   async (req, res) => {
+    if (handleCorsPreflight(req, res, ['POST'])) return;
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -1033,8 +1338,8 @@ export const createPortal = onRequest(
         return;
       }
 
-      const stripe = new Stripe(STRIPE_SECRET_KEY.value());
-      const returnUrl = `${PUBLIC_BASE_URL.value().replace(/\/?$/, '')}/signup.html?checkout=return`;
+      const stripe = getStripeClient();
+      const returnUrl = `${resolvePublicBase(req)}/admin/create?checkout=return`;
 
       const portalSession = await stripe.billingPortal.sessions.create({
         customer: customerId,
@@ -1069,7 +1374,7 @@ export const getCheckoutSession = onRequest(
     }
 
     try {
-      const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+      const stripe = getStripeClient();
       const session = await stripe.checkout.sessions.retrieve(sessionId, {
         expand: ['customer', 'customer_details'],
       });
@@ -1133,11 +1438,12 @@ export const listInvoices = onRequest(
         limit = 50;
       }
 
-      const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+      const stripe = getStripeClient();
       const { data } = await stripe.invoices.list({
         customer: customerId,
         limit,
-        expand: ['data.lines.data.price.product'],
+        // Avoid deep expansion errors; price info is enough for UI.
+        expand: ['data.lines.data.price'],
       });
 
       const invoices = data.map((invoice) => ({
@@ -1215,6 +1521,7 @@ export const cancelSubscription = onRequest(
     secrets: [STRIPE_SECRET_KEY],
   },
   async (req, res) => {
+    if (handleCorsPreflight(req, res, ['POST'])) return;
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -1246,7 +1553,7 @@ export const cancelSubscription = onRequest(
         return;
       }
 
-      const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+      const stripe = getStripeClient();
       const updated = await stripe.subscriptions.update(subscriptionId, {
         cancel_at_period_end: true,
       });
@@ -1591,19 +1898,36 @@ export const stripeWebhook = onRequest(
       return;
     }
 
-    const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+    const stripe = getStripeClient();
     const signature = req.headers['stripe-signature'];
+    const webhookSecret = getWebhookSecret();
+
+    if (!webhookSecret) {
+      logger.error('Stripe webhook secret is not configured.');
+      res.status(500).send('Webhook not configured.');
+      return;
+    }
 
     let event;
     try {
       event = stripe.webhooks.constructEvent(
         req.rawBody,
         signature,
-        STRIPE_WEBHOOK_SECRET.value()
+        webhookSecret
       );
     } catch (error) {
       logger.error('Stripe webhook signature verification failed', error);
       res.status(400).send(`Webhook Error: ${error.message}`);
+      return;
+    }
+
+    // Idempotency check
+    const eventId = event.id;
+    const eventRef = db.collection('stripe_events').doc(eventId);
+    const doc = await eventRef.get();
+    if (doc.exists) {
+      logger.info(`Stripe event ${eventId} already processed.`);
+      res.json({ received: true });
       return;
     }
 
@@ -1650,10 +1974,40 @@ export const stripeWebhook = onRequest(
           logger.info(`Unhandled Stripe event type: ${event.type}`);
       }
 
+      // Record the event as processed
+      await eventRef.set({
+        receivedAt: Timestamp.now(),
+        eventType: event.type,
+      });
+
       res.json({ received: true });
     } catch (error) {
-      logger.error('Stripe webhook handler failed', error);
-      res.status(500).send('Internal Server Error');
+      logger.error('Stripe webhook handler failed', { eventId, error });
     }
   }
 );
+
+export const cleanupPendingSubscriptions = onSchedule('every 24 hours', async (context) => {
+  const now = Timestamp.now();
+  const sevenDaysAgo = Timestamp.fromMillis(now.toMillis() - 7 * 24 * 60 * 60 * 1000);
+
+  const oldSubscriptionsQuery = db.collection('pendingSubscriptions').where('updatedAt', '<', sevenDaysAgo);
+
+  const snapshot = await oldSubscriptionsQuery.get();
+
+  if (snapshot.empty) {
+    logger.info('No stale pending subscriptions to clean up.');
+    return null;
+  }
+
+  const deletions = [];
+  snapshot.forEach(doc => {
+    deletions.push(doc.ref.delete());
+  });
+
+  await Promise.all(deletions);
+
+  logger.info(`Cleaned up ${deletions.length} stale pending subscriptions.`);
+
+  return null;
+});

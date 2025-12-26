@@ -1,5 +1,7 @@
 import { appState } from './state.js';
 import { showMessage } from './ui.js';
+import { getActivityLogsForOrg } from './programsEvents.js';
+import { isSchoolOrgActive } from './volunteerOps.js';
 
 let analyticsInitialized = false;
 const MAX_TREND_DAYS = 180;
@@ -185,21 +187,43 @@ export function renderCalendarHeatmap(direction = 0) {
   const MS_DAY = 1000 * 60 * 60 * 24;
   const normalizedToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const currentYear = today.getFullYear();
-  const requestedYear = appState.analyticsState.heatmapYear || currentYear;
-  const displayYear = Math.min(requestedYear, currentYear);
-  if (displayYear !== requestedYear) {
+  const hasSchoolExtras = Array.isArray(appState.schoolActivityLogs) && appState.schoolActivityLogs.length > 0;
+  const activityLogs = getActivityLogsForOrg({ includeSchoolExtras: true });
+  const schoolPlan = isSchoolOrgActive() || hasSchoolExtras;
+
+  const yearlyTotals = new Map();
+  const yearlyTotalsAll = new Map();
+  activityLogs.forEach((log) => {
+    const logDate = deriveLogDate(log);
+    if (!logDate) return;
+    const year = logDate.getFullYear();
+    const hours = parseFloat(log.hours_contributed || log.hours) || 0;
+    yearlyTotalsAll.set(year, (yearlyTotalsAll.get(year) || 0) + hours);
+
+    const status = normalizeApprovalStatus(log.approve);
+    if (!schoolPlan && status !== 'approved') return;
+    yearlyTotals.set(year, (yearlyTotals.get(year) || 0) + hours);
+  });
+
+  const availableYears = Array.from(yearlyTotals.keys()).sort((a, b) => b - a);
+  const availableYearsAll = Array.from(yearlyTotalsAll.keys()).sort((a, b) => b - a);
+  const fallbackYear = availableYears.length ? availableYears[0] : (availableYearsAll[0] || currentYear);
+  const requestedYear = appState.analyticsState.heatmapYear || fallbackYear;
+  const displayYear = yearlyTotals.has(requestedYear) && yearlyTotals.get(requestedYear) > 0
+    ? requestedYear
+    : fallbackYear;
+  if (displayYear !== appState.analyticsState.heatmapYear) {
     appState.analyticsState.heatmapYear = displayYear;
   }
 
-  const startDate = new Date(displayYear, 0, 1);
-  const endDate = new Date(displayYear, 11, 31);
-  const dataCutoff = displayYear >= currentYear ? normalizedToday : endDate;
-  const leadingOffset = ((startDate.getDay() + 6) % 7);
-  const totalDays = Math.floor((endDate - startDate) / MS_DAY) + 1;
-  const trailingOffset = (7 - ((leadingOffset + totalDays) % 7)) % 7;
+  let startDate = new Date(displayYear, 0, 1);
+  let endDate = new Date(displayYear, 11, 31);
+  let dataCutoff = displayYear >= currentYear ? normalizedToday : endDate;
+  let leadingOffset = ((startDate.getDay() + 6) % 7);
+  let totalDays = Math.floor((endDate - startDate) / MS_DAY) + 1;
+  let trailingOffset = (7 - ((leadingOffset + totalDays) % 7)) % 7;
 
-  const availableYears = getAvailableYears();
-  updateYearSelector(availableYears);
+  updateYearSelector(availableYears.length ? availableYears : (availableYearsAll.length ? availableYearsAll : [displayYear]));
 
   const dailyTotals = new Map();
   const eventTotals = new Map();
@@ -212,24 +236,61 @@ export function renderCalendarHeatmap(direction = 0) {
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  appState.activityData.forEach((log) => {
-    if (!log.date) return;
-    const logDate = parseDate(log.date);
-    if (!logDate) return;
-    if (logDate > dataCutoff) return;
-    const key = formatDateKey(logDate);
-    if (!dailyTotals.has(key)) return;
+  const fillTotals = (ignoreStatus = false, targetYear = displayYear) => {
+    dailyTotals.forEach((_, k) => dailyTotals.set(k, 0)); // reset to zero
+    eventTotals.clear();
 
-    const hours = parseFloat(log.hours_contributed || log.hours) || 0;
-    dailyTotals.set(key, (dailyTotals.get(key) || 0) + hours);
+    activityLogs.forEach((log) => {
+      const logDate = deriveLogDate(log);
+      if (!logDate) return;
+      if (logDate.getFullYear() !== targetYear) return;
+      if (logDate > dataCutoff) return;
+      const status = normalizeApprovalStatus(log.approve);
+      if (!ignoreStatus && !schoolPlan && status !== 'approved') return;
+      const key = formatDateKey(logDate);
+      if (!dailyTotals.has(key)) return;
 
-    if (log.event_id) {
-      const compositeKey = `${key}__${log.event_id}`;
-      eventTotals.set(compositeKey, (eventTotals.get(compositeKey) || 0) + hours);
+      const hours = parseFloat(log.hours_contributed || log.hours) || 0;
+      dailyTotals.set(key, (dailyTotals.get(key) || 0) + hours);
+
+      if (log.event_id) {
+        const compositeKey = `${key}__${log.event_id}`;
+        eventTotals.set(compositeKey, (eventTotals.get(compositeKey) || 0) + hours);
+      }
+    });
+  };
+
+  fillTotals(false, displayYear);
+
+  let maxValue = Math.max(...dailyTotals.values(), 0);
+  // If we still have zero activity, retry with all logs (ignore approval) using the most recent year with any data.
+  if (maxValue === 0 && activityLogs.length > 0) {
+    const fallbackYearWithData = availableYearsAll.length ? availableYearsAll[0] : displayYear;
+    const altStart = new Date(fallbackYearWithData, 0, 1);
+    const altEnd = new Date(fallbackYearWithData, 11, 31);
+    const altLeading = ((altStart.getDay() + 6) % 7);
+    const altTotalDays = Math.floor((altEnd - altStart) / MS_DAY) + 1;
+    const altTrailing = (7 - ((altLeading + altTotalDays) % 7)) % 7;
+
+    // Rebuild the map for the fallback year
+    dailyTotals.clear();
+    const cursorAlt = new Date(altStart);
+    while (cursorAlt <= altEnd) {
+      dailyTotals.set(formatDateKey(cursorAlt), 0);
+      cursorAlt.setDate(cursorAlt.getDate() + 1);
     }
-  });
 
-  const maxValue = Math.max(...dailyTotals.values(), 0);
+    fillTotals(true, fallbackYearWithData);
+    maxValue = Math.max(...dailyTotals.values(), 0);
+
+    // Update layout context to fallback year if it changed.
+    startDate = altStart;
+    endDate = altEnd;
+    dataCutoff = fallbackYearWithData >= currentYear ? normalizedToday : altEnd;
+    totalDays = altTotalDays;
+    trailingOffset = altTrailing;
+    leadingOffset = altLeading;
+  }
   if (totalDays <= 0) {
     container.innerHTML = '<div class="heatmap-grid"><div class="empty-state">No data to display for this month.</div></div>';
     return;
@@ -317,13 +378,14 @@ export function renderCalendarHeatmap(direction = 0) {
 function getAvailableYears() {
   const currentYear = new Date().getFullYear();
   const years = new Set([currentYear]);
-  appState.activityData.forEach(log => {
+  const hasSchoolExtras = Array.isArray(appState.schoolActivityLogs) && appState.schoolActivityLogs.length > 0;
+  const schoolPlan = isSchoolOrgActive() || hasSchoolExtras;
+  const activityLogs = getActivityLogsForOrg({ includeSchoolExtras: schoolPlan });
+  activityLogs.forEach(log => {
     const date = parseDate(log.date);
     if (date) {
       const year = date.getFullYear();
-      if (year <= currentYear) {
-        years.add(year);
-      }
+      years.add(year);
     }
   });
   return Array.from(years).sort((a, b) => b - a);
@@ -334,8 +396,11 @@ function updateYearSelector(years) {
   if (!select) return;
 
   const todayYear = new Date().getFullYear();
-  const selectedYear = Math.min(appState.analyticsState.heatmapYear || todayYear, todayYear);
-  select.innerHTML = years.map(year => `<option value="${year}" ${year === selectedYear ? 'selected' : ''}>Year: ${year}</option>`).join('');
+  const fallbackYear = years.length ? years[0] : todayYear;
+  const selectedYear = appState.analyticsState.heatmapYear || fallbackYear;
+  const effectiveSelected = years.includes(selectedYear) ? selectedYear : fallbackYear;
+  appState.analyticsState.heatmapYear = effectiveSelected;
+  select.innerHTML = years.map(year => `<option value="${year}" ${year === effectiveSelected ? 'selected' : ''}>Year: ${year}</option>`).join('');
 }
 
 function openHeatmapModal() {
@@ -380,7 +445,10 @@ function buildTrendData(metric) {
   }
 
   if (metric === 'hours' || metric === 'active') {
-    appState.activityData.forEach((log, index) => {
+    const hasSchoolExtras = Array.isArray(appState.schoolActivityLogs) && appState.schoolActivityLogs.length > 0;
+    const schoolPlan = isSchoolOrgActive() || hasSchoolExtras;
+    const activityLogs = getActivityLogsForOrg({ includeSchoolExtras: schoolPlan });
+    activityLogs.forEach((log, index) => {
       if (!log.date) return;
       const date = parseDate(log.date);
       if (!date) return;
@@ -435,7 +503,9 @@ function buildTrendData(metric) {
 }
 
 function buildComparisonData(categoryType, valueType) {
-  const logs = appState.activityData || [];
+  const hasSchoolExtras = Array.isArray(appState.schoolActivityLogs) && appState.schoolActivityLogs.length > 0;
+  const schoolPlan = isSchoolOrgActive() || hasSchoolExtras;
+  const logs = getActivityLogsForOrg({ includeSchoolExtras: schoolPlan }) || [];
 
   const summary = new Map();
 
@@ -735,12 +805,40 @@ function parseDate(input) {
     }
   }
 
+  if (typeof input === 'string') {
+    // Support plain numeric-only dates like "2025-06-02" or "9/28/2025"
+    const date = new Date(input.replace(/\s+/g, ' ').trim());
+    if (!Number.isNaN(date.getTime())) {
+      date.setHours(0, 0, 0, 0);
+      return date;
+    }
+  }
+
   const date = new Date(input);
   if (!Number.isNaN(date.getTime())) {
     date.setHours(0, 0, 0, 0);
     return date;
   }
 
+  return null;
+}
+
+function normalizeApprovalStatus(value) {
+  const raw = (value ?? '').toString().trim().toLowerCase();
+  if (!raw) return 'pending';
+  if (raw === 'approved' || raw === 'accepted' || raw.startsWith('approved') || raw.startsWith('approved by') || raw.startsWith('accept')) return 'approved';
+  if (raw === 'denied' || raw.startsWith('denied') || raw === 'rejected' || raw.includes('reject')) return 'denied';
+  return 'pending';
+}
+
+function deriveLogDate(log) {
+  const primary = parseDate(log?.date);
+  if (primary) return primary;
+  const candidates = [log?.created_at, log?.createdAt, log?.submitted_at, log?.timestamp];
+  for (const c of candidates) {
+    const d = parseDate(c);
+    if (d) return d;
+  }
   return null;
 }
 

@@ -1,6 +1,7 @@
 import { appState } from './state.js';
 import { showMessage, triggerListAnimation } from './ui.js';
 import { db } from './firebase.js';
+import { isSchoolPlan as checkSchoolPlan } from './plans.js';
 import {
   doc,
   updateDoc,
@@ -61,7 +62,7 @@ function ensureBaseLayout(host) {
     <div class="approvals-summary">
       <div class="summary-text" id="approvalsSummaryText">Pending hours awaiting review: 0h 00m</div>
       <div class="summary-actions">
-        <button type="button" class="btn-primary default-share-btn" id="defaultShareModalBtn">
+        <button type="button" class="btn-primary default-share-btn" id="defaultShareModalBtn" style="display:none;">
           <i class="fas fa-share-nodes"></i>
           <span class="btn-label" id="defaultShareBtnLabel">Default Sharing</span>
           <span class="count-pill" id="defaultShareCount" hidden>0</span>
@@ -85,7 +86,7 @@ function ensureBaseLayout(host) {
         <tbody id="approvalsTableBody"></tbody>
       </table>
     </div>
-    <section class="default-share-panel" id="defaultSharePanel" hidden>
+    <section class="default-share-panel" id="defaultSharePanel" hidden style="display:none;">
       <header class="default-share-header">
         <div>
           <h2>Default Sharing Requests</h2>
@@ -95,6 +96,14 @@ function ensureBaseLayout(host) {
       <div id="defaultShareQueue" class="share-requests-list"></div>
     </section>
   `;
+
+  const schoolPlan = checkSchoolPlan(appState.currentAdmin?.subscription || {});
+  const dsBtn = host.querySelector('#defaultShareModalBtn');
+  const dsPanel = host.querySelector('#defaultSharePanel');
+  if (!schoolPlan) {
+    if (dsBtn) dsBtn.style.display = 'none';
+    if (dsPanel) dsPanel.hidden = true;
+  }
 
   approvalsState.initialized = true;
 }
@@ -128,6 +137,15 @@ function buildApprovalsDataset() {
 }
 
 function buildShareRequestsDataset() {
+  const schoolPlan = checkSchoolPlan(appState.currentAdmin?.subscription || {});
+  if (!schoolPlan) {
+    return {
+      all: [],
+      pending: [],
+      resolved: [],
+    };
+  }
+
   const records = Array.isArray(appState.defaultShareRequests)
     ? appState.defaultShareRequests.map((request) => ({ ...request }))
     : [];
@@ -445,83 +463,10 @@ function resetDefaultShareRequestsListener() {
 function loadDefaultShareRequests() {
   resetDefaultShareRequestsListener();
 
-  const normalizedOrgCode = (appState.currentOrgCode || '').trim().toUpperCase();
-  const admin = appState.currentAdmin || {};
-  const orgId = admin.organizationId
-    || admin.organization_id
-    || admin.linkedOrgId
-    || admin.orgId
-    || null;
-
-  if (!normalizedOrgCode && !orgId) {
-    appState.defaultShareRequests = [];
-    renderApprovalQueue({ skipAnimation: true });
-    notifyVolunteersUpdate();
-    return;
-  }
-
-  const requestMap = new Map();
-  const subscriptions = [];
-  const requestsRef = collection(db, 'default_share_requests');
-
-  const handleSnapshot = (snapshot) => {
-    let mutated = false;
-    snapshot.docChanges().forEach((change) => {
-      const docId = change.doc.id;
-      if (change.type === 'removed') {
-        if (requestMap.delete(docId)) {
-          mutated = true;
-        }
-        return;
-      }
-      const data = change.doc.data() || {};
-      requestMap.set(docId, { id: docId, ...data });
-      mutated = true;
-    });
-
-    if (mutated) {
-      appState.defaultShareRequests = Array.from(requestMap.values());
-      renderApprovalQueue({ skipAnimation: true });
-      notifyVolunteersUpdate();
-    }
-  };
-
-  const subscribe = (constraint) => {
-    try {
-      const unsub = onSnapshot(query(requestsRef, constraint), handleSnapshot, (error) => {
-        console.error('default share requests listener error', error);
-        showMessage(`Unable to load default sharing requests: ${error.message || error}`, 'error');
-      });
-      subscriptions.push(unsub);
-    } catch (error) {
-      console.error('default share requests listener setup failed', error);
-      showMessage(`Unable to subscribe to default sharing requests: ${error.message || error}`, 'error');
-    }
-  };
-
-  if (normalizedOrgCode) {
-    subscribe(where('org_access_code', '==', normalizedOrgCode));
-  }
-
-  if (orgId) {
-    subscribe(where('org_id', '==', orgId));
-  }
-
-  if (!subscriptions.length) {
-    appState.defaultShareRequests = [];
-    renderApprovalQueue({ skipAnimation: true });
-    return;
-  }
-
-  appState.defaultShareRequestsUnsub = () => {
-    subscriptions.forEach((unsub) => {
-      try {
-        unsub();
-      } catch (error) {
-        console.warn('defaultShareRequests unsubscribe error', error);
-      }
-    });
-  };
+  // Default sharing is automatic and the UI is hidden; no listeners needed.
+  appState.defaultShareRequests = [];
+  renderApprovalQueue({ skipAnimation: true });
+  notifyVolunteersUpdate();
 }
 
 function updateTable(dataset, options = {}) {
@@ -1002,18 +947,20 @@ function getLogHours(log) {
 }
 
 function normalizeStatus(status) {
-  const raw = (status || 'pending').toString().toLowerCase();
-  if (raw === 'accepted' || raw.startsWith('approved by') || raw === 'approved' || raw === 'success') {
+  const rawValue = status ?? 'pending';
+  const raw = rawValue.toString().trim().toLowerCase();
+  if (!raw) return 'pending';
+  if (raw === 'accepted' || raw.startsWith('approved') || raw === 'approved' || raw === 'success' || raw.startsWith('accept')) {
     return 'approved';
   }
-  if (raw === 'denied' || raw.startsWith('denied by') || raw === 'rejected') {
+  if (raw === 'denied' || raw.startsWith('denied') || raw === 'rejected' || raw.includes('reject')) {
     return 'denied';
   }
-  if (raw.startsWith('awaiting')) {
-    return 'pending';
-  }
-  if (raw === 'changes-requested' || raw === 'needs-changes' || raw === 'requested') {
+  if (raw === 'changes-requested' || raw === 'needs-changes' || raw === 'requested' || raw.includes('change')) {
     return 'changes-requested';
+  }
+  if (raw.includes('await') || raw.includes('pending') || raw.includes('in review')) {
+    return 'pending';
   }
   return 'pending';
 }

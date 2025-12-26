@@ -3,19 +3,12 @@
     "source": "functions"
   },
   "hosting": {
-    "public": ".",
+    "public": "dist",
     "ignore": [
       "firebase.json",
       "**/.*",
       "**/node_modules/**",
       "functions/**"
-    ],
-    "redirects": [
-      {
-        "source": "/",
-        "destination": "/signup.html",
-        "type": 302
-      }
     ],
     "rewrites": [
       {

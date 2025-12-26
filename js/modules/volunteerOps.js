@@ -19,9 +19,11 @@ import {
 import { appState } from './state.js';
 import { showMessage, setTextContent, formatEmailForDisplay, triggerListAnimation } from './ui.js';
 import { setActiveView } from './dashboard.js';
+import { isSchoolPlan } from './plans.js';
 
 let volunteersUpdateHandler = () => {};
 let volunteerRequestsUpdateHandler = () => {};
+let schoolBackfillTimer = null;
 
 export function registerVolunteersUpdateHandler(handler) {
   volunteersUpdateHandler = typeof handler === 'function' ? handler : () => {};
@@ -116,6 +118,197 @@ function pruneRoleSelection() {
   appState.roleManagerSelection.forEach((id) => {
     if (!validIds.has(id)) appState.roleManagerSelection.delete(id);
   });
+}
+
+function isSchoolOrgContext() {
+  const admin = appState.currentAdmin || {};
+  const subscription = admin.subscription || appState.billing?.subscription || {};
+  const planKey = admin.planKey || admin.plan_key || subscription.planKey || subscription.plan_key || null;
+  const defaultSharePolicy = admin.default_share_policy || admin.defaultSharePolicy || subscription.default_share_policy || subscription.defaultSharePolicy || null;
+  const isSchool = isSchoolPlan({ ...subscription, planKey, plan_key: planKey, default_share_policy: defaultSharePolicy });
+  const orgCode = admin.organizationCode || admin.organization_code || appState.currentOrgCode || null;
+  return { isSchool, orgCode };
+}
+
+export function isSchoolOrgActive() {
+  const context = isSchoolOrgContext();
+  if (context.isSchool) return true;
+  const admin = appState.currentAdmin || {};
+  const category = (admin.category || admin.org_type || admin.organization_type || '').toString().toLowerCase();
+  if (category === 'school') return true;
+  if (admin.default_share_policy === 'required' || admin.defaultSharePolicy === 'required') return true;
+  if (admin.default_auto_share === true) return true;
+  return false;
+}
+
+async function backfillSchoolOrgLogs(volunteers) {
+  const { isSchool, orgCode } = isSchoolOrgContext();
+  if (!isSchool || !orgCode || !Array.isArray(volunteers) || !volunteers.length) return;
+
+  const normalizedOrg = String(orgCode).trim().toUpperCase();
+  const ids = Array.from(new Set(volunteers.map((v) => v.id).filter(Boolean)));
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 10) {
+    chunks.push(ids.slice(i, i + 10));
+  }
+
+  for (const batch of chunks) {
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'volunteer_logs'),
+        where('user_id', 'in', batch)
+      ));
+
+      const updates = [];
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        const orgId = (data.organization_id || '').toString().trim().toUpperCase();
+        if (orgId && orgId !== normalizedOrg) return;
+
+        const payload = { organization_id: normalizedOrg };
+        if (!data.approve || String(data.approve).trim() === '') {
+          payload.approve = 'approved';
+        }
+        updates.push(updateDoc(d.ref, payload));
+      });
+
+      if (updates.length) {
+        await Promise.all(updates);
+      }
+    } catch (error) {
+      console.warn('School plan log backfill batch failed', error);
+    }
+  }
+}
+
+function ensureSchoolBackfillLoop(volunteers) {
+  const { isSchool, orgCode } = isSchoolOrgContext();
+  if (!isSchool || !orgCode || !Array.isArray(volunteers) || !volunteers.length) {
+    if (schoolBackfillTimer) {
+      clearInterval(schoolBackfillTimer);
+      schoolBackfillTimer = null;
+    }
+    return;
+  }
+
+  backfillSchoolOrgLogs(volunteers).catch((error) => console.warn('School backfill error', error));
+
+  if (!schoolBackfillTimer) {
+    schoolBackfillTimer = setInterval(() => {
+      backfillSchoolOrgLogs(volunteers).catch((error) => console.warn('School backfill error', error));
+    }, 60 * 1000);
+  }
+}
+
+async function hydrateSchoolVolunteerHours(volunteers) {
+  const { isSchool, orgCode } = isSchoolOrgContext();
+  if (!isSchool || !Array.isArray(volunteers) || !volunteers.length) {
+    appState.schoolActivityLogs = [];
+    return volunteers;
+  }
+
+  const ids = Array.from(new Set(volunteers.map((v) => v.id).filter(Boolean)));
+  if (!ids.length) {
+    appState.schoolActivityLogs = [];
+    return volunteers;
+  }
+
+  const normalizedOrg = (orgCode || '').toString().trim().toUpperCase() || null;
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 10) {
+    chunks.push(ids.slice(i, i + 10));
+  }
+
+  const totals = new Map();
+  const schoolLogs = new Map();
+  const existingKeys = new Set((appState.activityData || []).map(buildSchoolActivityKey));
+
+  for (const batch of chunks) {
+    try {
+      const snap = await getDocs(query(collection(db, 'volunteer_logs'), where('user_id', 'in', batch)));
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        const uid = data.user_id;
+        if (!uid) return;
+        const hours = parseFloat(data.hours_contributed ?? data.hours ?? 0) || 0;
+
+        const entry = totals.get(uid) || { hours: 0, lastActivity: null, firstName: '', lastName: '', email: '' };
+        entry.hours += hours;
+
+        const logEmail = (data.volunteer_email || data.email || '').trim();
+        const logFirst = (data.firstName || data.volunteer_name || '').trim();
+        const logLast = (data.lastName || data.last_name || '').trim();
+        if (!entry.email && logEmail) entry.email = logEmail;
+        if (!entry.firstName && (logFirst || logEmail)) entry.firstName = logFirst || (logEmail.includes('@') ? logEmail.split('@')[0] : logEmail);
+        if (!entry.lastName && logLast) entry.lastName = logLast;
+
+        const dateVal = data.date || data.created_at || data.createdAt || data.submitted_at || data.timestamp;
+        if (dateVal) {
+          const dt = new Date(dateVal);
+          if (!Number.isNaN(dt.getTime())) {
+            if (!entry.lastActivity || dt.getTime() > entry.lastActivity) {
+              entry.lastActivity = dt.getTime();
+            }
+          }
+        }
+
+        const normalizedLog = normalizeSchoolLogForAnalytics(data, d.id, normalizedOrg);
+        const key = buildSchoolActivityKey(normalizedLog);
+        if (key && !existingKeys.has(key)) {
+          schoolLogs.set(key, normalizedLog);
+        }
+
+        totals.set(uid, entry);
+      });
+    } catch (error) {
+      console.warn('School hours hydration batch failed', error);
+    }
+  }
+
+  const merged = volunteers.map((v) => {
+    const extra = totals.get(v.id);
+    if (!extra) return v;
+    return {
+      ...v,
+      totalHours: extra.hours,
+      lastActivity: extra.lastActivity ? new Date(extra.lastActivity).toISOString() : v.lastActivity,
+      firstName: v.firstName || extra.firstName || '',
+      lastName: v.lastName || extra.lastName || '',
+      email: v.email || extra.email || '',
+    };
+  });
+
+  appState.volunteersData = merged;
+  appState.schoolActivityLogs = Array.from(schoolLogs.values());
+  notifyVolunteersUpdate();
+  return merged;
+}
+
+function buildSchoolActivityKey(log) {
+  if (!log) return '';
+  if (log.id) return String(log.id);
+  const user = log.user_id || log.uid || log.volunteer_id || log.volunteer_email || log.email || 'unknown';
+  const event = log.event_id || log.eventId || log.event || '';
+  const date = log.date || log.created_at || log.createdAt || log.submitted_at || log.timestamp || '';
+  const hours = log.hours_contributed ?? log.hours ?? 0;
+  return `${user}__${date}__${event}__${hours}`;
+}
+
+function normalizeSchoolLogForAnalytics(data = {}, docId, normalizedOrg) {
+  const hours = parseFloat(data.hours_contributed ?? data.hours ?? 0) || 0;
+  const approve = (data.approve || '').toString().trim() || 'pending';
+  return {
+    id: docId,
+    ...data,
+    user_id: data.user_id || data.volunteer_id || data.uid || null,
+    hours_contributed: hours,
+    hours,
+    approve,
+    organization_id: data.organization_id || data.organizationCode || normalizedOrg || null,
+    organizationCode: data.organizationCode || normalizedOrg || null,
+    school_attributed: true,
+    school_org_code: normalizedOrg || data.organization_id || null,
+  };
 }
 
 /** Safely get millis from Firestore Timestamp or date-ish values */
@@ -376,12 +569,8 @@ export function computeInitials(nameSource, fallback) {
 
 export function getVolunteerDisplayName(volunteer) {
   if (!volunteer) return 'Volunteer';
-  const first = (volunteer.firstName || '').trim();
-  const last = (volunteer.lastName || '').trim();
-  const combined = [first, last].filter(Boolean).join(' ').trim();
-  if (combined) return combined;
-  const fallbackEmail = (volunteer.email || 'Volunteer').trim();
-  return fallbackEmail || 'Volunteer';
+  const identity = getVolunteerIdentity(volunteer);
+  return identity.displayName || 'Volunteer';
 }
 
 function escapeHtml(value) {
@@ -402,6 +591,66 @@ export function resetVolunteerListener() {
     try { appState.volunteersUnsub(); } catch (e) { console.warn('volunteersUnsub error', e); }
     appState.volunteersUnsub = null;
   }
+}
+
+export function getVolunteerIdentity(volunteer) {
+  const profileFirst = (volunteer?.firstName || '').trim();
+  const profileLast = (volunteer?.lastName || '').trim();
+  const profileEmail = (volunteer?.email || '').trim();
+
+  let firstName = profileFirst;
+  let lastName = profileLast;
+  let email = profileEmail;
+
+  // fallback to volunteer requests (they parse user names correctly)
+  if (!firstName || !lastName || !email) {
+    const request = (appState.volunteerRequests || []).find((r) => r.userId === volunteer.id);
+    if (request) {
+      const reqName = (request.userName || '').trim();
+      const reqEmail = (request.userEmail || '').trim();
+      if (!email && reqEmail) email = reqEmail;
+      if (reqName && (!firstName || !lastName)) {
+        const parts = reqName.split(/\s+/).filter(Boolean);
+        if (parts.length > 1) {
+          if (!firstName) firstName = parts.slice(0, -1).join(' ');
+          if (!lastName) lastName = parts.slice(-1).join('');
+        } else if (!firstName) {
+          firstName = reqName;
+        }
+      }
+    }
+  }
+
+  // fallback to logs
+  if ((!firstName || !lastName || !email) && Array.isArray(volunteer?.logs)) {
+    const fromLog = volunteer.logs.find((log) => {
+      const derived = deriveNameFromLog(log);
+      return derived.firstName || derived.lastName || derived.email;
+    });
+    if (fromLog) {
+      const derived = deriveNameFromLog(fromLog);
+      if (!firstName && derived.firstName) firstName = derived.firstName;
+      if (!lastName && derived.lastName) lastName = derived.lastName;
+      if (!email && derived.email) email = derived.email;
+    }
+  }
+
+  if (!firstName && email) {
+    firstName = email.includes('@') ? email.split('@')[0] : email;
+  }
+
+  const displayName = [firstName, lastName].filter(Boolean).join(' ').trim()
+    || firstName
+    || lastName
+    || email
+    || 'Volunteer';
+
+  return {
+    firstName: firstName || '',
+    lastName: lastName || '',
+    email: email || '',
+    displayName,
+  };
 }
 
 export function loadVolunteersData() {
@@ -450,6 +699,8 @@ export function loadVolunteersData() {
       appState.volunteersData = updated;
       pruneRoleSelection();
       notifyVolunteersUpdate();
+      ensureSchoolBackfillLoop(updated);
+      hydrateSchoolVolunteerHours(updated).catch((error) => console.warn('School hours hydration error', error));
     },
     (error) => {
       console.error('volunteers onSnapshot error:', error);
@@ -516,8 +767,22 @@ export function loadVolunteerRequests() {
   );
 }
 
+function normalizeApprovalStatus(value) {
+  const raw = value ?? '';
+  const normalized = raw.toString().trim().toLowerCase();
+  if (!normalized) return 'pending';
+  if (normalized === 'approved' || normalized === 'accepted' || normalized.startsWith('approved') || normalized.startsWith('accept')) {
+    return 'approved';
+  }
+  if (normalized === 'denied' || normalized.startsWith('denied') || normalized === 'rejected' || normalized.includes('reject')) {
+    return 'denied';
+  }
+  return 'pending';
+}
+
 export function syncVolunteerHoursFromActivity(activityLogs, baseVolunteers = appState.volunteersData) {
   const map = new Map();
+  const { isSchool } = isSchoolOrgContext();
 
   baseVolunteers.forEach((v) => {
     const { hidden, hiddenAt, ...rest } = v;
@@ -553,10 +818,16 @@ export function syncVolunteerHoursFromActivity(activityLogs, baseVolunteers = ap
 
     const v = map.get(userId);
     const hours = parseFloat(log.hours_contributed ?? log.hours ?? 0) || 0;
-    // FIX: Only add hours to the total if the log is approved.
-    const status = (log.approve || 'pending').toLowerCase();
-    if (status === 'approved' || status === 'accepted') {
+    const normalizedStatus = normalizeApprovalStatus(log.approve);
+
+    if (isSchool) {
+      // School plans: count all hours regardless of status.
       v.totalHours += hours;
+    } else {
+      // Non-school (monthly/yearly): count only approved/accepted; skip denied/pending.
+      if (normalizedStatus === 'approved') {
+        v.totalHours += hours;
+      }
     }
 
     v.logs.push(log);
@@ -600,7 +871,8 @@ export function displayVolunteers() { // This function is also exported as rende
     const name = getVolunteerDisplayName(volunteer);
     const lastActivity = volunteer.lastActivity ? new Date(volunteer.lastActivity).toLocaleDateString() : 'Never';
     const roleMeta = rolesCatalog.find((r) => r.id === volunteer.role) || { name: volunteer.role || 'Volunteer' };
-    const normalizedEmail = (volunteer.email || '').trim();
+    const identity = getVolunteerIdentity(volunteer);
+    const normalizedEmail = (identity.email || volunteer.email || '').trim();
     const displayEmail = normalizedEmail || '—';
     const shareState = getVolunteerDefaultShareState(volunteer);
     const shareButtonTitle = shareState.active
@@ -723,8 +995,9 @@ export function exportVolunteersToCsv() {
 
   const headers = ['Name', 'Email', 'Role', 'Total Hours', 'Last Activity'];
   const rows = volunteers.map((v) => {
-    const name = getVolunteerDisplayName(v);
-    const email = v.email || '';
+    const identity = getVolunteerIdentity(v);
+    const name = identity.displayName;
+    const email = identity.email || '';
     const rolesCatalog = appState.rolesCatalog || [];
     const roleMeta = rolesCatalog.find((r) => r.id === v.role) || { name: v.role || 'Volunteer' };
     const hours = (v.totalHours || 0).toFixed(1);

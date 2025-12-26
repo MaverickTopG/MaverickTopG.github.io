@@ -67,3 +67,20 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# AstroWind build output
+dist/
+.output/
+.astro
+
+# Additional logs
+pnpm-debug.log*
+
+# Additional env files
+.env.production
+
+# macOS-specific files
+.DS_Store
+
+# Lockfiles not used in this repo
+pnpm-lock.yaml
