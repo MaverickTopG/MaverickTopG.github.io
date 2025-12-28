@@ -4,16 +4,51 @@
   },
   "hosting": {
     "public": "dist",
+    "cleanUrls": true,
+    "predeploy": [
+      "npm run build"
+    ],
     "ignore": [
       "firebase.json",
       "**/.*",
       "**/node_modules/**",
       "functions/**"
     ],
+    "headers": [
+      {
+        "source": "**/*.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      }
+    ],
+    "redirects": [
+      {
+        "source": "/admin/",
+        "destination": "/admin",
+        "type": 301
+      },
+      {
+        "source": "/admin/:path*/",
+        "destination": "/admin/:path*",
+        "type": 301
+      }
+    ],
     "rewrites": [
       {
         "source": "/api/checkout",
         "function": "createCheckout"
+      },
+      {
+        "source": "/api/createOrganization",
+        "function": "createOrganization"
+      },
+      {
+        "source": "/api/joinOrganization",
+        "function": "joinOrganization"
       },
       {
         "source": "/api/portal",

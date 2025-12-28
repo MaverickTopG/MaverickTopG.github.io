@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "build": "rm -rf dist && astro build",
     "preview": "astro preview",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
     "astro": "astro",
     "check": "npm run check:astro && npm run check:eslint && npm run check:prettier",
     "check:astro": "astro check",

@@ -1,28 +1,15 @@
 ---
-import Layout from '~/layouts/PageLayout.astro';
+import PageLayout from '~/layouts/PageLayout.astro';
 
-import type { MetaData } from '~/types';
-
-export interface Props {
-  frontmatter: {
-    title?: string;
-  };
-}
-
-const { frontmatter } = Astro.props;
-
-const metadata: MetaData = {
-  title: frontmatter?.title,
-};
+const { title } = Astro.props;
+const metadata = title ? { title } : undefined;
 ---
 
-<Layout metadata={metadata}>
-  <section class="px-4 py-16 sm:px-6 mx-auto lg:px-8 lg:py-20 max-w-4xl">
-    <h1 class="font-bold font-heading text-4xl md:text-5xl leading-tighter tracking-tighter">{frontmatter.title}</h1>
-    <div
-      class="mx-auto prose prose-lg max-w-4xl dark:prose-invert dark:prose-headings:text-slate-300 prose-md prose-headings:font-heading prose-headings:leading-tighter prose-headings:tracking-tighter prose-headings:font-bold prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-img:rounded-md prose-img:shadow-lg mt-8"
-    >
+<PageLayout metadata={metadata}>
+  <section class="mx-auto w-full max-w-3xl px-4 py-12 sm:py-16">
+    {title ? <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-4xl">{title}</h1> : null}
+    <article class="prose prose-lg mt-6 max-w-none text-gray-700 dark:prose-invert dark:text-gray-300">
       <slot />
-    </div>
+    </article>
   </section>
-</Layout>
+</PageLayout>

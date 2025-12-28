@@ -12,7 +12,7 @@ const firebaseConfig = {
 };
 
 const metadata = {
-  title: 'Create Admin Account',
+  title: 'Join Organization',
 };
 ---
 
@@ -21,23 +21,24 @@ const metadata = {
     <div class="mx-auto flex min-h-screen w-full max-w-2xl items-center px-4 py-16">
       <div class="w-full rounded-3xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/30 dark:border-white/10 dark:bg-slate-900/80">
         <div class="mb-6">
-          <p class="text-sm font-semibold uppercase tracking-wide text-primary">Admin setup</p>
-          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Create your NexoLink workspace</h1>
+          <p class="text-sm font-semibold uppercase tracking-wide text-primary">Join an organization</p>
+          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Enter your team code</h1>
           <p class="mt-2 text-sm text-gray-600 dark:text-slate-400">
-            Enter your organization details to finish setup. We will generate a secure join code for your team.
+            Use the 6-character code from your admin to join their NexoLink workspace.
           </p>
         </div>
 
-        <div class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" data-checkout-status hidden></div>
+        <div class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" data-join-status hidden></div>
 
-        <form class="space-y-5" data-create-org-form>
+        <form class="space-y-5" data-join-org-form>
           <div>
-            <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-slate-200">Organization name</label>
+            <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-slate-200">Organization code</label>
             <input
               type="text"
-              name="organization"
-              class="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-              placeholder="NexoLink Community Center"
+              name="code"
+              class="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm uppercase tracking-[0.2em] text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+              placeholder="ABC123"
+              maxlength="6"
               required
             />
           </div>
@@ -46,9 +47,8 @@ const metadata = {
             <input
               type="email"
               name="email"
-              data-email-input
               class="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-              placeholder="admin@nexolink.org"
+              placeholder="volunteer@nexolink.org"
               required
             />
           </div>
@@ -58,7 +58,7 @@ const metadata = {
               type="password"
               name="password"
               class="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-              placeholder="Create a secure password"
+              placeholder="Use your account password"
               minlength="8"
               required
             />
@@ -68,11 +68,11 @@ const metadata = {
             class="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition hover:bg-primary/90"
             data-submit-button
           >
-            Create workspace
+            Join workspace
           </button>
         </form>
         <p class="mt-6 text-center text-xs text-gray-500 dark:text-slate-400">
-          By creating an account, you confirm your Stripe checkout and agree to NexoLink terms.
+          Need an admin account? <a href="/admin/create" class="font-semibold text-primary hover:text-primary/80">Create one here</a>.
         </p>
       </div>
     </div>
@@ -80,12 +80,11 @@ const metadata = {
 </Layout>
 
 <script define:vars={{ firebaseConfig }}>
-  const statusEl = document.querySelector('[data-checkout-status]');
-  const form = document.querySelector('[data-create-org-form]');
+  const statusEl = document.querySelector('[data-join-status]');
+  const form = document.querySelector('[data-join-org-form]');
   const submitButton = document.querySelector('[data-submit-button]');
-  const emailInput = document.querySelector('[data-email-input]');
 
-  const setStatus = (message, type = 'info') => {
+  const setStatus = (message) => {
     if (!statusEl) return;
     if (!message) {
       statusEl.hidden = true;
@@ -93,45 +92,7 @@ const metadata = {
     }
     statusEl.hidden = false;
     statusEl.textContent = message;
-    statusEl.dataset.type = type;
   };
-
-  const params = new URLSearchParams(window.location.search);
-  const sessionId = params.get('session_id');
-  const checkoutStatus = params.get('checkout');
-
-  if (checkoutStatus === 'cancel') {
-    setStatus('Checkout was cancelled. You can restart billing from the pricing page.', 'warning');
-  } else if (!sessionId) {
-    setStatus('We could not verify your checkout session. Please make sure you completed payment.', 'warning');
-  }
-
-  const lockEmailInput = (email) => {
-    if (!emailInput || !email) return;
-    emailInput.value = email;
-    emailInput.readOnly = true;
-    emailInput.setAttribute('aria-readonly', 'true');
-    emailInput.classList.add('cursor-not-allowed', 'bg-slate-100', 'dark:bg-slate-800');
-    const notify = () =>
-      setStatus('This email is required for billing verification and cannot be changed.', 'info');
-    emailInput.addEventListener('click', notify);
-    emailInput.addEventListener('focus', notify);
-  };
-
-  const loadCheckoutEmail = async () => {
-    if (!sessionId) return;
-    try {
-      const response = await fetch(`/api/checkoutSession?session_id=${encodeURIComponent(sessionId)}`);
-      const payload = await response.json();
-      if (response.ok && payload?.email) {
-        lockEmailInput(payload.email);
-      }
-    } catch (error) {
-      console.warn('Unable to lock billing email', error);
-    }
-  };
-
-  loadCheckoutEmail();
 
   const loadFirebaseSdk = async () => {
     if (!firebaseConfig || !firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) {
@@ -168,12 +129,12 @@ const metadata = {
     setLoading(true);
 
     const formData = new FormData(form);
-    const organizationName = String(formData.get('organization') || '').trim();
+    const accessCode = String(formData.get('code') || '').trim().toUpperCase();
     const email = String(formData.get('email') || '').trim();
     const password = String(formData.get('password') || '');
 
-    if (!organizationName || !email || !password) {
-      setStatus('Please complete all fields to continue.', 'warning');
+    if (accessCode.length !== 6 || !email || !password) {
+      setStatus('Please enter the 6-character code and your account credentials.');
       setLoading(false);
       return;
     }
@@ -183,31 +144,31 @@ const metadata = {
       let userCredential = null;
 
       try {
-        userCredential = await auth.createUserWithEmailAndPassword(email, password);
+        userCredential = await auth.signInWithEmailAndPassword(email, password);
       } catch (error) {
-        if (error?.code === 'auth/email-already-in-use') {
-          userCredential = await auth.signInWithEmailAndPassword(email, password);
+        if (error?.code === 'auth/user-not-found') {
+          userCredential = await auth.createUserWithEmailAndPassword(email, password);
         } else {
           throw error;
         }
       }
 
       const user = userCredential?.user;
-      if (!user) throw new Error('Unable to create account.');
+      if (!user) throw new Error('Unable to sign in.');
 
       const idToken = await user.getIdToken();
-      const response = await fetch('/api/createOrganization', {
+      const response = await fetch('/api/joinOrganization', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ organizationName, sessionId }),
+        body: JSON.stringify({ accessCode }),
       });
 
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.error || 'Unable to create organization.');
+        throw new Error(payload?.error || 'Unable to join organization.');
       }
 
       if (payload?.organizationCode) {
@@ -216,12 +177,14 @@ const metadata = {
       if (payload?.organizationId) {
         localStorage.setItem('nexolink_org_id', payload.organizationId);
       }
-      localStorage.setItem('nexolink_org_name', organizationName);
+      if (payload?.organizationName) {
+        localStorage.setItem('nexolink_org_name', payload.organizationName);
+      }
 
       window.location.assign('/admin/');
     } catch (error) {
-      console.error('[Create Org] Error', error);
-      setStatus(error?.message || 'Unable to create your account. Please try again.', 'error');
+      console.error('[Join Org] Error', error);
+      setStatus(error?.message || 'Unable to join organization. Please try again.');
     } finally {
       setLoading(false);
     }

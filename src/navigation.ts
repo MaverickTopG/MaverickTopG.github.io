@@ -15,6 +15,10 @@ export const headerData = {
       href: getPermalink('/about'),
     },
     {
+      text: 'Blog',
+      href: getPermalink('/blog'),
+    },
+    {
       text: 'Admin Portal',
       href: '/admin/login',
     },
@@ -36,6 +40,7 @@ export const footerData = {
         { text: 'App', href: getPermalink('/app') },
         { text: 'Pricing', href: getPermalink('/pricing') },
         { text: 'About Us', href: getPermalink('/about') },
+        { text: 'Blog', href: getPermalink('/blog') },
         { text: 'Admin Portal', href: '/admin/login' },
       ],
     },
@@ -50,6 +55,7 @@ export const footerData = {
     {
       title: 'Resources',
       links: [
+        { text: 'Blog', href: getPermalink('/blog') },
         { text: 'Privacy Policy', href: getPermalink('/privacy') },
         { text: 'Terms', href: getPermalink('/terms') },
       ],

@@ -1296,6 +1296,201 @@ export const createCheckout = onRequest(
   }
 );
 
+function generateAccessCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < 6; i += 1) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+async function createUniqueAccessCode() {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = generateAccessCode();
+    const snapshot = await db
+      .collection('organizations')
+      .where('access_code', '==', code)
+      .limit(1)
+      .get();
+    if (snapshot.empty) {
+      return code;
+    }
+  }
+  return generateAccessCode();
+}
+
+async function verifyCheckoutSession(sessionId) {
+  if (!sessionId) return null;
+  const stripe = getStripeClient();
+  const session = await stripe.checkout.sessions.retrieve(sessionId, {
+    expand: ['subscription', 'customer', 'customer_details'],
+  });
+  return session;
+}
+
+export const createOrganization = onRequest(
+  {
+    cors: true,
+    secrets: [STRIPE_SECRET_KEY],
+  },
+  async (req, res) => {
+    if (handleCorsPreflight(req, res, ['POST'])) return;
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+
+    const decodedToken = await decodeAuthHeader(req);
+    if (!decodedToken?.uid) {
+      res.status(401).json({ error: 'Missing or invalid authorization token.' });
+      return;
+    }
+
+    const { organizationName, sessionId } = req.body || {};
+    const name = String(organizationName || '').trim();
+    if (!name) {
+      res.status(400).json({ error: 'Organization name is required.' });
+      return;
+    }
+
+    let session = null;
+    if (sessionId) {
+      try {
+        session = await verifyCheckoutSession(sessionId);
+      } catch (error) {
+        logger.error('Checkout session verification failed', error);
+        res.status(400).json({ error: 'Unable to verify checkout session.' });
+        return;
+      }
+
+      const paymentStatus = session?.payment_status || '';
+      const sessionStatus = session?.status || '';
+      if (!['paid', 'no_payment_required'].includes(paymentStatus) && sessionStatus !== 'complete') {
+        res.status(400).json({ error: 'Checkout is not completed yet.' });
+        return;
+      }
+
+      const sessionEmail = session?.customer_details?.email || session?.customer_email || '';
+      if (sessionEmail && decodedToken.email && sessionEmail.toLowerCase() !== decodedToken.email.toLowerCase()) {
+        res.status(400).json({ error: 'Checkout email does not match the signed-in account.' });
+        return;
+      }
+    }
+
+    try {
+      const orgCode = await createUniqueAccessCode();
+      const orgRef = db.collection('organizations').doc();
+
+      const payload = {
+        name,
+        access_code: orgCode,
+        created_at: Timestamp.now(),
+        created_by: decodedToken.uid,
+        owner_uid: decodedToken.uid,
+        source: 'stripe_checkout',
+        stripe_session_id: sessionId || null,
+        stripe_customer_id: session?.customer?.id || session?.customer || null,
+        stripe_subscription_id: session?.subscription?.id || session?.subscription || null,
+      };
+
+      await orgRef.set(payload, { merge: true });
+      await ensureUserOrganizationLink(orgCode, orgRef.id, decodedToken.uid, {
+        email: decodedToken.email || null,
+      }, {
+        name,
+      });
+
+      await db.collection('users').doc(decodedToken.uid).set(
+        {
+          email: decodedToken.email || null,
+          organizationName: name,
+          organizationId: orgRef.id,
+          accessCode: orgCode,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true },
+      );
+
+      res.json({
+        organizationId: orgRef.id,
+        organizationCode: orgCode,
+      });
+    } catch (error) {
+      logger.error('Organization creation failed', error);
+      res.status(500).json({ error: 'Unable to create organization.' });
+    }
+  },
+);
+
+export const joinOrganization = onRequest(
+  {
+    cors: true,
+  },
+  async (req, res) => {
+    if (handleCorsPreflight(req, res, ['POST'])) return;
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+
+    const decodedToken = await decodeAuthHeader(req);
+    if (!decodedToken?.uid) {
+      res.status(401).json({ error: 'Missing or invalid authorization token.' });
+      return;
+    }
+
+    const { accessCode } = req.body || {};
+    const normalizedCode = String(accessCode || '').trim().toUpperCase();
+    if (!normalizedCode || normalizedCode.length !== 6) {
+      res.status(400).json({ error: 'Please enter a valid 6-character organization code.' });
+      return;
+    }
+
+    try {
+      const orgSnapshot = await db
+        .collection('organizations')
+        .where('access_code', '==', normalizedCode)
+        .limit(1)
+        .get();
+
+      if (orgSnapshot.empty) {
+        res.status(404).json({ error: 'Organization not found. Check the code and try again.' });
+        return;
+      }
+
+      const orgDoc = orgSnapshot.docs[0];
+      const orgData = orgDoc.data() || {};
+
+      await ensureUserOrganizationLink(normalizedCode, orgDoc.id, decodedToken.uid, {
+        email: decodedToken.email || null,
+      }, orgData);
+
+      await db.collection('users').doc(decodedToken.uid).set(
+        {
+          email: decodedToken.email || null,
+          organizationId: orgDoc.id,
+          organizationName: orgData.name || null,
+          accessCode: normalizedCode,
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true },
+      );
+
+      res.json({
+        organizationId: orgDoc.id,
+        organizationCode: normalizedCode,
+        organizationName: orgData.name || null,
+      });
+    } catch (error) {
+      logger.error('Join organization failed', error);
+      res.status(500).json({ error: 'Unable to join organization.' });
+    }
+  },
+);
+
+
 export const createPortal = onRequest(
   {
     cors: true,

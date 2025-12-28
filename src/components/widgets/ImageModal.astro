@@ -9,39 +9,8 @@ export interface Props {
 const { image } = Astro.props;
 ---
 
-<div class="relative image-container">
-  <Image class="w-full h-full object-cover bg-gray-500 shadow-lg" {...image} />
-  <button class="absolute top-2 right-2 bg-gray-800 bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white expand-button">
-    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m0 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m0 0v-4m0 4l-5-5" />
-    </svg>
-  </button>
-  <div class="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50 hidden image-modal">
-    <Image class="max-w-full max-h-full shadow-lg" {...image} />
-    <button class="absolute top-4 right-4 text-white text-3xl close-modal-button">&times;</button>
+<div class="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white/70 shadow-lg shadow-slate-200/60 dark:border-white/10 dark:bg-slate-900/40">
+  <div class="aspect-[30/13.25] w-full">
+    <Image class="h-full w-full object-contain" {...image} />
   </div>
 </div>
-
-<script>
-  document.addEventListener('astro:page-load', () => {
-    const imageContainers = document.querySelectorAll('.image-container');
-    imageContainers.forEach(container => {
-      const expandButton = container.querySelector('.expand-button');
-      const modal = container.querySelector('.image-modal');
-      const closeModalButton = container.querySelector('.close-modal-button');
-      if (expandButton && modal && closeModalButton) {
-        expandButton.addEventListener('click', () => {
-          modal.classList.remove('hidden');
-        });
-        closeModalButton.addEventListener('click', () => {
-          modal.classList.add('hidden');
-        });
-        modal.addEventListener('click', (e) => {
-          if (e.target === modal) {
-            modal.classList.add('hidden');
-          }
-        });
-      }
-    });
-  });
-</script>
