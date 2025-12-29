@@ -18,6 +18,35 @@
     'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js',
   ];
   const QR_TTL_SECONDS = 3153600000;
+  const engagementState = {
+    period: 'monthly',
+    data: null,
+  };
+  const weeklyChartState = {
+    offset: 0,
+    totals: Array.from({ length: 7 }, () => 0),
+    logs: [],
+  };
+  const impactGoalState = {
+    goal: 0,
+    approved: 0,
+    today: 0,
+    percent: 0,
+    orgKey: null,
+    orgId: null,
+    orgCode: null,
+    db: null,
+    user: null,
+    unsubscribe: null,
+  };
+  const DEFAULT_IMPACT_GOAL = 20;
+  const historyState = {
+    active: false,
+    name: '',
+    id: '',
+    email: '',
+  };
+  let bootingCleared = false;
 
   const loadScript = (src) => new Promise((resolve, reject) => {
     if (document.querySelector(`script[src="${src}"]`)) {
@@ -35,6 +64,12 @@
     };
     document.head.appendChild(script);
   });
+
+  const clearBootingState = () => {
+    if (bootingCleared) return;
+    bootingCleared = true;
+    document.documentElement.classList.remove('nx-booting');
+  };
 
   const ensureFirebase = async () => {
     for (const src of FIREBASE_SDKS) {
@@ -60,7 +95,7 @@
           await loadScript(url);
           loaded = true;
           break;
-        } catch (err) {
+        } catch {
           continue;
         }
       }
@@ -134,10 +169,17 @@
     if (raw.includes('awaiting') || raw.includes('pending') || raw.includes('review')) return 'pending';
     return raw;
   };
-  const isApprovedLog = (log) => normalizeStatus(log?.approve) === 'approved';
-  const isDeniedLog = (log) => normalizeStatus(log?.approve) === 'denied';
+  const resolveLogStatusValue = (log = {}) => (
+    log.approve
+    ?? log.approval
+    ?? log.approval_status
+    ?? log.approvalStatus
+    ?? log.status
+    ?? null
+  );
+  const isApprovedLog = (log) => normalizeStatus(resolveLogStatusValue(log)) === 'approved';
   const isPendingLog = (log) => {
-    const status = normalizeStatus(log?.approve);
+    const status = normalizeStatus(resolveLogStatusValue(log));
     return status === 'pending' || status === 'changes-requested';
   };
   const normalizeRole = (role) => {
@@ -188,7 +230,18 @@
     return num % 1 === 0 ? `${num}` : num.toFixed(1);
   };
 
-  const getLogHours = (log) => Number(log?.hours_contributed ?? log?.hours ?? log?.hoursLogged ?? 0) || 0;
+  const getLogHours = (log) => {
+    const raw = log?.hours_contributed
+      ?? log?.hoursLogged
+      ?? log?.hours_logged
+      ?? log?.hours_contrib
+      ?? log?.total_hours
+      ?? log?.totalHours
+      ?? log?.hours
+      ?? 0;
+    const parsed = typeof raw === 'string' ? parseFloat(raw) : Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
 
   const formatDayLabel = (date) => date.toLocaleDateString('en-US', { weekday: 'long' });
   const WEEK_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -200,9 +253,42 @@
     return start;
   };
 
-  const buildWeekDates = (reference) => {
-    const start = getWeekStart(reference);
-    return WEEK_LABELS.map((_, index) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + index));
+  const getWeekStartFromOffset = (offset = 0) => {
+    const base = getWeekStart(new Date());
+    base.setDate(base.getDate() - offset * 7);
+    return base;
+  };
+
+  const buildWeeklyTotalsForOffset = (logs = [], offset = 0) => {
+    const weekStart = getWeekStartFromOffset(offset);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    const totals = Array.from({ length: 7 }, () => 0);
+    logs.forEach((log) => {
+      const date = getLogTimestamp(log);
+      if (!date || date < weekStart || date >= weekEnd) return;
+      totals[date.getDay()] += getLogHours(log);
+    });
+    return totals;
+  };
+
+  const filterLogsByWeek = (logs = [], offset = 0) => {
+    const weekStart = getWeekStartFromOffset(offset);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    return logs.filter((log) => {
+      const date = getLogTimestamp(log);
+      return date && date >= weekStart && date < weekEnd;
+    });
+  };
+
+  const formatWeekRange = (offset = 0) => {
+    const start = getWeekStartFromOffset(offset);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    const startLabel = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const endLabel = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${startLabel}–${endLabel}`;
   };
 
   const resolveElementByLabel = (labelText) => {
@@ -220,7 +306,15 @@
     return null;
   };
 
+  const updateMetricLabel = (currentLabel, nextLabel) => {
+    const spans = Array.from(document.querySelectorAll('span'));
+    const label = spans.find((node) => node.textContent.trim() === currentLabel);
+    if (label) label.textContent = nextLabel;
+  };
+
   const resolveAdminEmailNode = () => {
+    const direct = document.querySelector('[data-admin-email]');
+    if (direct) return direct;
     const spans = Array.from(document.querySelectorAll('span'));
     return spans.find((node) => node.textContent.trim() === 'NexoLink Admin') || null;
   };
@@ -262,6 +356,17 @@
     return parsed;
   };
 
+  const initVolunteerHistoryState = () => {
+    const params = new URLSearchParams(window.location.search);
+    const name = params.get('volunteer') || '';
+    const id = params.get('id') || '';
+    const email = params.get('email') || '';
+    historyState.name = name;
+    historyState.id = id;
+    historyState.email = email;
+    historyState.active = Boolean(name || id || email);
+  };
+
   const endOfDay = (date) => {
     if (!date) return null;
     const end = new Date(date);
@@ -277,8 +382,8 @@
 
   const updateProfileDropdownEmail = (email) => {
     if (!email) return;
-    const nodes = Array.from(document.querySelectorAll('span, p'))
-      .filter((node) => node.textContent.trim() === 'admin@nexolink.app');
+    const nodes = Array.from(document.querySelectorAll('[data-admin-email], span, p'))
+      .filter((node) => node.dataset?.adminEmail || node.textContent.trim() === 'admin@nexolink.app');
     nodes.forEach((node) => {
       node.textContent = email;
     });
@@ -525,6 +630,13 @@
     const modal = ensureQrMenu(trigger);
     const body = modal?.querySelector('[data-org-qr-body]');
     if (!body) return;
+    const normalizedCode = String(orgCode).trim().toUpperCase();
+    if (modal.dataset.qrOrgCode === normalizedCode && modal.dataset.qrImage) {
+      body.innerHTML = `<img src="${modal.dataset.qrImage}" alt="Organization QR" class="h-52 w-52" />`;
+      modal.classList.remove('hidden');
+      return;
+    }
+
     body.innerHTML = '<span class="text-xs text-gray-400">Loading QR…</span>';
     modal.classList.remove('hidden');
 
@@ -574,6 +686,7 @@
       }
       if (!url) throw new Error('QR generation failed.');
       modal.dataset.qrImage = url;
+      modal.dataset.qrOrgCode = normalizedCode;
       body.innerHTML = `<img src="${url}" alt="Organization QR" class="h-52 w-52" />`;
     } catch (error) {
       console.error('QR render failed', error);
@@ -736,19 +849,42 @@
     const card = node?.closest('div.rounded-2xl');
     if (card) {
       const badge = card.querySelector('span.rounded-full');
-      const numeric = Number.isFinite(value) ? value : parseFloat(String(value).replace(/[^\d.-]/g, ''));
       if (badge) {
-        if (label === 'Active Volunteers' || label === 'Total Hours') {
-          badge.classList.add('hidden');
-          return;
-        }
-        if (!Number.isFinite(numeric) || numeric <= 0) {
-          badge.classList.add('hidden');
-        } else {
-          badge.classList.remove('hidden');
-        }
+        badge.classList.add('hidden');
       }
     }
+  };
+
+  const formatDeltaPercent = (current, previous) => {
+    const curr = Number(current) || 0;
+    const prev = Number(previous) || 0;
+    if (!prev && !curr) return null;
+    if (!prev) return 100;
+    return ((curr - prev) / Math.abs(prev)) * 100;
+  };
+
+  const updateMetricDelta = (label, percent) => {
+    const labels = Array.isArray(label) ? label : [label];
+    const node = resolveElementByLabels(labels);
+    const card = node?.closest('div.rounded-2xl');
+    const badge = card?.querySelector('span.rounded-full');
+    if (!badge) return;
+    if (!Number.isFinite(percent)) {
+      badge.classList.add('hidden');
+      return;
+    }
+    const rounded = Math.round(percent * 10) / 10;
+    const sign = rounded > 0 ? '+' : '';
+    badge.textContent = `${sign}${rounded}%`;
+    badge.className = 'rounded-full px-3 py-1 text-sm font-semibold';
+    if (rounded > 0) {
+      badge.classList.add('bg-success-50', 'text-success-600', 'dark:bg-success-500/15', 'dark:text-success-500');
+    } else if (rounded < 0) {
+      badge.classList.add('bg-error-50', 'text-error-600', 'dark:bg-error-500/15', 'dark:text-error-500');
+    } else {
+      badge.classList.add('bg-gray-100', 'text-gray-700', 'dark:bg-gray-800', 'dark:text-gray-200');
+    }
+    badge.classList.remove('hidden');
   };
 
   const updateTopVolunteers = (volunteers) => {
@@ -785,8 +921,7 @@
 
       const nameDiv = document.createElement('div');
       nameDiv.innerHTML = `
-          <p class="font-semibold text-gray-800 text-theme-sm dark:text-white/90">${volunteerName}</p>
-          <span class="text-gray-500 text-theme-xs dark:text-gray-400">${vol.lastTask && vol.lastTask !== 'Joined organization' ? vol.lastTask : ''}</span>`;
+          <p class="font-semibold text-gray-800 text-theme-sm dark:text-white/90">${volunteerName}</p>`;
       row.appendChild(nameDiv);
 
       const hoursSpan = document.createElement('span');
@@ -798,7 +933,7 @@
     });
   };
 
-  const updateBusiestDay = (busiest) => {
+  const updateBusiestDay = (busiest, wowPercent = null) => {
     const heading = Array.from(document.querySelectorAll('h3')).find(
       (el) => el.textContent.trim() === 'Busiest Day'
     );
@@ -811,9 +946,11 @@
     if (title) title.textContent = busiest.label || '—';
     if (subtitle) subtitle.textContent = `${formatHours(busiest.hours)} hours logged`;
     if (wowPill) {
-      if (!busiest.hours) {
+      if (!Number.isFinite(wowPercent) || wowPercent <= 0) {
         wowPill.classList.add('hidden');
       } else {
+        const rounded = Math.round(wowPercent * 10) / 10;
+        wowPill.textContent = `+${rounded}% WoW`;
         wowPill.classList.remove('hidden');
       }
     }
@@ -822,7 +959,7 @@
     }
   };
 
-  const updateAvgHours = (avgHours) => {
+  const updateAvgHours = (avgHours, deltaPercent = null) => {
     const heading = Array.from(document.querySelectorAll('h3')).find(
       (el) => el.textContent.trim() === 'Avg Volunteer Hours / Week'
     );
@@ -832,9 +969,20 @@
     const pill = card?.querySelector('span.rounded-full');
     if (value) value.textContent = `${formatHours(avgHours)} hrs`;
     if (pill) {
-      if (!avgHours) {
+      if (!Number.isFinite(deltaPercent)) {
         pill.classList.add('hidden');
       } else {
+        const rounded = Math.round(deltaPercent * 10) / 10;
+        const sign = rounded > 0 ? '+' : '';
+        pill.textContent = `${sign}${rounded}%`;
+        pill.className = 'rounded-full px-3 py-1 text-sm font-semibold';
+        if (rounded > 0) {
+          pill.classList.add('bg-success-50', 'text-success-600', 'dark:bg-success-500/15', 'dark:text-success-500');
+        } else if (rounded < 0) {
+          pill.classList.add('bg-error-50', 'text-error-600', 'dark:bg-error-500/15', 'dark:text-error-500');
+        } else {
+          pill.classList.add('bg-gray-100', 'text-gray-700', 'dark:bg-gray-800', 'dark:text-gray-200');
+        }
         pill.classList.remove('hidden');
       }
     }
@@ -932,12 +1080,16 @@
     const table = resolveTableFromHeading(heading);
     const tbody = table?.querySelector('tbody');
     if (!tbody) return;
+    const thead = table.querySelector('thead');
+    if (thead) {
+      thead.classList.remove('border-b', 'border-y', 'border-gray-100', 'dark:border-gray-800', 'dark:border-white/[0.05]');
+      thead.style.border = 'none';
+    }
     const headers = table.querySelectorAll('thead th');
-    if (headers.length >= 4) {
+    if (headers.length >= 3) {
       headers[0].textContent = 'Volunteer';
-      headers[1].textContent = 'Organization';
-      headers[2].textContent = 'Hours';
-      headers[3].textContent = 'Status';
+      headers[1].textContent = 'Hours';
+      headers[2].textContent = 'Status';
     }
     tbody.innerHTML = '';
 
@@ -945,7 +1097,7 @@
       const row = document.createElement('tr');
       const cell = document.createElement('td');
       cell.className = 'px-4 py-6 text-sm text-gray-500';
-      cell.colSpan = 4;
+      cell.colSpan = 3;
       cell.textContent = 'No pending requests yet.';
       row.appendChild(cell);
       tbody.appendChild(row);
@@ -963,8 +1115,7 @@
         log.email ||
         'Volunteer';
       const task = log.site || 'Volunteer session';
-      const orgName = log.organization_name || log.organization_id || '—';
-      const statusMeta = getApprovalStatusMeta(log.approve);
+      const statusMeta = getApprovalStatusMeta(resolveLogStatusValue(log));
 
       const nameCell = document.createElement('td');
       nameCell.className = 'px-4 py-4';
@@ -974,11 +1125,6 @@
           <span class="text-gray-500 text-theme-sm dark:text-gray-400">${task}</span>
         </div>`;
       row.appendChild(nameCell);
-
-      const orgCell = document.createElement('td');
-      orgCell.className = 'px-4 py-4 text-gray-500 text-theme-sm dark:text-gray-400';
-      orgCell.textContent = orgName;
-      row.appendChild(orgCell);
 
       const hoursCell = document.createElement('td');
       hoursCell.className = 'px-4 py-4 text-gray-500 text-theme-sm dark:text-gray-400';
@@ -991,10 +1137,12 @@
       const statusWrapper = document.createElement('div');
       statusWrapper.className = 'flex flex-col gap-2';
 
-      const statusBadge = document.createElement('span');
-      statusBadge.className = `inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusMeta.className}`;
-      statusBadge.textContent = statusMeta.label;
-      statusWrapper.appendChild(statusBadge);
+      if (statusMeta.label !== 'Pending') {
+        const statusBadge = document.createElement('span');
+        statusBadge.className = `inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusMeta.className}`;
+        statusBadge.textContent = statusMeta.label;
+        statusWrapper.appendChild(statusBadge);
+      }
 
       const actionsWrapper = document.createElement('div');
       actionsWrapper.className = 'flex gap-2';
@@ -1023,6 +1171,15 @@
     const heading = Array.from(document.querySelectorAll('h3')).find(
       (el) => el.textContent.trim() === 'Volunteers'
     );
+    if (heading) {
+      heading.className = 'text-xl font-semibold text-gray-800 dark:text-white/90 sm:text-2xl';
+      const titleWrap = heading.closest('div');
+      if (titleWrap) {
+        titleWrap.classList.add('flex', 'flex-col', 'gap-3', 'sm:flex-row', 'sm:items-center', 'sm:justify-between');
+        titleWrap.classList.remove('border-b', 'border-gray-100', 'dark:border-gray-800');
+        titleWrap.style.borderBottom = 'none';
+      }
+    }
     const table = resolveTableFromHeading(heading);
     const tbody = table?.querySelector('tbody');
     if (!tbody) return;
@@ -1059,10 +1216,15 @@
 
       const nameCell = document.createElement('td');
       nameCell.className = 'px-4 py-4';
+      const historyUrl = `/admin/volunteers/index.html?volunteer=${encodeURIComponent(volunteerName)}`
+        + `&id=${encodeURIComponent(vol.id || vol.userId || '')}`
+        + `&email=${encodeURIComponent(vol.email || '')}`;
       nameCell.innerHTML = `
         <div>
-          <p class="font-semibold text-gray-800 dark:text-white/90">${volunteerName}</p>
-          <span class="text-gray-500 text-theme-sm dark:text-gray-400">${vol.email}</span>
+          <a class="font-semibold text-brand-500 underline underline-offset-2" href="${historyUrl}">
+            ${volunteerName}
+          </a>
+          <span class="block text-gray-500 text-theme-sm dark:text-gray-400">${vol.email}</span>
         </div>`;
       row.appendChild(nameCell);
 
@@ -1083,11 +1245,168 @@
 
       const lastDateCell = document.createElement('td');
       lastDateCell.className = 'px-4 py-4 text-gray-500 text-theme-sm dark:text-gray-400';
-      lastDateCell.textContent = vol.lastDate || '—';
+      lastDateCell.textContent = formatLegacyDate(vol.lastDate);
       row.appendChild(lastDateCell);
 
       tbody.appendChild(row);
     });
+  };
+
+  const formatLegacyDate = (value) => {
+    if (!value) return '—';
+    const raw = String(value).trim();
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(raw)) {
+      return raw;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return '—';
+    return parsed.toLocaleDateString('en-US');
+  };
+
+  const matchesHistoryVolunteer = (log) => {
+    if (!historyState.active) return false;
+    const identity = getVolunteerIdentity(log);
+    const email = String(identity.email || '').toLowerCase();
+    const nameKey = String(identity.name || '').toLowerCase();
+    if (historyState.id && identity.id === historyState.id) return true;
+    if (historyState.email && email === historyState.email.toLowerCase()) return true;
+    if (historyState.name && nameKey === historyState.name.toLowerCase()) return true;
+    return false;
+  };
+
+  const downloadVolunteerHistoryCsv = (logs, label) => {
+    const rows = [
+      ['Task', 'Hours', 'Date', 'Time', 'Status'],
+    ];
+    logs.forEach((log) => {
+      rows.push([
+        log.site || log.event || log.event_name || 'Volunteer session',
+        formatHours(getLogHours(log)),
+        log.date || formatLegacyDate(getLogTimestamp(log)),
+        log.time || '—',
+        normalizeStatus(resolveLogStatusValue(log)) || 'pending',
+      ]);
+    });
+    const csv = rows
+      .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const safeLabel = (label || 'volunteer').replace(/\s+/g, '-').toLowerCase();
+    link.href = url;
+    link.download = `nexolink-${safeLabel}-history.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const renderVolunteerHistoryView = (logs = []) => {
+    if (!historyState.active) return;
+    if (!window.location.pathname.includes('/admin/volunteers')) return;
+    const heading = Array.from(document.querySelectorAll('h3')).find((el) => {
+      const text = el.textContent.trim();
+      return text === 'Volunteers' || text.startsWith('Volunteer History');
+    });
+    if (!heading) return;
+    const card = heading.closest('div.rounded-2xl') || heading.closest('div');
+    if (!card) return;
+    const name = historyState.name || historyState.email || 'Volunteer';
+
+    if (!card.dataset.volunteerHistory) {
+      card.dataset.volunteerHistory = 'true';
+      card.innerHTML = `
+        <div class="px-6 pt-5 pb-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 class="text-xl font-semibold text-gray-800 dark:text-white/90 sm:text-2xl">Volunteer History: ${name}</h3>
+              <p class="mt-1 text-gray-500 text-theme-sm dark:text-gray-400">Approved hours and tasks for this volunteer.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <a class="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-theme-sm font-medium text-gray-700 shadow-theme-xs transition hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03] dark:hover:text-white" href="/admin/volunteers/index.html">
+                Back
+              </a>
+              <button type="button" class="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-theme-sm font-semibold text-white shadow-theme-xs hover:bg-brand-600" data-volunteer-history-download>
+                Download
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="border-t border-gray-100 dark:border-gray-800" style="border-top: none;">
+          <div class="px-6 pb-8 pt-2">
+            <div class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/[0.05] dark:bg-white/[0.03] w-full">
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                  <thead class="border-y border-gray-100 text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                    <tr>
+                      <th class="px-4 py-4 font-medium w-[45%]">Task</th>
+                      <th class="px-4 py-4 font-medium w-[20%]">Hours</th>
+                      <th class="px-4 py-4 font-medium w-[20%]">Date</th>
+                      <th class="px-4 py-4 font-medium w-[15%]">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-gray-800" data-volunteer-history-body></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const body = card.querySelector('[data-volunteer-history-body]');
+    if (!body) return;
+    const filtered = logs.filter(matchesHistoryVolunteer);
+    body.innerHTML = '';
+
+    if (!filtered.length) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.className = 'px-4 py-6 text-sm text-gray-500';
+      cell.colSpan = 4;
+      cell.textContent = 'No history yet.';
+      row.appendChild(cell);
+      body.appendChild(row);
+    } else {
+      filtered
+        .sort((a, b) => getLogTimestamp(b) - getLogTimestamp(a))
+        .forEach((log) => {
+          const row = document.createElement('tr');
+          row.className = 'text-gray-700 dark:text-gray-300';
+
+          const taskCell = document.createElement('td');
+          taskCell.className = 'px-4 py-4 font-semibold text-gray-800 dark:text-white/90';
+          taskCell.textContent = log.site || log.event || log.event_name || 'Volunteer session';
+          row.appendChild(taskCell);
+
+          const hoursCell = document.createElement('td');
+          hoursCell.className = 'px-4 py-4 text-gray-500 text-theme-sm dark:text-gray-400';
+          hoursCell.textContent = `${formatHours(getLogHours(log))} hrs`;
+          row.appendChild(hoursCell);
+
+          const dateCell = document.createElement('td');
+          dateCell.className = 'px-4 py-4 text-gray-500 text-theme-sm dark:text-gray-400';
+          dateCell.textContent = formatLegacyDate(log.date || getLogTimestamp(log));
+          row.appendChild(dateCell);
+
+          const statusCell = document.createElement('td');
+          statusCell.className = 'px-4 py-4 text-gray-500 text-theme-sm dark:text-gray-400';
+          statusCell.textContent = normalizeStatus(resolveLogStatusValue(log)) || 'pending';
+          row.appendChild(statusCell);
+
+          body.appendChild(row);
+        });
+    }
+
+    const downloadBtn = card.querySelector('[data-volunteer-history-download]');
+    if (downloadBtn && !downloadBtn.dataset.downloadBound) {
+      downloadBtn.dataset.downloadBound = 'true';
+      downloadBtn.addEventListener('click', () => {
+        const list = logs.filter(matchesHistoryVolunteer);
+        downloadVolunteerHistoryCsv(list, name);
+      });
+    }
   };
 
   const updateAdminEmail = (email) => {
@@ -1108,15 +1427,11 @@
     const percentNode = card.querySelector('p.text-4xl, p.text-3xl, p.text-2xl');
     if (percentNode) percentNode.textContent = `${Math.round(percent)}%`;
     const description = card.querySelector('p.text-gray-500, p.text-sm');
-    if (description) description.textContent = percent ? description.textContent : 'No volunteer activity yet.';
+    description?.remove();
 
     const pill = card.querySelector('span.rounded-full');
     if (pill) {
-      if (!approved) {
-        pill.classList.add('hidden');
-      } else {
-        pill.classList.remove('hidden');
-      }
+      pill.classList.add('hidden');
     }
 
     const valueNodes = card.querySelectorAll('span.font-semibold, p.font-semibold');
@@ -1128,41 +1443,13 @@
 
     updateRadialChartInCard('Monthly Impact Goal', percent);
 
-    if (!approved && !goal && !today) {
-      const statBlocks = Array.from(card.querySelectorAll('div')).filter((node) => {
-        const label = node.querySelector('p');
-        return label && ['Goal', 'Approved', 'Today'].includes(label.textContent.trim());
-      });
-      statBlocks.forEach((block) => {
-        block.querySelectorAll('svg').forEach((svg) => svg.classList.add('hidden'));
-      });
-    }
-  };
-
-  const updateChartCardEmptyState = (title, message) => {
-    const heading = Array.from(document.querySelectorAll('h3')).find(
-      (el) => el.textContent.trim() === title
-    );
-    if (!heading) return;
-    const card = heading.closest('div.rounded-2xl');
-    if (!card) return;
-    const chartWrapper = card.querySelector('.custom-scrollbar') || card.querySelector('.overflow-x-auto');
-    if (!chartWrapper) return;
-    const hint = message ? `<div class="text-xs text-gray-400 dark:text-gray-500 mt-2">${message}</div>` : '';
-    chartWrapper.innerHTML = `
-      <div class="p-4">
-        <div class="animate-pulse space-y-3">
-          <div class="h-3 w-3/5 rounded-full bg-gray-100 dark:bg-gray-800"></div>
-          <div class="h-28 rounded-2xl bg-gray-100 dark:bg-gray-800"></div>
-          <div class="flex gap-2">
-            <div class="h-2 w-16 rounded-full bg-gray-100 dark:bg-gray-800"></div>
-            <div class="h-2 w-24 rounded-full bg-gray-100 dark:bg-gray-800"></div>
-            <div class="h-2 w-12 rounded-full bg-gray-100 dark:bg-gray-800"></div>
-          </div>
-        </div>
-        ${hint}
-      </div>
-    `;
+    const statBlocks = Array.from(card.querySelectorAll('div')).filter((node) => {
+      const label = node.querySelector('p');
+      return label && ['Goal', 'Approved', 'Today'].includes(label.textContent.trim());
+    });
+    statBlocks.forEach((block) => {
+      block.querySelectorAll('svg').forEach((svg) => svg.remove());
+    });
   };
 
   const getApexChartInCard = (card) => {
@@ -1171,13 +1458,135 @@
     return instances.find((chart) => chart?.el && card.contains(chart.el)) || null;
   };
 
+  const waitForApexChartInCard = (card, callback) => {
+    if (!card || card.dataset.apexWait) return;
+    card.dataset.apexWait = 'true';
+    let attempts = 0;
+    const tick = () => {
+      const chart = getApexChartInCard(card);
+      if (chart) {
+        delete card.dataset.apexWait;
+        callback(chart);
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 30) {
+        delete card.dataset.apexWait;
+        return;
+      }
+      setTimeout(tick, 200);
+    };
+    setTimeout(tick, 200);
+  };
+
+  const resolveWeeklyHoursCard = () => {
+    const heading = Array.from(document.querySelectorAll('h3')).find(
+      (el) => ['Weekly Volunteer Hours', 'Monthly Volunteer Hours'].includes(el.textContent.trim())
+    );
+    if (!heading) return null;
+    heading.textContent = 'Weekly Volunteer Hours';
+    const card = heading.closest('div.rounded-2xl') || heading.closest('div');
+    const menuBtn = card?.querySelector('button.dropdown-toggle');
+    if (menuBtn) menuBtn.remove();
+    return card;
+  };
+
+  const ensureWeeklyNav = (card, offset) => {
+    const header = card?.querySelector('div.flex.items-center.justify-between');
+    if (!header) return;
+    if (!header.querySelector('[data-week-nav]')) {
+      const nav = document.createElement('div');
+      nav.dataset.weekNav = 'true';
+      nav.className = 'flex items-center gap-2';
+      nav.innerHTML = `
+        <span class="text-xs font-semibold text-gray-500 dark:text-gray-400" data-week-range></span>
+        <button type="button" class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300" data-week-prev>
+          Back
+        </button>
+        <button type="button" class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300" data-week-next>
+          Next
+        </button>
+      `;
+      header.appendChild(nav);
+    }
+    const range = header.querySelector('[data-week-range]');
+    if (range) range.textContent = formatWeekRange(offset);
+    const prev = header.querySelector('[data-week-prev]');
+    const next = header.querySelector('[data-week-next]');
+    if (prev && !prev.dataset.bound) {
+      prev.dataset.bound = 'true';
+      prev.addEventListener('click', () => {
+        weeklyChartState.offset += 1;
+        weeklyChartState.totals = buildWeeklyTotalsForOffset(
+          weeklyChartState.logs,
+          weeklyChartState.offset
+        );
+        updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset);
+      });
+    }
+    if (next && !next.dataset.bound) {
+      next.dataset.bound = 'true';
+      next.addEventListener('click', () => {
+        weeklyChartState.offset = Math.max(0, weeklyChartState.offset - 1);
+        weeklyChartState.totals = buildWeeklyTotalsForOffset(
+          weeklyChartState.logs,
+          weeklyChartState.offset
+        );
+        updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset);
+      });
+    }
+  };
+
+  const updateWeeklyHoursCard = (weeklyTotals, offset = 0, attempt = 0) => {
+    const card = resolveWeeklyHoursCard();
+    if (!card) return false;
+    ensureWeeklyNav(card, offset);
+    if (!window.ApexCharts?.exec) {
+      renderChartFallback(
+        'weekly-volunteer-hours',
+        WEEK_LABELS,
+        [{ name: 'Hours', data: weeklyTotals.map((value) => Number(value.toFixed(1))) }]
+      );
+      return true;
+    }
+    const chart = getApexChartInCard(card);
+    if (!chart) {
+      if (attempt < 2) {
+        setTimeout(() => updateWeeklyHoursCard(weeklyTotals, offset, attempt + 1), 400);
+      } else {
+        waitForApexChartInCard(card, () => updateWeeklyHoursCard(weeklyTotals, offset));
+      }
+      return false;
+    }
+    try {
+      chart.updateOptions({
+        xaxis: { categories: WEEK_LABELS },
+        stroke: { width: 4, colors: ['transparent'] },
+      }, false, true, false);
+      chart.updateSeries(
+        [{ name: 'Volunteer Hours', data: weeklyTotals.map((value) => Number(value.toFixed(1))) }],
+        true
+      );
+      ensureWeeklyNav(card, offset);
+      return true;
+    } catch (error) {
+      console.warn('Weekly hours chart update failed', error);
+      return false;
+    }
+  };
+
   const updateApexChartInCard = (title, series, categories, empty = false) => {
     const heading = Array.from(document.querySelectorAll('h3')).find(
       (el) => el.textContent.trim() === title
     );
     const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
     const chart = getApexChartInCard(card);
-    if (!chart) return false;
+    if (!chart) {
+      waitForApexChartInCard(card, () => {
+        updateApexChartInCard(title, series, categories, empty);
+      });
+      return false;
+    }
     try {
       if (categories?.length) {
         chart.updateOptions({
@@ -1202,7 +1611,12 @@
     );
     const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
     const chart = getApexChartInCard(card);
-    if (!chart) return false;
+    if (!chart) {
+      waitForApexChartInCard(card, () => {
+        updateRadialChartInCard(title, percent);
+      });
+      return false;
+    }
     const safe = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
     try {
       chart.updateSeries([safe], true);
@@ -1213,71 +1627,570 @@
     }
   };
 
-  const scrubDashboardForEmptyState = () => {
-    updateImpactGoalCard({ percent: 0, goal: 0, approved: 0, today: 0 });
-    updateChartCardEmptyState('Monthly Volunteer Hours', 'Data will appear as volunteers log hours.');
-    updateChartCardEmptyState('Volunteer Engagement', 'Engagement trends will appear once sessions are recorded.');
+  const parseImpactGoalValue = (data) => {
+    const raw = data?.monthlyImpactGoalHours
+      ?? data?.monthly_goal_hours
+      ?? data?.monthlyImpactGoal
+      ?? data?.impact_goal
+      ?? data?.impactGoal
+      ?? data?.goalHours
+      ?? null;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.round(parsed);
+    }
+    return null;
   };
 
-  const updateBillingSummary = ({
-    invoiceCount = 0,
-    statusText = 'Not active',
-    renewsAt = null,
-    trialEndsAt = null,
-    planName = null,
-    amountLabel = null,
-    hasSubscription = false,
-    cancelAtPeriodEnd = false,
-  } = {}) => {
-    const invoiceValue = document.querySelector('[data-billing-invoices]');
-    if (invoiceValue) invoiceValue.textContent = `${invoiceCount}`;
+  const resolveOrgSettingsKey = (orgId, orgCode) => {
+    if (orgId) return String(orgId);
+    if (orgCode) return String(orgCode).toUpperCase();
+    return null;
+  };
 
-    const statusValue = document.querySelector('[data-billing-status]');
-    if (statusValue) statusValue.textContent = statusText || 'Not active';
+  const registerImpactGoalListener = (db, orgId, orgCode) => {
+    const key = resolveOrgSettingsKey(orgId, orgCode);
+    if (!db || !key) return null;
+    return db.collection('organization_settings').doc(key).onSnapshot((snap) => {
+      const data = snap.exists ? snap.data() || {} : {};
+      const nextGoal = parseImpactGoalValue(data) ?? DEFAULT_IMPACT_GOAL;
+      impactGoalState.goal = nextGoal;
+      const percent = nextGoal
+        ? Math.round((impactGoalState.approved / nextGoal) * 100)
+        : 0;
+      impactGoalState.percent = percent;
+      updateImpactGoalCard({
+        percent,
+        goal: nextGoal,
+        approved: impactGoalState.approved,
+        today: impactGoalState.today,
+      });
+    }, (error) => {
+      console.warn('Impact goal listener failed', error);
+    });
+  };
 
-    const renewValue = document.querySelector('[data-billing-renew]');
-    if (renewValue) renewValue.textContent = renewsAt ? formatDateShort(renewsAt) : '—';
-
-    const trialValue = document.querySelector('[data-billing-trial]');
-    const trialRow = document.querySelector('[data-billing-trial-row]');
-    if (trialValue) trialValue.textContent = trialEndsAt ? formatDateShort(trialEndsAt) : '—';
-    if (trialRow) {
-      trialRow.classList.toggle('hidden', !trialEndsAt);
+  const saveImpactGoalValue = async (value) => {
+    if (!Number.isFinite(value) || value < 0) return;
+    const db = impactGoalState.db;
+    const key = impactGoalState.orgKey;
+    if (!db || !key) {
+      impactGoalState.goal = Math.round(value);
+      return;
     }
+    try {
+      await db.collection('organization_settings').doc(key).set({
+        monthlyImpactGoalHours: Math.round(value),
+        orgId: impactGoalState.orgId || null,
+        orgCode: impactGoalState.orgCode || null,
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+        updatedBy: impactGoalState.user?.uid || null,
+      }, { merge: true });
+    } catch (error) {
+      console.warn('Unable to save impact goal', error);
+    }
+  };
 
-    const planValue = document.querySelector('[data-billing-plan]');
-    if (planValue) planValue.textContent = planName || '—';
+  const bindImpactGoalEditor = () => {
+    const heading = Array.from(document.querySelectorAll('h3')).find(
+      (el) => el.textContent.trim() === 'Monthly Impact Goal'
+    );
+    const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
+    if (!card) return;
+    const editButton = card.querySelector('button.dropdown-toggle');
+    if (!editButton || editButton.dataset.impactGoalBound) return;
+    editButton.dataset.impactGoalBound = 'true';
+    editButton.classList.add('relative');
 
-    const amountValue = document.querySelector('[data-billing-amount]');
-    if (amountValue) amountValue.textContent = amountLabel || '—';
+    const ensureMenu = () => {
+      let menu = card.querySelector('[data-impact-goal-menu]');
+      if (menu) return menu;
+      menu = document.createElement('div');
+      menu.dataset.impactGoalMenu = 'true';
+      menu.className = [
+        'absolute', 'right-0', 'mt-3', 'w-96', 'max-h-96', 'rounded-xl', 'border',
+        'border-gray-200', 'bg-white', 'p-4', 'shadow-lg', 'dark:border-gray-800',
+        'dark:bg-gray-900', 'hidden', 'z-[999999]'
+      ].join(' ');
+      menu.innerHTML = `
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Set Monthly Goal</p>
+        <input type="number" min="0" step="1" inputmode="numeric" class="mt-3 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200" data-impact-goal-input />
+        <button type="button" class="mt-3 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-600" data-impact-goal-save>
+          Save
+        </button>
+      `;
+      editButton.parentElement?.appendChild(menu);
+      const input = menu.querySelector('[data-impact-goal-input]');
+      const saveBtn = menu.querySelector('[data-impact-goal-save]');
+      if (saveBtn && input) {
+        saveBtn.addEventListener('click', () => {
+          const parsed = Number(input.value);
+          if (!Number.isFinite(parsed) || parsed < 0) return;
+          const nextGoal = Math.round(parsed);
+          saveImpactGoalValue(nextGoal);
+          impactGoalState.goal = nextGoal;
+          const percent = nextGoal
+            ? Math.round((impactGoalState.approved / nextGoal) * 100)
+            : 0;
+          impactGoalState.percent = percent;
+          updateImpactGoalCard({
+            percent,
+            goal: nextGoal,
+            approved: impactGoalState.approved,
+            today: impactGoalState.today,
+          });
+          menu.classList.add('hidden');
+        });
+      }
+      document.addEventListener('click', (event) => {
+        if (!menu.contains(event.target) && !editButton.contains(event.target)) {
+          menu.classList.add('hidden');
+        }
+      });
+      return menu;
+    };
 
-    const cancelButton = document.querySelector('[data-cancel-subscription]');
-    if (cancelButton) {
-      cancelButton.classList.toggle('hidden', !hasSubscription);
-      cancelButton.textContent = cancelAtPeriodEnd ? 'Cancellation scheduled' : 'Cancel subscription';
-      if (cancelAtPeriodEnd) {
-        cancelButton.setAttribute('disabled', 'true');
-        cancelButton.classList.add('opacity-60', 'cursor-not-allowed');
+    editButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const menu = ensureMenu();
+      const input = menu.querySelector('[data-impact-goal-input]');
+      if (input) input.value = String(impactGoalState.goal ?? DEFAULT_IMPACT_GOAL);
+      menu.classList.toggle('hidden');
+    });
+  };
+
+  const renderImpactChartsZeroState = () => {
+    const weeklyZeros = Array.from({ length: 7 }, () => 0);
+    weeklyChartState.logs = [];
+    weeklyChartState.totals = weeklyZeros;
+    updateApexChart(
+      'weekly-volunteer-hours',
+      [{ name: 'Hours', data: weeklyZeros }],
+      WEEK_LABELS,
+      false
+    );
+    updateWeeklyHoursCard(weeklyZeros, weeklyChartState.offset, 0);
+    if (!engagementState.data) {
+      const monthly = buildMonthlyTotals([]);
+      engagementState.data = {
+        monthly: {
+          labels: monthly.labels,
+          hours: monthly.totals,
+          volunteers: monthly.totals.map(() => 0),
+        },
+        quarterly: {
+          labels: buildQuarterlyTotals([]).labels,
+          hours: buildQuarterlyTotals([]).totals,
+          volunteers: buildQuarterlyTotals([]).totals.map(() => 0),
+        },
+        annual: {
+          labels: buildYearlyTotals([]).labels,
+          hours: buildYearlyTotals([]).totals,
+          volunteers: buildYearlyTotals([]).totals.map(() => 0),
+        },
+      };
+    }
+    const data = engagementState.data[engagementState.period];
+    if (data) {
+      updateApexChartInCard(
+        'Impact Over the Year',
+        [
+          { name: 'New Volunteers', data: data.volunteers.map(() => 0) },
+          { name: 'Hours Approved', data: data.hours.map(() => 0) },
+        ],
+        data.labels,
+        false
+      );
+    }
+  };
+
+  const updateEngagementToggleUi = (period) => {
+    const heading = Array.from(document.querySelectorAll('h3')).find(
+      (el) => ['Impact Over the Year', 'Volunteer Engagement'].includes(el.textContent.trim())
+    );
+    const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
+    if (!card) return;
+    const buttons = Array.from(card.querySelectorAll('button[data-engagement-toggle]'));
+    buttons.forEach((button) => {
+      const isActive = button.dataset.engagementToggle === period;
+      button.classList.toggle('shadow-theme-xs', isActive);
+      button.classList.toggle('text-gray-900', isActive);
+      button.classList.toggle('dark:text-white', isActive);
+      button.classList.toggle('bg-white', isActive);
+      button.classList.toggle('dark:bg-gray-800', isActive);
+      if (!isActive) {
+        button.classList.add('text-gray-500', 'dark:text-gray-400');
+        button.classList.remove('bg-white', 'dark:bg-gray-800');
+      }
+    });
+  };
+
+  const updateEngagementCopy = (period) => {
+    const heading = Array.from(document.querySelectorAll('h3')).find(
+      (el) => ['Impact Over the Year', 'Volunteer Engagement'].includes(el.textContent.trim())
+    );
+    if (!heading) return;
+    heading.textContent = 'Impact Over the Year';
+    const subtitle = heading.parentElement?.querySelector('p');
+    if (!subtitle) return;
+    const copy = {
+      monthly: 'Monthly impact from new volunteers and approved hours.',
+      quarterly: 'Quarterly impact from new volunteers and approved hours.',
+      annual: 'Annual impact from new volunteers and approved hours.',
+    };
+    subtitle.textContent = copy[period] || copy.monthly;
+  };
+
+  const applyEngagementChart = (period, attempt = 0) => {
+    const data = engagementState.data?.[period];
+    if (!data) {
+      updateEngagementToggleUi(period);
+      updateEngagementCopy(period);
+      return;
+    }
+    const isEmpty = false;
+    const updatedCard = updateApexChartInCard(
+      'Impact Over the Year',
+      [
+        { name: 'New Volunteers', data: data.volunteers },
+        { name: 'Hours Approved', data: data.hours.map((value) => Number(value.toFixed(1))) },
+      ],
+      data.labels,
+      isEmpty
+    );
+    updateApexChart(
+      'volunteer-engagement',
+      [
+        { name: 'New Volunteers', data: data.volunteers },
+        { name: 'Hours Approved', data: data.hours.map((value) => Number(value.toFixed(1))) },
+      ],
+      data.labels,
+      isEmpty
+    );
+    if (!updatedCard && attempt < 4) {
+      setTimeout(() => applyEngagementChart(period, attempt + 1), 400);
+    }
+    updateEngagementToggleUi(period);
+    updateEngagementCopy(period);
+  };
+
+  const bindEngagementToggleButtons = () => {
+    const heading = Array.from(document.querySelectorAll('h3')).find(
+      (el) => ['Impact Over the Year', 'Volunteer Engagement'].includes(el.textContent.trim())
+    );
+    const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
+    if (!card) return;
+    const buttons = Array.from(card.querySelectorAll('button')).filter((button) => {
+      const label = button.textContent.trim().toLowerCase();
+      return ['monthly', 'quarterly', 'annually'].includes(label);
+    });
+    buttons.forEach((button) => {
+      const label = button.textContent.trim().toLowerCase();
+      const period = label === 'annually' ? 'annual' : label;
+      if (button.dataset.engagementToggleBound) return;
+      button.dataset.engagementToggle = period;
+      button.dataset.engagementToggleBound = 'true';
+      button.addEventListener('click', () => {
+        engagementState.period = period;
+        applyEngagementChart(period);
+      });
+    });
+    updateEngagementToggleUi(engagementState.period);
+  };
+
+  const bindEngagementToggleDelegate = () => {
+    if (document.body.dataset.engagementToggleReady) return;
+    document.body.dataset.engagementToggleReady = 'true';
+    document.addEventListener('click', (event) => {
+      const button = event.target?.closest?.('button');
+      if (!button) return;
+      const label = button.textContent?.trim?.().toLowerCase?.();
+      if (!label || !['monthly', 'quarterly', 'annually'].includes(label)) return;
+      const heading = Array.from(document.querySelectorAll('h3')).find(
+        (el) => ['Impact Over the Year', 'Volunteer Engagement'].includes(el.textContent.trim())
+      );
+      const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
+      if (!card || !card.contains(button)) return;
+      const period = label === 'annually' ? 'annual' : label;
+      engagementState.period = period;
+      applyEngagementChart(period);
+    });
+  };
+
+  const BILLING_PRICE_SCHOOL = 'price_1SXZMfH9sPZuClpwNAJK5Uj2';
+  const BILLING_PRICE_SCHOOL_YEARLY = 'price_1ShyF8HbGg7F5Ky7xTVwCMYk';
+  const SUPPORT_EMAIL = 'support@nexolink.app';
+
+  const formatMoney = (amountCents, currency = 'usd') => {
+    if (typeof amountCents !== 'number') return '—';
+    const dollars = amountCents / 100;
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: String(currency || 'usd').toUpperCase(),
+      maximumFractionDigits: dollars % 1 === 0 ? 0 : 2,
+    }).format(dollars);
+  };
+
+  const normalizeBillingDate = (value) => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'number') return new Date(value < 1e12 ? value * 1000 : value);
+    if (value?.toDate) return value.toDate();
+    return null;
+  };
+
+  const resolvePlanInterval = (subscription) => {
+    const items = Array.isArray(subscription?.items?.data) ? subscription.items.data : [];
+    const first = items[0] || {};
+    return subscription?.plan?.interval
+      || subscription?.plan_interval
+      || subscription?.interval
+      || first?.price?.recurring?.interval
+      || first?.plan?.interval
+      || null;
+  };
+
+  const resolvePlanAmount = (subscription) => {
+    const items = Array.isArray(subscription?.items?.data) ? subscription.items.data : [];
+    const first = items[0] || {};
+    return subscription?.plan?.amount
+      ?? subscription?.planAmount
+      ?? subscription?.amount
+      ?? first?.price?.unit_amount
+      ?? null;
+  };
+
+  const resolvePlanCurrency = (subscription) => {
+    const items = Array.isArray(subscription?.items?.data) ? subscription.items.data : [];
+    const first = items[0] || {};
+    return subscription?.currency
+      || subscription?.plan?.currency
+      || first?.price?.currency
+      || 'usd';
+  };
+
+  const resolveNextBillingDate = (subscription) => {
+    const trialEnd = normalizeBillingDate(subscription?.trial_end || subscription?.trialEnd);
+    const periodEnd = normalizeBillingDate(subscription?.current_period_end || subscription?.currentPeriodEnd);
+    if (trialEnd) return trialEnd;
+    return periodEnd;
+  };
+
+  const resolvePlanKey = (subscription) => (
+    subscription?.planKey
+    || subscription?.plan_key
+    || subscription?.metadata?.plan_key
+    || null
+  );
+
+  const resolveSchoolPriceIds = () => ({
+    monthly: window.STRIPE_PRICE_SCHOOL || BILLING_PRICE_SCHOOL,
+    yearly: window.STRIPE_PRICE_SCHOOL_YEARLY || BILLING_PRICE_SCHOOL_YEARLY,
+  });
+
+  const buildCheckoutPayload = (planKey, billing) => {
+    if (planKey === 'school') {
+      const schoolPrices = resolveSchoolPriceIds();
+      if (billing === 'yearly') {
+        return { plan: 'school', priceId: schoolPrices.yearly };
+      }
+      return { plan: 'school', priceId: schoolPrices.monthly };
+    }
+    if (planKey === 'yearly') return { plan: 'yearly' };
+    if (planKey === 'monthly') return { plan: 'monthly' };
+    return { plan: planKey || 'monthly' };
+  };
+
+  const updateBillingRow = (card, labelText, valueText, newLabel) => {
+    const rows = Array.from(card.querySelectorAll('div.flex.items-center.justify-between'));
+    const row = rows.find((node) => node.textContent.includes(labelText));
+    if (!row) return;
+    const label = row.querySelector('span.text-gray-500');
+    const value = row.querySelector('span.font-semibold');
+    if (label && newLabel) label.textContent = newLabel;
+    if (value) value.textContent = valueText;
+  };
+
+  const ensureBillingRow = (card, labelText, valueText) => {
+    if (!card) return null;
+    const container = card.querySelector('.mt-6.space-y-4') || card.querySelector('.space-y-4');
+    if (!container) return null;
+    const rows = Array.from(container.querySelectorAll('div.flex.items-center.justify-between'));
+    let row = rows.find((node) => node.textContent.includes(labelText));
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/40';
+      row.innerHTML = `
+        <span class="text-gray-500 text-theme-sm dark:text-gray-400">${labelText}</span>
+        <span class="font-semibold text-gray-800 dark:text-white/90">${valueText}</span>
+      `;
+      container.appendChild(row);
+    } else {
+      const value = row.querySelector('span.font-semibold');
+      if (value) value.textContent = valueText;
+    }
+    return row;
+  };
+
+  const updateBillingPage = ({ subscription, invoices = [] }) => {
+    const planCard = Array.from(document.querySelectorAll('h3')).find(
+      (el) => el.textContent.trim() === 'Current Plan'
+    )?.closest('div.rounded-2xl');
+    const summaryCard = Array.from(document.querySelectorAll('h3')).find(
+      (el) => el.textContent.trim() === 'Billing Summary'
+    )?.closest('div.rounded-2xl');
+    if (!planCard || !summaryCard) return;
+
+    const hasSubscription = Boolean(subscription);
+    const statusRaw = String(subscription?.status || 'inactive').toLowerCase();
+    const cancelAtPeriodEnd = Boolean(subscription?.cancel_at_period_end || subscription?.cancelAtPeriodEnd);
+    const interval = resolvePlanInterval(subscription);
+    const amount = resolvePlanAmount(subscription);
+    const currency = resolvePlanCurrency(subscription);
+    const trialEnd = normalizeBillingDate(subscription?.trial_end || subscription?.trialEnd);
+    const periodEnd = normalizeBillingDate(subscription?.current_period_end || subscription?.currentPeriodEnd);
+    const nextBilling = resolveNextBillingDate(subscription);
+    const paidInvoices = invoices.filter((inv) => inv?.status === 'paid' || inv?.amountPaid > 0).length;
+
+    const planKey = resolvePlanKey(subscription);
+    const intervalLabel = planKey === 'school'
+      ? interval === 'year'
+        ? 'School Annual Plan'
+        : 'School Monthly Plan'
+      : interval === 'year'
+        ? 'Yearly Plan'
+        : interval === 'month'
+          ? 'Monthly Plan'
+          : interval
+            ? `${interval.charAt(0).toUpperCase()}${interval.slice(1)} Plan`
+            : 'Subscription';
+    const planName = !hasSubscription
+      ? 'No active plan'
+      : statusRaw === 'trialing'
+        ? `Trial · ${intervalLabel}`
+        : intervalLabel;
+
+    const planNameEl = planCard.querySelector('p.mt-1');
+    if (planNameEl) planNameEl.textContent = planName;
+
+    const priceEl = planCard.querySelector('p.text-2xl');
+    if (priceEl) {
+      if (!hasSubscription) {
+        priceEl.textContent = 'Select a plan to get started';
       } else {
-        cancelButton.removeAttribute('disabled');
-        cancelButton.classList.remove('opacity-60', 'cursor-not-allowed');
+        const priceLabel = amount != null
+          ? `${formatMoney(amount, currency)} / ${interval === 'year' ? 'year' : interval || 'month'}`
+          : '—';
+        priceEl.textContent = statusRaw === 'trialing' ? `${priceLabel} after trial` : priceLabel;
       }
     }
 
-    const emptyState = document.querySelector('[data-billing-empty]');
-    if (emptyState) {
-      emptyState.classList.toggle('hidden', hasSubscription);
+    const renewEl = planCard.querySelector('span.text-gray-500');
+    if (renewEl) {
+      if (!hasSubscription) {
+        renewEl.textContent = 'Complete checkout to activate billing.';
+      } else if (statusRaw === 'trialing' && trialEnd) {
+        const daysLeft = Math.max(0, Math.ceil((trialEnd - Date.now()) / (1000 * 60 * 60 * 24)));
+        renewEl.textContent = `Trial ends on ${trialEnd.toLocaleDateString()} (${daysLeft} day${daysLeft === 1 ? '' : 's'} left)`;
+      } else if (cancelAtPeriodEnd && periodEnd) {
+        renewEl.textContent = `Cancels on ${periodEnd.toLocaleDateString()}`;
+      } else if (nextBilling) {
+        renewEl.textContent = `Auto-renews on ${nextBilling.toLocaleDateString()}`;
+      } else {
+        renewEl.textContent = 'No renewal scheduled';
+      }
+    }
+
+    const statusPill = planCard.querySelector('span.rounded-full');
+    if (statusPill) {
+      let pillText = 'Inactive';
+      let pillClass = 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200';
+      if (!hasSubscription) {
+        pillText = 'Inactive';
+      } else if (statusRaw === 'trialing') {
+        pillText = 'Trial';
+        pillClass = 'bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400';
+      } else if (statusRaw === 'active') {
+        pillText = 'Active';
+        pillClass = 'bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500';
+      } else if (cancelAtPeriodEnd) {
+        pillText = 'Cancels Soon';
+        pillClass = 'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400';
+      } else if (statusRaw === 'canceled') {
+        pillText = 'Canceled';
+        pillClass = 'bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-500';
+      }
+      statusPill.textContent = pillText;
+      statusPill.className = `rounded-full px-3 py-1 text-sm font-semibold ${pillClass}`;
+    }
+
+    const actions = planCard.querySelector('.mt-6.flex.flex-wrap');
+    if (actions) {
+      actions.dataset.billingActionsReady = 'true';
+      const intervalKey = interval === 'year' ? 'yearly' : interval === 'month' ? 'monthly' : null;
+      const cancelDisabled = cancelAtPeriodEnd;
+      const schoolPrices = resolveSchoolPriceIds();
+      const schoolMonthlyEnabled = Boolean(schoolPrices.monthly);
+      const schoolYearlyEnabled = Boolean(schoolPrices.yearly);
+      if (!hasSubscription) {
+        actions.innerHTML = `
+          <button class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-brand-600" data-billing-upgrade="monthly">
+            Start Monthly
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-upgrade="yearly">
+            Start Yearly
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-plan-key="school" data-billing-plan-billing="monthly" ${schoolMonthlyEnabled ? '' : 'disabled'}>
+            Start School Monthly
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-plan-key="school" data-billing-plan-billing="yearly" ${schoolYearlyEnabled ? '' : 'disabled'}>
+            Start School Yearly
+          </button>
+        `;
+      } else {
+        actions.innerHTML = `
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-cancel-subscription ${cancelDisabled ? 'disabled' : ''}>
+            ${cancelDisabled ? 'Cancellation scheduled' : 'Cancel subscription'}
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-brand-600" data-billing-upgrade="yearly" ${intervalKey === 'yearly' && planKey !== 'school' ? 'disabled' : ''}>
+            ${intervalKey === 'yearly' && planKey !== 'school' ? 'Current Plan' : 'Switch to Yearly'}
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-upgrade="monthly" ${intervalKey === 'monthly' && planKey !== 'school' ? 'disabled' : ''}>
+            ${intervalKey === 'monthly' && planKey !== 'school' ? 'Current Plan' : 'Switch to Monthly'}
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-plan-key="school" data-billing-plan-billing="monthly" ${planKey === 'school' && intervalKey === 'monthly' ? 'disabled' : ''} ${schoolMonthlyEnabled ? '' : 'disabled'}>
+            ${planKey === 'school' && intervalKey === 'monthly' ? 'Current Plan' : 'Switch to School Monthly'}
+          </button>
+          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-plan-key="school" data-billing-plan-billing="yearly" ${planKey === 'school' && intervalKey === 'yearly' ? 'disabled' : ''} ${schoolYearlyEnabled ? '' : 'disabled'}>
+            ${planKey === 'school' && intervalKey === 'yearly' ? 'Current Plan' : 'Switch to School Yearly'}
+          </button>
+        `;
+        if (cancelDisabled) {
+          const cancelBtn = actions.querySelector('[data-cancel-subscription]');
+          cancelBtn?.classList.add('opacity-60', 'cursor-not-allowed');
+        }
+        actions.querySelectorAll('button[disabled]').forEach((btn) => {
+          btn.classList.add('opacity-60', 'cursor-not-allowed');
+        });
+      }
+    }
+
+    updateBillingRow(summaryCard, 'Invoices paid', `${paidInvoices}`, 'Total invoices paid');
+    updateBillingRow(summaryCard, 'Billing status', hasSubscription ? (statusRaw === 'trialing' ? 'Trial' : statusRaw || 'Inactive') : 'Inactive');
+    updateBillingRow(summaryCard, 'Support plan', SUPPORT_EMAIL, 'Support email');
+    ensureBillingRow(summaryCard, 'Total invoices paid', `${paidInvoices}`);
+    ensureBillingRow(summaryCard, 'Billing status', hasSubscription ? (statusRaw === 'trialing' ? 'Trial' : statusRaw || 'Inactive') : 'Inactive');
+    ensureBillingRow(summaryCard, 'Support email', SUPPORT_EMAIL);
+    ensureBillingRow(summaryCard, 'Next billing', nextBilling ? formatDateShort(nextBilling) : '—');
+    if (hasSubscription && amount != null && nextBilling) {
+      ensureBillingRow(summaryCard, 'Upcoming invoice', `${formatMoney(amount, currency)} on ${formatDateShort(nextBilling)}`);
+    } else {
+      ensureBillingRow(summaryCard, 'Upcoming invoice', '—');
     }
   };
 
-  const removeSupportPlanRow = () => {
-    const row = resolveLabelRow('Support plan');
-    if (row) {
-      row.remove();
-    }
-  };
-
-  const updateBillingInvoiceList = (invoices) => {
+  const updateBillingInvoiceList = (invoices, upcomingInvoice = null) => {
     const heading = Array.from(document.querySelectorAll('h3')).find(
       (el) => el.textContent.trim() === 'Billing Summary'
     );
@@ -1293,9 +2206,25 @@
     }
     list.innerHTML = '';
 
-    if (!invoices.length) {
+    if (!invoices.length && !upcomingInvoice) {
       list.innerHTML = '<p class="text-sm text-gray-500 dark:text-gray-400">No invoices yet.</p>';
       return;
+    }
+
+    if (upcomingInvoice) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between rounded-xl border border-dashed border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-300';
+      row.innerHTML = `
+        <div>
+          <p class="font-semibold text-gray-800 dark:text-white/90">Upcoming invoice</p>
+          <span class="text-xs text-gray-500 dark:text-gray-400">${upcomingInvoice.dateLabel || '—'}</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <span class="font-semibold text-gray-800 dark:text-white/90">${upcomingInvoice.amountLabel || '—'}</span>
+          <span class="text-xs font-semibold text-brand-500">Estimated</span>
+        </div>
+      `;
+      list.appendChild(row);
     }
 
     invoices.forEach((invoice) => {
@@ -1319,122 +2248,20 @@
     });
   };
 
-  const updateDownloadInvoiceButton = (invoices, portalHandler, hasSubscription) => {
-    const button = document.querySelector('[data-invoice-download]');
-    if (!button) return;
-    const latest = invoices[0];
-    const url = latest?.invoicePdf || latest?.hostedInvoiceUrl || null;
-    if (url) {
-      button.addEventListener('click', () => {
-        window.open(url, '_blank', 'noopener');
-      });
-      return;
-    }
-
-    if (hasSubscription && portalHandler) {
-      button.textContent = 'View upcoming invoice';
-      button.addEventListener('click', portalHandler);
-      return;
-    }
-
-    button.setAttribute('disabled', 'true');
-    button.classList.add('opacity-50', 'cursor-not-allowed');
-  };
-
   const getLogTimestamp = (log) => {
     if (log.created_at?.toDate) return log.created_at.toDate();
     if (log.created_at instanceof Date) return log.created_at;
     if (typeof log.created_at === 'number') return new Date(log.created_at);
+    if (log.date?.toDate) return log.date.toDate();
+    if (log.date instanceof Date) return log.date;
+    if (typeof log.date === 'number') return new Date(log.date);
     const parsed = parseMDYTime(log.date, log.time);
-    return parsed || new Date(0);
-  };
-
-  const collectVolunteers = (logs, users = [], options = {}) => {
-    const map = new Map();
-    const idIndex = new Map();
-    const emailIndex = new Map();
-    const now = Date.now();
-    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
-    const exclude = typeof options.exclude === 'function' ? options.exclude : null;
-
-    const addEntry = (key, entry) => {
-      if (!key || map.has(key)) return;
-      map.set(key, entry);
-      if (entry.id) idIndex.set(entry.id, entry);
-      if (entry.email) emailIndex.set(String(entry.email).toLowerCase(), entry);
-    };
-
-    users.forEach((user) => {
-      const identity = getUserIdentity(user);
-      if (exclude && exclude(identity, user)) return;
-      const email = String(user.email || '').toLowerCase();
-      const id = user.id || user.uid || user.user_id || '';
-      const name = user.firstName || user.name || (email ? email.split('@')[0] : 'Volunteer');
-      const role = normalizeRole(user.role || user.accessRole || user.type);
-      const joinedAt = resolveTimestamp(
-        user.createdAt || user.created_at || user.joined_at || user.joinedAt
-      );
-      const entry = {
-        id: id || undefined,
-        email: email || '—',
-        name: name || 'Volunteer',
-        role,
-        totalHours: 0,
-        last30Hours: 0,
-        lastTask: joinedAt ? 'Joined organization' : '',
-        lastDate: joinedAt ? formatDateShort(joinedAt) : '—',
-        lastTimestamp: joinedAt || 0,
-      };
-      const key = id || email || (name ? name.toLowerCase() : 'volunteer');
-      addEntry(key, entry);
-    });
-
-    logs.forEach((log) => {
-      const identity = getVolunteerIdentity(log);
-      if (exclude && exclude(identity, log)) return;
-      let entry = null;
-      if (identity.id && idIndex.has(identity.id)) entry = idIndex.get(identity.id);
-      if (!entry && identity.email && emailIndex.has(identity.email)) entry = emailIndex.get(identity.email);
-      if (!entry && identity.key && map.has(identity.key)) entry = map.get(identity.key);
-
-      if (!entry) {
-        const fallbackName = identity.name
-          || (identity.email ? identity.email.split('@')[0] : '')
-          || 'Volunteer';
-        entry = {
-          id: identity.id || undefined,
-          email: identity.email || '—',
-          name: fallbackName,
-          role: normalizeRole(log.role),
-          totalHours: 0,
-          last30Hours: 0,
-          lastTask: '',
-          lastDate: '—',
-          lastTimestamp: 0,
-        };
-        addEntry(identity.key || identity.id || identity.email || fallbackName.toLowerCase(), entry);
-      }
-
-      const status = normalizeStatus(log.approve);
-      const logDate = getLogTimestamp(log);
-      const logTimestamp = logDate?.getTime?.() || 0;
-      const hours = getLogHours(log);
-
-      if (status === 'approved' && entry.role !== 'org-admin') {
-        entry.totalHours += hours;
-        if (logTimestamp && logTimestamp >= thirtyDaysAgo) {
-          entry.last30Hours += hours;
-        }
-      }
-
-      if (logTimestamp && logTimestamp > entry.lastTimestamp) {
-        entry.lastTimestamp = logTimestamp;
-        entry.lastTask = log.site || log.event || log.event_name || entry.lastTask;
-        entry.lastDate = log.date || logDate.toLocaleDateString('en-US');
-      }
-    });
-
-    return Array.from(map.values()).sort((a, b) => b.totalHours - a.totalHours);
+    if (parsed) return parsed;
+    if (typeof log.date === 'string') {
+      const parsedIso = Date.parse(log.date);
+      if (!Number.isNaN(parsedIso)) return new Date(parsedIso);
+    }
+    return new Date(0);
   };
 
   const syncVolunteerHoursFromActivity = (activityLogs, baseVolunteers = [], options = {}) => {
@@ -1477,7 +2304,7 @@
 
       const entry = map.get(userId);
       const hours = parseFloat(log.hours_contributed ?? log.hours ?? 0) || 0;
-      const status = normalizeStatus(log.approve);
+      const status = normalizeStatus(resolveLogStatusValue(log));
       if (status === 'approved') {
         entry.totalHours += hours;
       }
@@ -1507,7 +2334,7 @@
       logs.forEach((log) => {
         const logDate = getLogTimestamp(log);
         const logTimestamp = logDate?.getTime?.() || 0;
-        if (normalizeStatus(log.approve) === 'approved' && logTimestamp >= thirtyDaysAgo) {
+        if (normalizeStatus(resolveLogStatusValue(log)) === 'approved' && logTimestamp >= thirtyDaysAgo) {
           last30Hours += getLogHours(log);
         }
         if (logTimestamp && logTimestamp > lastTimestamp) {
@@ -1594,7 +2421,10 @@
   };
 
   const updateApexChart = (chartId, series, categories, empty = false) => {
-    if (!window.ApexCharts?.exec) return false;
+    if (!window.ApexCharts?.exec) {
+      renderChartFallback(chartId, categories, series);
+      return false;
+    }
     try {
       if (categories?.length) {
         window.ApexCharts.exec(chartId, 'updateOptions', {
@@ -1633,6 +2463,74 @@
     return { labels, totals };
   };
 
+  const renderChartFallback = (chartId, labels = [], series = []) => {
+    const titleMap = {
+      'weekly-volunteer-hours': 'Weekly Volunteer Hours',
+      'volunteer-engagement': 'Impact Over the Year',
+    };
+    const heading = titleMap[chartId]
+      ? Array.from(document.querySelectorAll('h3')).find(
+        (el) => el.textContent.trim() === titleMap[chartId]
+      )
+      : null;
+    const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
+    const wrapper = card?.querySelector('.custom-scrollbar') || card?.querySelector('.overflow-x-auto');
+    if (!wrapper) return;
+
+    const safeLabels = Array.isArray(labels) && labels.length ? labels : [];
+    const labelCount = safeLabels.length || 7;
+    const dataSeries = Array.isArray(series) && series.length ? series[0]?.data || [] : [];
+    const safeData = Array.from({ length: labelCount }, (_, idx) => Number(dataSeries[idx] || 0));
+    const maxValue = safeData.reduce((max, value) => (value > max ? value : max), 0);
+    const roundedMax = maxValue > 0 ? Math.ceil(maxValue) : 1;
+    const tickCount = 5;
+    const step = roundedMax / (tickCount - 1);
+    const ticks = Array.from({ length: tickCount }, (_, idx) => {
+      const raw = step * (tickCount - 1 - idx);
+      return Number.isFinite(raw) ? Number(raw.toFixed(1)) : 0;
+    });
+    const verticalPct = (100 / labelCount).toFixed(4);
+    const horizontalPct = (100 / (tickCount - 1)).toFixed(4);
+    const minWidth = chartId === 'volunteer-engagement' ? 1000 : 650;
+    const labelHtml = safeLabels.map((label) => (
+      `<span class="text-xs text-gray-500 dark:text-gray-400 text-center">${label}</span>`
+    )).join('');
+    const axisHtml = ticks.map((tick) => (
+      `<span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">${formatHours(tick)}</span>`
+    )).join('');
+    const barHtml = safeData.map((value) => {
+      const height = roundedMax ? Math.max(0, Math.min(100, (value / roundedMax) * 100)) : 0;
+      return `
+        <div class="flex-1 flex items-end">
+          <div class="w-full rounded-md bg-brand-500/70" style="height:${height}%"></div>
+        </div>
+      `;
+    }).join('');
+
+    wrapper.innerHTML = `
+      <div style="min-width:${minWidth}px">
+        <div class="flex gap-4">
+          <div class="flex h-56 flex-col justify-between">
+            ${axisHtml}
+          </div>
+          <div class="relative flex-1">
+            <div class="relative h-56 rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"
+              style="background-image:
+                repeating-linear-gradient(to right, rgba(148,163,184,0.18), rgba(148,163,184,0.18) 1px, transparent 1px, transparent ${verticalPct}%),
+                repeating-linear-gradient(to bottom, rgba(148,163,184,0.18), rgba(148,163,184,0.18) 1px, transparent 1px, transparent ${horizontalPct}%);">
+              <div class="absolute inset-x-2 bottom-2 top-2 flex items-end gap-2">
+                ${barHtml}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3" style="display:grid;grid-template-columns:repeat(${labelCount},minmax(0,1fr));gap:4px;">
+          ${labelHtml}
+        </div>
+      </div>
+    `;
+  };
+
   const buildMonthlyCounts = (timestamps = []) => {
     const now = new Date();
     const counts = Array.from({ length: 12 }, () => 0);
@@ -1647,6 +2545,105 @@
         counts[index] += 1;
       }
     });
+    return counts;
+  };
+
+  const buildFirstSeenDates = (logs = []) => {
+    const seen = new Map();
+    logs.forEach((log) => {
+      if (normalizeStatus(resolveLogStatusValue(log)) === 'denied') return;
+      const identity = getVolunteerIdentity(log);
+      const key = identity.id || identity.email || identity.key;
+      if (!key) return;
+      const date = getLogTimestamp(log);
+      if (!date || Number.isNaN(date.getTime?.())) return;
+      const prev = seen.get(key);
+      if (!prev || date < prev) {
+        seen.set(key, date);
+      }
+    });
+    return Array.from(seen.values());
+  };
+
+  const buildQuarterlyTotals = (logs) => {
+    const now = new Date();
+    const labels = [];
+    const totals = [];
+    for (let offset = 3; offset >= 0; offset -= 1) {
+      const ref = new Date(now.getFullYear(), now.getMonth() - (offset * 3), 1);
+      const quarter = Math.floor(ref.getMonth() / 3);
+      const year = ref.getFullYear();
+      const start = new Date(year, quarter * 3, 1);
+      const end = new Date(year, quarter * 3 + 3, 0, 23, 59, 59, 999);
+      labels.push(`Q${quarter + 1} ${String(year).slice(-2)}`);
+      const sum = logs.reduce((acc, log) => {
+        const date = getLogTimestamp(log);
+        if (!date || date < start || date > end) return acc;
+        return acc + getLogHours(log);
+      }, 0);
+      totals.push(sum);
+    }
+    return { labels, totals };
+  };
+
+  const buildQuarterlyCounts = (timestamps = []) => {
+    const now = new Date();
+    const counts = [];
+    for (let offset = 3; offset >= 0; offset -= 1) {
+      const ref = new Date(now.getFullYear(), now.getMonth() - (offset * 3), 1);
+      const quarter = Math.floor(ref.getMonth() / 3);
+      const year = ref.getFullYear();
+      const start = new Date(year, quarter * 3, 1);
+      const end = new Date(year, quarter * 3 + 3, 0, 23, 59, 59, 999);
+      const count = timestamps.reduce((acc, value) => {
+        const ts = resolveTimestamp(value);
+        if (!ts) return acc;
+        const date = ts instanceof Date ? ts : new Date(ts);
+        if (Number.isNaN(date.getTime())) return acc;
+        if (date < start || date > end) return acc;
+        return acc + 1;
+      }, 0);
+      counts.push(count);
+    }
+    return counts;
+  };
+
+  const buildYearlyTotals = (logs) => {
+    const now = new Date();
+    const labels = [];
+    const totals = [];
+    for (let offset = 3; offset >= 0; offset -= 1) {
+      const year = now.getFullYear() - offset;
+      const start = new Date(year, 0, 1);
+      const end = new Date(year, 11, 31, 23, 59, 59, 999);
+      labels.push(String(year));
+      const sum = logs.reduce((acc, log) => {
+        const date = getLogTimestamp(log);
+        if (!date || date < start || date > end) return acc;
+        return acc + getLogHours(log);
+      }, 0);
+      totals.push(sum);
+    }
+    return { labels, totals };
+  };
+
+  const buildYearlyCounts = (timestamps = []) => {
+    const now = new Date();
+    const counts = [];
+    for (let offset = 3; offset >= 0; offset -= 1) {
+      const year = now.getFullYear() - offset;
+      const start = new Date(year, 0, 1);
+      const end = new Date(year, 11, 31, 23, 59, 59, 999);
+      const count = timestamps.reduce((acc, value) => {
+        const ts = resolveTimestamp(value);
+        if (!ts) return acc;
+        const date = ts instanceof Date ? ts : new Date(ts);
+        if (Number.isNaN(date.getTime())) return acc;
+        if (date < start || date > end) return acc;
+        return acc + 1;
+      }, 0);
+      counts.push(count);
+    }
     return counts;
   };
 
@@ -1666,7 +2663,7 @@
         log.date || '—',
         log.time || '—',
         log.site || 'Volunteer session',
-        log.approve || 'pending',
+        normalizeStatus(resolveLogStatusValue(log)) || 'pending',
       ]);
     });
     const csv = rows
@@ -1709,8 +2706,190 @@
     tbody.innerHTML = '';
   };
 
+  const setImpactOverviewDefaults = () => {
+    updateMetricText('Active Volunteers', '0');
+    updateMetricText('Hours Approved (30d)', '0');
+    updateMetricLabel('Hours Approved (30d)', 'Total Hours');
+    updateAvgHours(0);
+    const goalValue = Number.isFinite(impactGoalState.goal) && impactGoalState.goal >= 0
+      ? impactGoalState.goal
+      : DEFAULT_IMPACT_GOAL;
+    impactGoalState.goal = goalValue;
+    impactGoalState.approved = 0;
+    impactGoalState.today = 0;
+    impactGoalState.percent = 0;
+    updateImpactGoalCard({ percent: 0, goal: goalValue, approved: 0, today: 0 });
+    renderImpactChartsZeroState();
+  };
+
+  const removeVolunteerRequestActions = () => {
+    const heading = Array.from(document.querySelectorAll('h3')).find((el) => {
+      const text = el.textContent.trim();
+      return text === 'Recent Volunteer Requests' || text === 'Volunteer Requests';
+    });
+    const card = heading?.closest('div.rounded-2xl') || heading?.closest('div');
+    if (!card) return;
+    const buttons = Array.from(card.querySelectorAll('button'));
+    buttons.forEach((button) => {
+      const label = button.textContent.trim().toLowerCase();
+      if (label === 'filter' || label === 'see all') {
+        button.remove();
+      }
+    });
+  };
+
+  const normalizeOrgRecord = (data = {}, docId = null) => {
+    const orgId = data.org_id || data.organization_id || data.orgId || data.organizationId || docId || null;
+    const orgCode = data.access_code
+      || data.organization_code
+      || data.org_code
+      || data.orgCode
+      || data.organizationCode
+      || data.accessCode
+      || null;
+    const orgName = data.org_name
+      || data.organization_name
+      || data.orgName
+      || data.organizationName
+      || data.name
+      || null;
+    return { orgId, orgCode, orgName };
+  };
+
+  const resolveOrgRecordById = async (db, collectionName, orgId) => {
+    if (!db || !orgId) return null;
+    try {
+      const snap = await db.collection(collectionName).doc(orgId).get();
+      if (!snap.exists) return null;
+      return normalizeOrgRecord(snap.data() || {}, snap.id);
+    } catch (error) {
+      console.warn(`Unable to resolve org by id from ${collectionName}`, error);
+      return null;
+    }
+  };
+
+  const resolveOrgRecordByCode = async (db, collectionName, orgCode) => {
+    if (!db || !orgCode) return null;
+    const fields = [
+      'access_code',
+      'organization_code',
+      'org_code',
+      'orgCode',
+      'organizationCode',
+      'accessCode',
+    ];
+    for (const field of fields) {
+      try {
+        const snap = await db
+          .collection(collectionName)
+          .where(field, '==', orgCode)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          const doc = snap.docs[0];
+          return normalizeOrgRecord(doc.data() || {}, doc.id);
+        }
+      } catch (error) {
+        console.warn(`Unable to resolve org by code from ${collectionName}`, error);
+      }
+    }
+    return null;
+  };
+
+  const resolveCanonicalOrgContext = async (db, orgId, orgCode, orgName) => {
+    const collections = ['organizations', 'orgs', 'volunteer_organizations'];
+    let resolved = { orgId, orgCode, orgName, source: null };
+    for (const collectionName of collections) {
+      if (!resolved.orgId) break;
+      const record = await resolveOrgRecordById(db, collectionName, resolved.orgId);
+      if (record) {
+        resolved = {
+          orgId: record.orgId || resolved.orgId,
+          orgCode: record.orgCode || resolved.orgCode,
+          orgName: record.orgName || resolved.orgName,
+          source: collectionName,
+        };
+        break;
+      }
+    }
+    if (!resolved.source && resolved.orgCode) {
+      for (const collectionName of collections) {
+        const record = await resolveOrgRecordByCode(db, collectionName, resolved.orgCode);
+        if (record) {
+          resolved = {
+            orgId: record.orgId || resolved.orgId,
+            orgCode: record.orgCode || resolved.orgCode,
+            orgName: record.orgName || resolved.orgName,
+            source: collectionName,
+          };
+          break;
+        }
+      }
+    }
+    if (resolved.orgCode) {
+      resolved.orgCode = String(resolved.orgCode).trim().toUpperCase();
+    }
+    return resolved;
+  };
+
+  const persistUserOrgContext = async (db, userId, canonical, existing = {}) => {
+    if (!db || !userId || !canonical) return;
+    const { orgId, orgCode, orgName } = canonical;
+    const payload = {};
+    if (orgId && orgId !== existing.organizationId && orgId !== existing.organization_id) {
+      payload.organizationId = orgId;
+      payload.organization_id = orgId;
+    }
+    if (orgCode && orgCode !== existing.accessCode && orgCode !== existing.access_code) {
+      payload.accessCode = orgCode;
+      payload.access_code = orgCode;
+    }
+    if (orgName && orgName !== existing.organizationName && orgName !== existing.organization_name) {
+      payload.organizationName = orgName;
+      payload.organization_name = orgName;
+    }
+    if (!Object.keys(payload).length) return;
+    try {
+      await db.collection('users').doc(userId).set(payload, { merge: true });
+    } catch (error) {
+      console.warn('Unable to persist org context to user record', error);
+    }
+  };
+
+  const pickBestOrgRecord = (docs = []) => {
+    let best = null;
+    let bestScore = -1;
+    let bestTime = 0;
+    docs.forEach((doc) => {
+      const data = doc.data() || {};
+      const record = normalizeOrgRecord(data, doc.id);
+      let score = 0;
+      const role = normalizeRole(data.role || data.accessRole || data.userRole || data.accountRole);
+      if (['org-admin', 'admin', 'owner'].includes(role)) score += 5;
+      const status = normalizeStatus(data.status || data.join_status || data.membership_status || data.request_status);
+      if (['approved', 'accepted'].includes(status)) score += 3;
+      if (data.is_primary || data.primary || data.is_default || data.default) score += 4;
+      const ts = resolveTimestamp(
+        data.updated_at || data.updatedAt || data.created_at || data.createdAt || data.joined_at || data.joinedAt
+      );
+      const timeScore = Number.isFinite(ts) ? ts : 0;
+      if (!best || score > bestScore || (score === bestScore && timeScore > bestTime)) {
+        best = record;
+        bestScore = score;
+        bestTime = timeScore;
+      }
+    });
+    return best;
+  };
+
   const loadDashboard = async ({ auth, db }) => {
     hideLegacyTableRows();
+    removeVolunteerRequestActions();
+    bindEngagementToggleButtons();
+    bindEngagementToggleDelegate();
+    bindImpactGoalEditor();
+    setImpactOverviewDefaults();
+    initVolunteerHistoryState();
     auth.onAuthStateChanged(async (user) => {
       attachSafeNavigation();
       if (!user) {
@@ -1727,14 +2906,16 @@
         window.location.href = '/';
       });
 
-      let orgCode = localStorage.getItem('nexolink_org_code');
-      let orgId = localStorage.getItem('nexolink_org_id');
-      let orgName = localStorage.getItem('nexolink_org_name');
+      let orgCode = null;
+      let orgId = null;
+      let orgName = null;
+      let userRecord = null;
 
       if (!orgCode || !orgId) {
         try {
           const userDoc = await db.collection('users').doc(user.uid).get();
           const data = userDoc.exists ? userDoc.data() || {} : {};
+          userRecord = data;
           orgCode = orgCode || data.accessCode || data.access_code || null;
           orgId = orgId || data.organizationId || data.organization_id || null;
           orgName = orgName || data.organizationName || data.organization_name || null;
@@ -1742,21 +2923,34 @@
           console.warn('Unable to resolve org from users doc', e);
         }
       }
-      if (!orgCode || !orgId) {
-        try {
-          const orgSnap = await db
-            .collection('user_organizations')
-            .where('user_id', '==', user.uid)
-            .limit(1)
-            .get();
-          if (!orgSnap.empty) {
-            const data = orgSnap.docs[0].data() || {};
-            orgCode = orgCode || data.access_code || data.organization_code || data.org_code || null;
-            orgId = orgId || data.org_id || data.organization_id || null;
-            orgName = orgName || data.org_name || data.organization_name || null;
+      try {
+        const orgSnap = await db
+          .collection('user_organizations')
+          .where('user_id', '==', user.uid)
+          .get();
+        if (!orgSnap.empty) {
+          const records = orgSnap.docs.map((doc) => normalizeOrgRecord(doc.data() || {}, doc.id));
+          const best = pickBestOrgRecord(orgSnap.docs);
+          const hasMatch = orgId
+            && records.some((record) => record.orgId && String(record.orgId) === String(orgId));
+          if (!orgId || !hasMatch) {
+            orgCode = best?.orgCode || orgCode;
+            orgId = best?.orgId || orgId;
+            orgName = best?.orgName || orgName;
           }
-        } catch (e) {
-          console.warn('Unable to resolve org from user_organizations', e);
+        }
+      } catch (e) {
+        console.warn('Unable to resolve org from user_organizations', e);
+      }
+
+      if (orgId) {
+        const orgCheck = await resolveOrgRecordById(db, 'organizations', orgId)
+          || await resolveOrgRecordById(db, 'orgs', orgId)
+          || await resolveOrgRecordById(db, 'volunteer_organizations', orgId);
+        if (!orgCheck) {
+          orgId = null;
+          orgCode = null;
+          orgName = null;
         }
       }
       if (!orgCode || !orgId) {
@@ -1764,13 +2958,14 @@
           const orgSnap = await db
             .collection('volunteer_organizations')
             .where('admin_id', '==', user.uid)
-            .limit(1)
             .get();
           if (!orgSnap.empty) {
-            const data = orgSnap.docs[0].data() || {};
-            orgCode = orgCode || data.access_code || data.organization_code || data.org_code || null;
-            orgId = orgId || data.org_id || data.organization_id || null;
-            orgName = orgName || data.org_name || data.organization_name || null;
+            const best = pickBestOrgRecord(orgSnap.docs);
+            if (best) {
+              orgCode = orgCode || best.orgCode || null;
+              orgId = orgId || best.orgId || null;
+              orgName = orgName || best.orgName || null;
+            }
           }
         } catch (e) {
           console.warn('Unable to resolve org from volunteer_organizations', e);
@@ -1785,13 +2980,14 @@
               const orgSnap = await db
                 .collection(collectionName)
                 .where(field, '==', user.uid)
-                .limit(1)
                 .get();
               if (!orgSnap.empty) {
-                const data = orgSnap.docs[0].data() || {};
-                orgCode = orgCode || data.access_code || data.organization_code || data.org_code || null;
-                orgId = orgId || data.org_id || data.organization_id || orgSnap.docs[0].id || null;
-                orgName = orgName || data.org_name || data.organization_name || null;
+                const best = pickBestOrgRecord(orgSnap.docs);
+                if (best) {
+                  orgCode = orgCode || best.orgCode || null;
+                  orgId = orgId || best.orgId || null;
+                  orgName = orgName || best.orgName || null;
+                }
                 break;
               }
             }
@@ -1803,16 +2999,26 @@
       }
 
       if (orgCode) {
-        orgCode = String(orgCode).trim();
-        const upper = orgCode.toUpperCase();
-        localStorage.setItem('nexolink_org_code', upper);
-        orgCode = upper;
+        orgCode = String(orgCode).trim().toUpperCase();
       }
-      if (orgId) {
-        localStorage.setItem('nexolink_org_id', orgId);
+      const canonicalOrg = await resolveCanonicalOrgContext(db, orgId, orgCode, orgName);
+      orgId = canonicalOrg.orgId || orgId;
+      orgCode = canonicalOrg.orgCode || orgCode;
+      orgName = canonicalOrg.orgName || orgName;
+      if (canonicalOrg.source) {
+        await persistUserOrgContext(db, user.uid, canonicalOrg, userRecord || {});
       }
-      if (orgName) {
-        localStorage.setItem('nexolink_org_name', orgName);
+      impactGoalState.db = db;
+      impactGoalState.user = user;
+      impactGoalState.orgId = orgId || null;
+      impactGoalState.orgCode = orgCode || null;
+      impactGoalState.orgKey = resolveOrgSettingsKey(orgId, orgCode);
+      if (impactGoalState.unsubscribe) {
+        impactGoalState.unsubscribe();
+        impactGoalState.unsubscribe = null;
+      }
+      if (impactGoalState.orgKey) {
+        impactGoalState.unsubscribe = registerImpactGoalListener(db, orgId, orgCode);
       }
       console.info('[nexolink-admin] resolved org context', { orgCode, orgId, orgName });
       const isExcludedVolunteer = createVolunteerExclusionChecker({ adminUser: user, orgId });
@@ -1846,9 +3052,14 @@
       window.__nexolinkDebug = debugState;
 
       const renderFromLogs = (logs = []) => {
+        if (historyState.active && window.location.pathname.includes('/admin/volunteers')) {
+          renderVolunteerHistoryView(logs);
+          return;
+        }
         const isExcludedLog = (log) => isExcludedVolunteer(getVolunteerIdentity(log), log);
-        const approvedLogs = logs.filter((log) => isApprovedLog(log) && !isExcludedLog(log));
-        const pendingLogs = logs.filter((log) => isPendingLog(log) && !isExcludedLog(log));
+        const impactLogs = logs.filter((log) => !isExcludedLog(log));
+        const approvedLogs = impactLogs.filter((log) => isApprovedLog(log));
+        const pendingLogs = impactLogs.filter((log) => isPendingLog(log));
         const approvedKeys = new Set();
         approvedLogs.forEach((log) => {
           const identity = getVolunteerIdentity(log);
@@ -1865,25 +3076,69 @@
         const totalApprovedHours = approvedLogs.reduce((sum, log) => sum + getLogHours(log), 0);
 
         const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const sixtyDaysAgo = Date.now() - 60 * 24 * 60 * 60 * 1000;
         const approvedLast30 = approvedLogs.filter((log) => {
           const date = getLogTimestamp(log);
           return date && date.getTime() >= thirtyDaysAgo;
         });
-        const hoursApproved30 = approvedLast30.reduce((sum, log) => sum + getLogHours(log), 0);
+        const approvedPrev30 = approvedLogs.filter((log) => {
+          const date = getLogTimestamp(log);
+          if (!date) return false;
+          const ts = date.getTime();
+          return ts >= sixtyDaysAgo && ts < thirtyDaysAgo;
+        });
+        const hoursApprovedPrev30 = approvedPrev30.reduce((sum, log) => sum + getLogHours(log), 0);
+        const nowDate = new Date();
+        const monthStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
+        const nextMonthStart = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1);
+        const prevMonthStart = new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1);
+        const prevMonthEnd = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
+        const approvedThisMonth = approvedLogs.filter((log) => {
+          const date = getLogTimestamp(log);
+          return date && date >= monthStart && date < nextMonthStart;
+        });
+        const approvedPrevMonth = approvedLogs.filter((log) => {
+          const date = getLogTimestamp(log);
+          return date && date >= prevMonthStart && date < prevMonthEnd;
+        });
+        const hoursApprovedMonth = approvedThisMonth.reduce((sum, log) => sum + getLogHours(log), 0);
+        const hoursApprovedPrevMonth = approvedPrevMonth.reduce((sum, log) => sum + getLogHours(log), 0);
         const todayDateKey = new Date().toLocaleDateString('en-US');
         const todayHours = approvedLogs.reduce((sum, log) => {
           const date = getLogTimestamp(log);
           if (!date) return sum;
           return date.toLocaleDateString('en-US') === todayDateKey ? sum + getLogHours(log) : sum;
         }, 0);
-        const goalHours = approvedLogs.length ? Math.max(hoursApproved30, todayHours) : 0;
-        const percent = goalHours ? Math.round((hoursApproved30 / goalHours) * 100) : 0;
+        const goalHours = Number.isFinite(impactGoalState.goal)
+          ? Math.max(0, impactGoalState.goal)
+          : DEFAULT_IMPACT_GOAL;
+        const percent = goalHours ? Math.round((hoursApprovedMonth / goalHours) * 100) : 0;
 
         updateMetricText('Active Volunteers', activeVolunteers.size ? `${activeVolunteers.size}` : '0');
         updateMetricText(['Hours Approved (30d)', 'Total Hours'], `${formatHours(totalApprovedHours)}`);
+        updateMetricLabel('Hours Approved (30d)', 'Total Hours');
+        const activeLast30Keys = new Set();
+        approvedLast30.forEach((log) => {
+          const identity = getVolunteerIdentity(log);
+          if (identity.key) activeLast30Keys.add(identity.key);
+        });
+        const activePrev30Keys = new Set();
+        approvedPrev30.forEach((log) => {
+          const identity = getVolunteerIdentity(log);
+          if (identity.key) activePrev30Keys.add(identity.key);
+        });
+        updateMetricDelta('Active Volunteers', formatDeltaPercent(activeLast30Keys.size, activePrev30Keys.size));
+        updateMetricDelta('Total Hours', formatDeltaPercent(hoursApprovedMonth, hoursApprovedPrevMonth));
 
-        const busiest = computeBusiestDay(approvedLast30.length ? approvedLast30 : approvedLogs);
-        updateBusiestDay(busiest);
+        const weeklyLogs = impactLogs.filter(
+          (log) => normalizeStatus(resolveLogStatusValue(log)) !== 'denied'
+        );
+        const currentWeekLogs = filterLogsByWeek(weeklyLogs, 0);
+        const busiest = computeBusiestDay(currentWeekLogs);
+        const hoursThisWeek = currentWeekLogs.reduce((sum, log) => sum + getLogHours(log), 0);
+        const prevWeekLogs = filterLogsByWeek(weeklyLogs, 1);
+        const hoursPrevWeek = prevWeekLogs.reduce((sum, log) => sum + getLogHours(log), 0);
+        updateBusiestDay(busiest, formatDeltaPercent(hoursThisWeek, hoursPrevWeek));
 
         const volunteerRoster = syncVolunteerHoursFromActivity(logs, latestUsers, { adminId: user.uid });
         const volunteerSummaries = buildVolunteerSummary(volunteerRoster);
@@ -1904,70 +3159,65 @@
         const avgWeekly = visibleVolunteers.length
           ? approvedLast30.reduce((sum, log) => sum + getLogHours(log), 0) / 4 / visibleVolunteers.length
           : 0;
-        updateAvgHours(avgWeekly || 0);
+        const avgWeeklyPrev = visibleVolunteers.length
+          ? hoursApprovedPrev30 / 4 / visibleVolunteers.length
+          : 0;
+        updateAvgHours(avgWeekly || 0, formatDeltaPercent(avgWeekly, avgWeeklyPrev));
+        impactGoalState.goal = goalHours;
+        impactGoalState.approved = hoursApprovedMonth;
+        impactGoalState.today = todayHours;
+        impactGoalState.percent = percent;
         updateImpactGoalCard({
           percent,
           goal: goalHours,
-          approved: hoursApproved30,
+          approved: hoursApprovedMonth,
           today: todayHours,
         });
 
-        const weekDates = buildWeekDates(new Date());
-        const weekStart = weekDates[0];
-        const weekEnd = new Date(
-          weekDates[6].getFullYear(),
-          weekDates[6].getMonth(),
-          weekDates[6].getDate(),
-          23,
-          59,
-          59,
-          999
-        );
-        const weeklyTotals = Array.from({ length: 7 }, () => 0);
-        approvedLogs.forEach((log) => {
-          const date = getLogTimestamp(log);
-          if (!date || date < weekStart || date > weekEnd) return;
-          weeklyTotals[date.getDay()] += getLogHours(log);
-        });
-        const weeklySum = weeklyTotals.reduce((sum, value) => sum + value, 0);
+        weeklyChartState.logs = weeklyLogs;
+        const weeklyTotals = buildWeeklyTotalsForOffset(weeklyLogs, weeklyChartState.offset);
+        weeklyChartState.totals = weeklyTotals;
         updateApexChart(
           'weekly-volunteer-hours',
           [{ name: 'Hours', data: weeklyTotals.map((value) => Number(value.toFixed(1))) }],
           WEEK_LABELS,
-          weeklySum <= 0
+          false
         );
 
         const monthlyTotals = buildMonthlyTotals(approvedLogs);
-        const monthlySum = monthlyTotals.totals.reduce((sum, value) => sum + value, 0);
         updateApexChart(
           'volunteer-engagement',
           [{ name: 'Total Hours', data: monthlyTotals.totals.map((value) => Number(value.toFixed(1))) }],
           monthlyTotals.labels,
-          monthlySum <= 0
+          false
         );
-        updateApexChartInCard(
-          'Monthly Volunteer Hours',
-          [{ name: 'Volunteer Hours', data: monthlyTotals.totals.map((value) => Number(value.toFixed(1))) }],
-          monthlyTotals.labels,
-          monthlySum <= 0
-        );
+        updateWeeklyHoursCard(weeklyTotals);
 
-        const acceptedDates = Array.from(acceptedRequestsMap.values()).map((req) => (
-          req.reviewed_at || req.approved_at || req.accepted_at || req.joined_at || req.created_at || req.requested_at
-        ));
-        const volunteerJoinDates = latestUsers.map((vol) => (
-          vol.createdAt || vol.created_at || vol.joined_at || vol.joinedAt || vol.registrationDate
-        ));
-        const monthlyVolunteerCounts = buildMonthlyCounts([...volunteerJoinDates, ...acceptedDates]);
-        updateApexChartInCard(
-          'Volunteer Engagement',
-          [
-            { name: 'New Volunteers', data: monthlyVolunteerCounts },
-            { name: 'Hours Approved', data: monthlyTotals.totals.map((value) => Number(value.toFixed(1))) },
-          ],
-          monthlyTotals.labels,
-          monthlySum <= 0
-        );
+        const firstSeenDates = buildFirstSeenDates(impactLogs);
+        const monthlyVolunteerCounts = buildMonthlyCounts(firstSeenDates);
+        const quarterlyTotals = buildQuarterlyTotals(approvedLogs);
+        const quarterlyVolunteerCounts = buildQuarterlyCounts(firstSeenDates);
+        const yearlyTotals = buildYearlyTotals(approvedLogs);
+        const yearlyVolunteerCounts = buildYearlyCounts(firstSeenDates);
+
+        engagementState.data = {
+          monthly: {
+            labels: monthlyTotals.labels,
+            hours: monthlyTotals.totals,
+            volunteers: monthlyVolunteerCounts,
+          },
+          quarterly: {
+            labels: quarterlyTotals.labels,
+            hours: quarterlyTotals.totals,
+            volunteers: quarterlyVolunteerCounts,
+          },
+          annual: {
+            labels: yearlyTotals.labels,
+            hours: yearlyTotals.totals,
+            volunteers: yearlyVolunteerCounts,
+          },
+        };
+        applyEngagementChart(engagementState.period);
 
         const handleApprovalAction = async (log, status) => {
           try {
@@ -1987,7 +3237,7 @@
           (log) => handleApprovalAction(log, 'denied')
         );
 
-        const mergedVolunteers = mergeAcceptedJoinRequests(
+      const mergedVolunteers = mergeAcceptedJoinRequests(
           visibleVolunteers,
           Array.from(acceptedRequestsMap.values()),
           { exclude: isExcludedVolunteer }
@@ -1995,12 +3245,7 @@
         updateVolunteersTable(mergedVolunteers);
         updateTopVolunteers(mergedVolunteers);
 
-        if (!logs.length || !approvedLogs.length || weeklySum <= 0) {
-          updateChartCardEmptyState('Monthly Volunteer Hours', 'Data will appear as volunteers log hours.');
-        }
-        if (!logs.length || !approvedLogs.length || monthlySum <= 0) {
-          updateChartCardEmptyState('Volunteer Engagement', 'Engagement trends will appear once sessions are recorded.');
-        }
+        clearBootingState();
       };
 
       const volunteerMap = new Map();
@@ -2064,29 +3309,6 @@
         logMapById.forEach((value, key) => merged.set(key, value));
         const logs = Array.from(merged.values());
         latestLogs = logs;
-
-        // Auto-align org context from first available log if missing/mismatched.
-        if ((!orgCode || !orgId) && logs.length) {
-          const first = logs[0] || {};
-          const detectedCode = first.organization_id || first.organization_code || first.org_code || first.org_access_code || null;
-          const detectedId = first.linked_org_id || first.org_id || first.organizationId || null;
-          const detectedName = first.organization_name || null;
-          if (detectedCode && (!orgCode || orgCode !== String(detectedCode).toUpperCase())) {
-            orgCode = String(detectedCode).toUpperCase();
-            localStorage.setItem('nexolink_org_code', orgCode);
-          }
-          if (detectedId && (!orgId || orgId !== detectedId)) {
-            orgId = detectedId;
-            localStorage.setItem('nexolink_org_id', orgId);
-          }
-          if (detectedName && (!orgName || orgName !== detectedName)) {
-            orgName = detectedName;
-            localStorage.setItem('nexolink_org_name', orgName);
-            insertOrgBadges({ orgName, orgCode });
-            updateSidebarOrgName(orgName);
-          }
-          window.__nexolinkDebug = { ...(window.__nexolinkDebug || {}), orgCode, orgId, orgName, autoDetectedFromLogs: true };
-        }
 
         renderFromLogs(logs);
       };
@@ -2362,72 +3584,45 @@
       }
 
       if (window.location.pathname.includes('/admin/billing')) {
-        removeSupportPlanRow();
         try {
           const token = await user.getIdToken();
-          const headers = { Authorization: `Bearer ${token}` };
+          const headers = {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          };
           const [invoiceResp, subResp] = await Promise.all([
-            fetch('/api/invoices?limit=1', { headers }),
+            fetch('/api/invoices?limit=10', { headers }),
             fetch('/api/subscriptions', { headers }),
           ]);
           const invoiceData = invoiceResp.ok ? await invoiceResp.json() : null;
           const subData = subResp.ok ? await subResp.json() : null;
-          const invoices = Array.isArray(invoiceData?.invoices) ? invoiceData.invoices : [];
+          const invoiceList = Array.isArray(invoiceData?.invoices) ? invoiceData.invoices : [];
+          const invoiceHistory = Array.isArray(subData?.invoiceHistory) ? subData.invoiceHistory : [];
           const subscription = subData?.subscription || null;
           const hasSubscription = Boolean(subscription);
-          const statusRaw = String(subscription?.status || '').replace(/_/g, ' ').trim();
-          const statusText = hasSubscription && statusRaw
-            ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1)
-            : 'Not active';
-          const renewsAt = resolveTimestamp(
-            subscription?.currentPeriodEnd
-            || subscription?.current_period_end
-            || subscription?.currentPeriodEndMs
-            || subscription?.current_period_end_ms
-          );
-          const trialEndsAt = resolveTimestamp(
-            subscription?.trialEnd
-            || subscription?.trial_end
-            || subscription?.trialEndMs
-            || subscription?.trial_end_ms
-          );
-          const planName =
-            subscription?.planNickname
-            || subscription?.planName
-            || subscription?.plan_key
-            || subscription?.planKey
-            || subscription?.plan
-            || null;
-          const amount = typeof subscription?.amount === 'number' ? subscription.amount : null;
-          const currencyLabel = subscription?.currency ? String(subscription.currency).toUpperCase() : null;
-          const amountLabel = amount != null
-            ? `${(amount / 100).toFixed(2)} ${currencyLabel || ''}`.trim()
-            : null;
-          const cancelAtPeriodEnd = Boolean(subscription?.cancelAtPeriodEnd);
-          updateBillingInvoiceList(invoices);
-          updateDownloadInvoiceButton(invoices, async () => {
-            try {
-              const portalResp = await fetch('/api/portal', { headers });
-              const portalData = portalResp.ok ? await portalResp.json() : null;
-              const portalUrl = portalData?.url || null;
-              if (portalUrl) window.open(portalUrl, '_blank', 'noopener');
-            } catch (err) {
-              console.error('Unable to open billing portal', err);
-            }
-          }, Boolean(subscription));
-          updateBillingSummary({
-            invoiceCount: invoices.length,
-            statusText,
-            renewsAt,
-            trialEndsAt,
-            planName,
-            amountLabel,
-            hasSubscription,
-            cancelAtPeriodEnd,
+          const mergedInvoicesMap = new Map();
+          [...invoiceList, ...invoiceHistory].forEach((inv) => {
+            const key = inv?.id || inv?.invoiceId || inv?.hostedInvoiceUrl || JSON.stringify(inv || {});
+            if (!mergedInvoicesMap.has(key)) mergedInvoicesMap.set(key, inv);
           });
+          const mergedInvoices = Array.from(mergedInvoicesMap.values())
+            .sort((a, b) => (resolveTimestamp(b?.created) || 0) - (resolveTimestamp(a?.created) || 0));
+
+          const amount = resolvePlanAmount(subscription);
+          const currency = resolvePlanCurrency(subscription);
+          const nextBilling = resolveNextBillingDate(subscription);
+          const upcomingInvoice = amount != null && nextBilling
+            ? {
+              amountLabel: formatMoney(amount, currency),
+              dateLabel: formatDateShort(nextBilling),
+            }
+            : null;
+
+          updateBillingPage({ subscription, invoices: mergedInvoices });
+          updateBillingInvoiceList(mergedInvoices, upcomingInvoice);
 
           const cancelButton = document.querySelector('[data-cancel-subscription]');
-          if (cancelButton && subscription && !cancelAtPeriodEnd) {
+          if (cancelButton && subscription && !cancelButton.disabled) {
             cancelButton.addEventListener('click', async () => {
               try {
                 cancelButton.setAttribute('disabled', 'true');
@@ -2443,6 +3638,44 @@
               }
             });
           }
+
+          document.querySelectorAll('[data-billing-upgrade], [data-billing-plan-key]').forEach((button) => {
+            if (button.dataset.checkoutBound === 'true' || button.disabled) return;
+            button.dataset.checkoutBound = 'true';
+            button.addEventListener('click', async () => {
+              const planKey = button.dataset.billingPlanKey || button.dataset.billingUpgrade;
+              const billing = button.dataset.billingPlanBilling
+                || (planKey === 'yearly' ? 'yearly' : planKey === 'monthly' ? 'monthly' : null);
+              if (!planKey) return;
+              try {
+                button.setAttribute('disabled', 'true');
+                const payload = buildCheckoutPayload(planKey, billing);
+                const resp = await fetch('/api/checkout', {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({
+                    ...payload,
+                    email: user?.email || null,
+                    uid: user?.uid || null,
+                    trial: !hasSubscription,
+                  }),
+                });
+                if (!resp.ok) {
+                  throw new Error('Checkout request failed.');
+                }
+                const data = await resp.json();
+                const url = data?.url || data?.checkoutUrl || null;
+                if (url) {
+                  window.location.assign(url);
+                } else {
+                  throw new Error('Checkout URL missing.');
+                }
+              } catch (err) {
+                console.error('Checkout failed', err);
+                button.removeAttribute('disabled');
+              }
+            });
+          });
         } catch (error) {
           console.error('Billing data fetch failed', error);
         }
@@ -2452,6 +3685,15 @@
 
   runAfterHydration(() => {
     hideLegacyTableRows();
+    removeVolunteerRequestActions();
+    bindEngagementToggleButtons();
+    bindEngagementToggleDelegate();
+    setImpactOverviewDefaults();
+    initVolunteerHistoryState();
+    setTimeout(() => {
+      updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset, 0);
+      applyEngagementChart(engagementState.period);
+    }, 800);
     ensureFirebase()
       .then(loadDashboard)
       .catch((error) => console.error('Admin data init failed', error));
