@@ -361,22 +361,24 @@ function buildMetrics() {
 /** ── ATTENDANCE BAR CHART ───────────────────────────────────────────────── */
 
 function renderAttendanceChart() {
-  const canvas = document.getElementById('attendanceChart');
+  const canvas = document.getElementById('weeklyHoursChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   const { labels, data, weekStart, weekEnd } = buildWeeklyAttendanceData();
   
-  // FIX: Update chart title to always show the date range.
-  const titleEl = document.querySelector('.activity-card .card-header h3');
-  if (titleEl) {
+  // Update the week range label
+  const rangeLabel = document.getElementById('weeklyRangeLabel');
+  if (rangeLabel) {
     const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
     const s = weekStart.toLocaleDateString(undefined, opts);
     const e = new Date(weekEnd);
     e.setUTCDate(e.getUTCDate() - 1);
-    titleEl.textContent = `Volunteer Hours: ${s} - ${e.toLocaleDateString(undefined, opts)}`;
+    rangeLabel.textContent = `${s} - ${e.toLocaleDateString(undefined, opts)}`;
   }
+  
+  // Update disabled state of navigation buttons
   document.getElementById('nextWeekBtn').disabled = weekOffset >= 0;
 
   // gradient fill

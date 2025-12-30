@@ -21,6 +21,7 @@
   const engagementState = {
     period: 'monthly',
     data: null,
+    pendingRequest: null,
   };
   const weeklyChartState = {
     offset: 0,
@@ -28,7 +29,7 @@
     logs: [],
   };
   const impactGoalState = {
-    goal: 0,
+    goal: 20,
     approved: 0,
     today: 0,
     percent: 0,
@@ -39,7 +40,7 @@
     user: null,
     unsubscribe: null,
   };
-  const DEFAULT_IMPACT_GOAL = 20;
+  const DEFAULT_IMPACT_GOAL = 20; // Default monthly goal: 20 hours
   const historyState = {
     active: false,
     name: '',
@@ -55,7 +56,7 @@
     }
     const script = document.createElement('script');
     script.src = src;
-    script.async = true;
+    script.async = false;
     script.onload = resolve;
     script.onerror = (event) => {
       const error = new Error(`Failed to load ${src}`);
@@ -72,12 +73,38 @@
   };
 
   const ensureFirebase = async () => {
+    // Load Firebase SDK scripts in sequence
     for (const src of FIREBASE_SDKS) {
       await loadScript(src);
     }
-    if (!window.firebase?.apps?.length) {
+    
+    // Wait for Firebase global to be available
+    let attempts = 0;
+    while (!window.firebase && attempts < 50) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+    
+    if (!window.firebase) {
+      throw new Error('Firebase SDK failed to load - window.firebase is undefined');
+    }
+    
+    // Initialize Firebase app if not already initialized
+    if (!window.firebase.apps || !window.firebase.apps.length) {
       window.firebase.initializeApp(firebaseConfig);
     }
+    
+    // Wait for firestore method to be available
+    attempts = 0;
+    while (typeof window.firebase.firestore !== 'function' && attempts < 50) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+    
+    if (typeof window.firebase.firestore !== 'function') {
+      throw new Error('Firebase Firestore method not available - window.firebase.firestore is not a function');
+    }
+    
     return {
       auth: window.firebase.auth(),
       db: window.firebase.firestore(),
@@ -405,8 +432,8 @@
     leftControls?.querySelectorAll('[data-org-name-badge]').forEach((node) => node.remove());
     leftControls?.querySelectorAll('[data-org-code-badge]').forEach((node) => node.remove());
 
-    const sidebarToggle = leftControls?.querySelector('button');
-    let lastLeftInsert = sidebarToggle && sidebarToggle.parentElement === leftControls ? sidebarToggle : null;
+    leftControls?.querySelector('button')?.remove();
+    let lastLeftInsert = null;
 
     if (orgCode && leftControls) {
       const codeWrap = document.createElement('div');
@@ -888,12 +915,7 @@
   };
 
   const updateTopVolunteers = (volunteers) => {
-    const heading = Array.from(document.querySelectorAll('h3')).find(
-      (el) => el.textContent.trim() === 'Top Volunteers'
-    );
-    if (!heading) return;
-    const card = heading.closest('div.rounded-2xl');
-    const list = card?.querySelector('div.mt-5');
+    const list = document.getElementById('topVolunteersList');
     if (!list) return;
     list.innerHTML = '';
 
@@ -932,60 +954,16 @@
       list.appendChild(row);
     });
   };
-
   const updateBusiestDay = (busiest, wowPercent = null) => {
-    const heading = Array.from(document.querySelectorAll('h3')).find(
-      (el) => el.textContent.trim() === 'Busiest Day'
-    );
-    if (!heading) return;
-    const card = heading.closest('div.rounded-2xl');
-    const title = card?.querySelector('p.text-2xl');
-    const subtitle = card?.querySelector('span.text-gray-500');
-    const wowPill = card?.querySelector('span.rounded-full');
-    const bar = card?.querySelector('div.h-2 > div');
-    if (title) title.textContent = busiest.label || '—';
-    if (subtitle) subtitle.textContent = `${formatHours(busiest.hours)} hours logged`;
-    if (wowPill) {
-      if (!Number.isFinite(wowPercent) || wowPercent <= 0) {
-        wowPill.classList.add('hidden');
-      } else {
-        const rounded = Math.round(wowPercent * 10) / 10;
-        wowPill.textContent = `+${rounded}% WoW`;
-        wowPill.classList.remove('hidden');
-      }
-    }
-    if (bar) {
-      bar.style.width = busiest.hours ? '72%' : '0%';
-    }
+    const nameEl = document.getElementById('busiestDayName');
+    const hoursEl = document.getElementById('busiestDayHours');
+    if (nameEl) nameEl.textContent = busiest.label || '—';
+    if (hoursEl) hoursEl.textContent = `${formatHours(busiest.hours)}`;
   };
 
   const updateAvgHours = (avgHours, deltaPercent = null) => {
-    const heading = Array.from(document.querySelectorAll('h3')).find(
-      (el) => el.textContent.trim() === 'Avg Volunteer Hours / Week'
-    );
-    if (!heading) return;
-    const card = heading.closest('div.rounded-2xl');
-    const value = card?.querySelector('p.text-3xl');
-    const pill = card?.querySelector('span.rounded-full');
-    if (value) value.textContent = `${formatHours(avgHours)} hrs`;
-    if (pill) {
-      if (!Number.isFinite(deltaPercent)) {
-        pill.classList.add('hidden');
-      } else {
-        const rounded = Math.round(deltaPercent * 10) / 10;
-        const sign = rounded > 0 ? '+' : '';
-        pill.textContent = `${sign}${rounded}%`;
-        pill.className = 'rounded-full px-3 py-1 text-sm font-semibold';
-        if (rounded > 0) {
-          pill.classList.add('bg-success-50', 'text-success-600', 'dark:bg-success-500/15', 'dark:text-success-500');
-        } else if (rounded < 0) {
-          pill.classList.add('bg-error-50', 'text-error-600', 'dark:bg-error-500/15', 'dark:text-error-500');
-        } else {
-          pill.classList.add('bg-gray-100', 'text-gray-700', 'dark:bg-gray-800', 'dark:text-gray-200');
-        }
-        pill.classList.remove('hidden');
-      }
-    }
+    const valueEl = document.getElementById('avgPerVolunteer');
+    if (valueEl) valueEl.textContent = `${formatHours(avgHours)} hrs`;
   };
 
   const toDbApprovalStatus = (status) => {
@@ -1417,39 +1395,29 @@
   };
 
   const updateImpactGoalCard = ({ percent = 0, goal = 0, approved = 0, today = 0 } = {}) => {
-    const heading = Array.from(document.querySelectorAll('h3')).find(
-      (el) => el.textContent.trim() === 'Monthly Impact Goal'
-    );
-    if (!heading) return;
-    const card = heading.closest('div.rounded-2xl');
-    if (!card) return;
+    // Update percentage display using ID
+    const percentEl = document.getElementById('impactGoalPct');
+    if (percentEl) percentEl.textContent = `${Math.round(percent)}%`;
 
-    const percentNode = card.querySelector('p.text-4xl, p.text-3xl, p.text-2xl');
-    if (percentNode) percentNode.textContent = `${Math.round(percent)}%`;
-    const description = card.querySelector('p.text-gray-500, p.text-sm');
-    description?.remove();
+    // Update goal hours using ID
+    const goalEl = document.getElementById('impactGoalGoal');
+    if (goalEl) goalEl.textContent = `${Math.round(goal)} hrs`;
 
-    const pill = card.querySelector('span.rounded-full');
-    if (pill) {
-      pill.classList.add('hidden');
+    // Update approved hours using ID
+    const approvedEl = document.getElementById('impactGoalApproved');
+    if (approvedEl) approvedEl.textContent = `${Math.round(approved)} hrs`;
+
+    // Update today hours using ID
+    const todayEl = document.getElementById('impactGoalToday');
+    if (todayEl) todayEl.textContent = `${Math.round(today)} hrs`;
+
+    // Update progress arc
+    const arcEl = document.getElementById('impactGoalArc');
+    if (arcEl && percent >= 0) {
+      const circumference = 2 * Math.PI * 46; // r=46 from SVG
+      const offset = circumference - (percent / 100) * circumference;
+      arcEl.style.strokeDashoffset = Math.max(0, offset);
     }
-
-    const valueNodes = card.querySelectorAll('span.font-semibold, p.font-semibold');
-    if (valueNodes.length >= 3) {
-      valueNodes[0].textContent = `${formatHours(goal)} hrs`;
-      valueNodes[1].textContent = `${formatHours(approved)} hrs`;
-      valueNodes[2].textContent = `${formatHours(today)} hrs`;
-    }
-
-    updateRadialChartInCard('Monthly Impact Goal', percent);
-
-    const statBlocks = Array.from(card.querySelectorAll('div')).filter((node) => {
-      const label = node.querySelector('p');
-      return label && ['Goal', 'Approved', 'Today'].includes(label.textContent.trim());
-    });
-    statBlocks.forEach((block) => {
-      block.querySelectorAll('svg').forEach((svg) => svg.remove());
-    });
   };
 
   const getApexChartInCard = (card) => {
@@ -1491,88 +1459,171 @@
     return card;
   };
 
-  const ensureWeeklyNav = (card, offset) => {
-    const header = card?.querySelector('div.flex.items-center.justify-between');
-    if (!header) return;
-    if (!header.querySelector('[data-week-nav]')) {
-      const nav = document.createElement('div');
-      nav.dataset.weekNav = 'true';
-      nav.className = 'flex items-center gap-2';
-      nav.innerHTML = `
-        <span class="text-xs font-semibold text-gray-500 dark:text-gray-400" data-week-range></span>
-        <button type="button" class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300" data-week-prev>
-          Back
-        </button>
-        <button type="button" class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300" data-week-next>
-          Next
-        </button>
-      `;
-      header.appendChild(nav);
+  const ensureWeeklyNav = () => {
+    // Navigation buttons are already in the HTML with IDs: prevWeekBtn, nextWeekBtn
+    const prevBtn = document.getElementById('prevWeekBtn');
+    const nextBtn = document.getElementById('nextWeekBtn');
+    
+    if (!prevBtn || !nextBtn) return;
+    
+    // Only bind events once
+    if (prevBtn.dataset.bound) return;
+    
+    prevBtn.dataset.bound = 'true';
+    nextBtn.dataset.bound = 'true';
+    
+    prevBtn.addEventListener('click', () => {
+      weeklyChartState.offset += 1;
+      updateWeeklyHoursCard(weeklyChartState.logs, weeklyChartState.offset);
+    });
+    
+    nextBtn.addEventListener('click', () => {
+      if (weeklyChartState.offset > 0) {
+        weeklyChartState.offset -= 1;
+        updateWeeklyHoursCard(weeklyChartState.logs, weeklyChartState.offset);
+      }
+    });
+  };
+
+  const getWeekBoundaries = (offset = 0) => {
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay();
+    const diff = now.getUTCDate() - dayOfWeek;
+    const sunday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), diff - offset * 7));
+    const saturday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), diff - offset * 7 + 6));
+    return { sunday, saturday };
+  };
+
+  const buildWeeklyHoursData = (logs = [], offset = 0) => {
+    const { sunday, saturday } = getWeekBoundaries(offset);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const hours = new Array(7).fill(0);
+    
+    logs.forEach((log) => {
+      const logDate = getLogTimestamp(log);
+      if (!logDate) return;
+      
+      // Use UTC to avoid timezone issues
+      const logDateUTC = new Date(Date.UTC(logDate.getUTCFullYear(), logDate.getUTCMonth(), logDate.getUTCDate()));
+      
+      if (logDateUTC >= sunday && logDateUTC <= saturday) {
+        const dayIndex = logDateUTC.getUTCDay();
+        hours[dayIndex] += getLogHours(log);
+      }
+    });
+
+    return { dayNames, hours, sunday, saturday };
+  };
+
+  const formatWeekRangeText = (sunday, saturday) => {
+    const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+    const startStr = sunday.toLocaleDateString('en-US', opts);
+    const endStr = saturday.toLocaleDateString('en-US', opts);
+    return `${startStr} - ${endStr}`;
+  };
+
+  const renderWeeklyHoursChart = (logs = [], offset = 0) => {
+    const canvas = document.getElementById('weeklyHoursChart');
+    if (!canvas) return false;
+
+    if (!window.Chart) {
+      console.warn('Chart.js not loaded yet');
+      return false;
     }
-    const range = header.querySelector('[data-week-range]');
-    if (range) range.textContent = formatWeekRange(offset);
-    const prev = header.querySelector('[data-week-prev]');
-    const next = header.querySelector('[data-week-next]');
-    if (prev && !prev.dataset.bound) {
-      prev.dataset.bound = 'true';
-      prev.addEventListener('click', () => {
-        weeklyChartState.offset += 1;
-        weeklyChartState.totals = buildWeeklyTotalsForOffset(
-          weeklyChartState.logs,
-          weeklyChartState.offset
-        );
-        updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset);
-      });
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+
+    const { dayNames, hours, sunday, saturday } = buildWeeklyHoursData(logs, offset);
+
+    // Update range label
+    const rangeLabel = document.getElementById('weeklyRangeLabel');
+    if (rangeLabel) {
+      rangeLabel.textContent = formatWeekRangeText(sunday, saturday);
     }
-    if (next && !next.dataset.bound) {
-      next.dataset.bound = 'true';
-      next.addEventListener('click', () => {
-        weeklyChartState.offset = Math.max(0, weeklyChartState.offset - 1);
-        weeklyChartState.totals = buildWeeklyTotalsForOffset(
-          weeklyChartState.logs,
-          weeklyChartState.offset
-        );
-        updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset);
-      });
+
+    // Destroy existing chart if any
+    if (window.weeklyChartInstance) {
+      window.weeklyChartInstance.destroy();
     }
+
+    // Create gradient (matching impact chart blue color)
+    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    grad.addColorStop(0, 'rgba(30,64,175,0.85)');
+    grad.addColorStop(1, 'rgba(30,64,175,0.2)');
+
+    window.weeklyChartInstance = new window.Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: dayNames,
+        datasets: [{
+          label: 'Hours',
+          data: hours,
+          backgroundColor: grad,
+          borderColor: '#1E40AF',
+          borderWidth: 2,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(30,64,175,0.9)',
+            padding: 8,
+            cornerRadius: 4,
+            callbacks: {
+              label: (context) => `${context.parsed.y.toFixed(1)} hrs`
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: 'rgba(30,64,175,0.55)' },
+            grid: { display: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: 'rgba(30,64,175,0.45)' },
+            grid: { color: 'rgba(30,64,175,0.15)' }
+          }
+        }
+      }
+    });
+
+    return true;
   };
 
   const updateWeeklyHoursCard = (weeklyTotals, offset = 0, attempt = 0) => {
+    // Resolve the card if not already resolved
     const card = resolveWeeklyHoursCard();
     if (!card) return false;
-    ensureWeeklyNav(card, offset);
-    if (!window.ApexCharts?.exec) {
-      renderChartFallback(
-        'weekly-volunteer-hours',
-        WEEK_LABELS,
-        [{ name: 'Hours', data: weeklyTotals.map((value) => Number(value.toFixed(1))) }]
-      );
-      return true;
-    }
-    const chart = getApexChartInCard(card);
-    if (!chart) {
-      if (attempt < 2) {
-        setTimeout(() => updateWeeklyHoursCard(weeklyTotals, offset, attempt + 1), 400);
-      } else {
-        waitForApexChartInCard(card, () => updateWeeklyHoursCard(weeklyTotals, offset));
+
+    // Ensure navigation buttons are bound
+    ensureWeeklyNav();
+
+    // Render the chart with current logs and offset
+    const rendered = renderWeeklyHoursChart(weeklyChartState.logs, offset);
+    if (!rendered) {
+      // If Chart.js not ready, retry in a moment
+      if (attempt < 3) {
+        setTimeout(() => updateWeeklyHoursCard(weeklyTotals, offset, attempt + 1), 500);
       }
       return false;
     }
-    try {
-      chart.updateOptions({
-        xaxis: { categories: WEEK_LABELS },
-        stroke: { width: 4, colors: ['transparent'] },
-      }, false, true, false);
-      chart.updateSeries(
-        [{ name: 'Volunteer Hours', data: weeklyTotals.map((value) => Number(value.toFixed(1))) }],
-        true
-      );
-      ensureWeeklyNav(card, offset);
-      return true;
-    } catch (error) {
-      console.warn('Weekly hours chart update failed', error);
-      return false;
-    }
+    
+    // Update navigation button states (using ID selectors)
+    const nextBtn = document.getElementById('nextWeekBtn');
+    const prevBtn = document.getElementById('prevWeekBtn');
+    
+    if (nextBtn) nextBtn.disabled = offset <= 0; // Disable next if viewing current week (offset = 0)
+    if (prevBtn) prevBtn.disabled = false; // Can always go back
+    
+    return true;
   };
 
   const updateApexChartInCard = (title, series, categories, empty = false) => {
@@ -1635,6 +1686,7 @@
       ?? data?.impactGoal
       ?? data?.goalHours
       ?? null;
+    if (raw == null) return null;
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed >= 0) {
       return Math.round(parsed);
@@ -1658,6 +1710,7 @@
       const percent = nextGoal
         ? Math.round((impactGoalState.approved / nextGoal) * 100)
         : 0;
+      
       impactGoalState.percent = percent;
       updateImpactGoalCard({
         percent,
@@ -1708,26 +1761,25 @@
       menu = document.createElement('div');
       menu.dataset.impactGoalMenu = 'true';
       menu.className = [
-        'absolute', 'right-0', 'mt-3', 'w-96', 'max-h-96', 'rounded-xl', 'border',
-        'border-gray-200', 'bg-white', 'p-4', 'shadow-lg', 'dark:border-gray-800',
+        'absolute', 'right-0', 'mt-3', 'w-[48rem]', 'max-w-2xl', 'rounded-xl', 'border',
+        'border-gray-200', 'bg-white', 'p-6', 'shadow-lg', 'dark:border-gray-800',
         'dark:bg-gray-900', 'hidden', 'z-[999999]'
       ].join(' ');
       menu.innerHTML = `
-        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Set Monthly Goal</p>
-        <input type="number" min="0" step="1" inputmode="numeric" class="mt-3 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200" data-impact-goal-input />
-        <button type="button" class="mt-3 w-full rounded-lg bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-600" data-impact-goal-save>
-          Save
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Set Monthly Goal (Hours)</p>
+        <input type="number" min="0" step="1" inputmode="numeric" class="mt-4 w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-lg text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-500" data-impact-goal-input placeholder="Enter hours" />
+        <button type="button" class="mt-4 w-full rounded-lg bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition" data-impact-goal-save>
+          Save Goal
         </button>
       `;
       editButton.parentElement?.appendChild(menu);
       const input = menu.querySelector('[data-impact-goal-input]');
       const saveBtn = menu.querySelector('[data-impact-goal-save]');
       if (saveBtn && input) {
-        saveBtn.addEventListener('click', () => {
+        const saveGoal = async () => {
           const parsed = Number(input.value);
-          if (!Number.isFinite(parsed) || parsed < 0) return;
-          const nextGoal = Math.round(parsed);
-          saveImpactGoalValue(nextGoal);
+          const nextGoal = (Number.isFinite(parsed) && parsed >= 0) ? Math.round(parsed) : DEFAULT_IMPACT_GOAL;
+          await saveImpactGoalValue(nextGoal);
           impactGoalState.goal = nextGoal;
           const percent = nextGoal
             ? Math.round((impactGoalState.approved / nextGoal) * 100)
@@ -1740,6 +1792,10 @@
             today: impactGoalState.today,
           });
           menu.classList.add('hidden');
+        };
+        saveBtn.addEventListener('click', saveGoal);
+        input.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') saveGoal();
         });
       }
       document.addEventListener('click', (event) => {
@@ -1761,33 +1817,23 @@
   };
 
   const renderImpactChartsZeroState = () => {
-    const weeklyZeros = Array.from({ length: 7 }, () => 0);
     weeklyChartState.logs = [];
-    weeklyChartState.totals = weeklyZeros;
-    updateApexChart(
-      'weekly-volunteer-hours',
-      [{ name: 'Hours', data: weeklyZeros }],
-      WEEK_LABELS,
-      false
-    );
-    updateWeeklyHoursCard(weeklyZeros, weeklyChartState.offset, 0);
+    weeklyChartState.offset = 0;
+    updateWeeklyHoursCard([], 0);
     if (!engagementState.data) {
       const monthly = buildMonthlyTotals([]);
       engagementState.data = {
         monthly: {
           labels: monthly.labels,
           hours: monthly.totals,
-          volunteers: monthly.totals.map(() => 0),
         },
         quarterly: {
           labels: buildQuarterlyTotals([]).labels,
           hours: buildQuarterlyTotals([]).totals,
-          volunteers: buildQuarterlyTotals([]).totals.map(() => 0),
         },
         annual: {
           labels: buildYearlyTotals([]).labels,
           hours: buildYearlyTotals([]).totals,
-          volunteers: buildYearlyTotals([]).totals.map(() => 0),
         },
       };
     }
@@ -1796,8 +1842,7 @@
       updateApexChartInCard(
         'Impact Over the Year',
         [
-          { name: 'New Volunteers', data: data.volunteers.map(() => 0) },
-          { name: 'Hours Approved', data: data.hours.map(() => 0) },
+          { name: 'Hours approved', data: data.hours },
         ],
         data.labels,
         false
@@ -1835,9 +1880,9 @@
     const subtitle = heading.parentElement?.querySelector('p');
     if (!subtitle) return;
     const copy = {
-      monthly: 'Monthly impact from new volunteers and approved hours.',
-      quarterly: 'Quarterly impact from new volunteers and approved hours.',
-      annual: 'Annual impact from new volunteers and approved hours.',
+      monthly: 'Monthly approved volunteer hours.',
+      quarterly: 'Quarterly approved volunteer hours.',
+      annual: 'Annual approved volunteer hours.',
     };
     subtitle.textContent = copy[period] || copy.monthly;
   };
@@ -1849,28 +1894,42 @@
       updateEngagementCopy(period);
       return;
     }
+    
+    // Clear any pending requests for other periods to prevent race conditions
+    if (engagementState.pendingRequest) {
+      clearTimeout(engagementState.pendingRequest);
+    }
+    
     const isEmpty = false;
+    
+    // Update the chart in the card view (if it exists)
     const updatedCard = updateApexChartInCard(
       'Impact Over the Year',
       [
-        { name: 'New Volunteers', data: data.volunteers },
-        { name: 'Hours Approved', data: data.hours.map((value) => Number(value.toFixed(1))) },
+        { name: 'Hours approved', data: data.hours },
       ],
       data.labels,
       isEmpty
     );
+    
+    // Update the standalone chart
     updateApexChart(
       'volunteer-engagement',
       [
-        { name: 'New Volunteers', data: data.volunteers },
-        { name: 'Hours Approved', data: data.hours.map((value) => Number(value.toFixed(1))) },
+        { name: 'Hours approved', data: data.hours },
       ],
       data.labels,
       isEmpty
     );
+    
+    // Retry only if chart wasn't found and this is the first attempt
     if (!updatedCard && attempt < 4) {
-      setTimeout(() => applyEngagementChart(period, attempt + 1), 400);
+      engagementState.pendingRequest = setTimeout(() => applyEngagementChart(period, attempt + 1), 400);
+    } else {
+      engagementState.pendingRequest = null;
     }
+    
+    // Update UI independently for each button
     updateEngagementToggleUi(period);
     updateEngagementCopy(period);
   };
@@ -2421,26 +2480,52 @@
   };
 
   const updateApexChart = (chartId, series, categories, empty = false) => {
-    if (!window.ApexCharts?.exec) {
-      renderChartFallback(chartId, categories, series);
+    // Map chartId to canvas element ID
+    const canvasIdMap = {
+      'weekly-volunteer-hours': 'weeklyHoursChart',
+      'volunteer-engagement': 'impactYearChart',
+    };
+    const canvasId = canvasIdMap[chartId];
+    if (!canvasId) {
+      console.warn('Unknown chart ID:', chartId);
       return false;
     }
-    try {
-      if (categories?.length) {
-        window.ApexCharts.exec(chartId, 'updateOptions', {
-          xaxis: { categories },
-          stroke: empty ? { width: 0 } : undefined,
-          colors: empty ? ['transparent'] : undefined,
-          fill: empty ? { opacity: 0 } : undefined,
-          markers: empty ? { size: 0 } : undefined,
-        }, false, true);
-      }
-      window.ApexCharts.exec(chartId, 'updateSeries', series, true);
+
+    // NOTE: Weekly hours chart is now managed by dashboard.js using Chart.js, skip it here
+    if (canvasId === 'weeklyHoursChart') {
       return true;
-    } catch (error) {
-      console.warn('Chart update failed', chartId, error);
-      return false;
     }
+
+    if (window.impactChart && canvasId === 'impactYearChart') {
+      window.impactChart.data.labels = categories || [];
+      const data = series?.[0]?.data || [];
+      if (window.impactChart.data.datasets[0]) {
+        window.impactChart.data.datasets[0].data = data;
+      }
+      window.impactChart.update('none');
+      return true;
+    }
+
+    // Fallback if Chart.js instances aren't available
+    if (window.ApexCharts?.exec) {
+      try {
+        if (categories?.length) {
+          window.ApexCharts.exec(chartId, 'updateOptions', {
+            xaxis: { categories },
+            stroke: empty ? { width: 0 } : undefined,
+            colors: empty ? ['transparent'] : undefined,
+            fill: empty ? { opacity: 0 } : undefined,
+            markers: empty ? { size: 0 } : undefined,
+          }, false, true);
+        }
+        window.ApexCharts.exec(chartId, 'updateSeries', series, true);
+        return true;
+      } catch (error) {
+        console.warn('Chart update failed', chartId, error);
+      }
+    }
+
+    return false;
   };
 
   const buildMonthlyTotals = (logs) => {
@@ -3020,6 +3105,13 @@
       if (impactGoalState.orgKey) {
         impactGoalState.unsubscribe = registerImpactGoalListener(db, orgId, orgCode);
       }
+      // Initialize impact goal card display immediately with default 20 hours
+      updateImpactGoalCard({
+        percent: 0,
+        goal: impactGoalState.goal || DEFAULT_IMPACT_GOAL,
+        approved: 0,
+        today: 0,
+      });
       console.info('[nexolink-admin] resolved org context', { orgCode, orgId, orgName });
       const isExcludedVolunteer = createVolunteerExclusionChecker({ adminUser: user, orgId });
       insertOrgBadges({ orgName, orgCode });
@@ -3130,13 +3222,11 @@
         updateMetricDelta('Active Volunteers', formatDeltaPercent(activeLast30Keys.size, activePrev30Keys.size));
         updateMetricDelta('Total Hours', formatDeltaPercent(hoursApprovedMonth, hoursApprovedPrevMonth));
 
-        const weeklyLogs = impactLogs.filter(
-          (log) => normalizeStatus(resolveLogStatusValue(log)) !== 'denied'
-        );
-        const currentWeekLogs = filterLogsByWeek(weeklyLogs, 0);
+        // Busiest day calculation: only use approved logs (same as total hours metric)
+        const currentWeekLogs = filterLogsByWeek(approvedLogs, 0);
         const busiest = computeBusiestDay(currentWeekLogs);
         const hoursThisWeek = currentWeekLogs.reduce((sum, log) => sum + getLogHours(log), 0);
-        const prevWeekLogs = filterLogsByWeek(weeklyLogs, 1);
+        const prevWeekLogs = filterLogsByWeek(approvedLogs, 1);
         const hoursPrevWeek = prevWeekLogs.reduce((sum, log) => sum + getLogHours(log), 0);
         updateBusiestDay(busiest, formatDeltaPercent(hoursThisWeek, hoursPrevWeek));
 
@@ -3174,24 +3264,11 @@
           today: todayHours,
         });
 
-        weeklyChartState.logs = weeklyLogs;
-        const weeklyTotals = buildWeeklyTotalsForOffset(weeklyLogs, weeklyChartState.offset);
-        weeklyChartState.totals = weeklyTotals;
-        updateApexChart(
-          'weekly-volunteer-hours',
-          [{ name: 'Hours', data: weeklyTotals.map((value) => Number(value.toFixed(1))) }],
-          WEEK_LABELS,
-          false
-        );
+        weeklyChartState.logs = approvedLogs;
+        weeklyChartState.offset = 0; // Reset to current week
+        updateWeeklyHoursCard(approvedLogs, 0);
 
         const monthlyTotals = buildMonthlyTotals(approvedLogs);
-        updateApexChart(
-          'volunteer-engagement',
-          [{ name: 'Total Hours', data: monthlyTotals.totals.map((value) => Number(value.toFixed(1))) }],
-          monthlyTotals.labels,
-          false
-        );
-        updateWeeklyHoursCard(weeklyTotals);
 
         const firstSeenDates = buildFirstSeenDates(impactLogs);
         const monthlyVolunteerCounts = buildMonthlyCounts(firstSeenDates);

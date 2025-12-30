@@ -320,9 +320,9 @@ function buildMetrics() {
   const { labels: weeklyLabels, data: weeklyData } = buildWeeklyAttendanceData();
   const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries(); // Use current week for "weekly active"
 
-  // busiest day
-  const max = Math.max(...weeklyData);
-  const busiest = max > 0 ? weeklyLabels[weeklyData.indexOf(max)] : '—';
+  // busiest day - recalculate dynamically starting from Sunday
+  const busiestDay = calculateBusiestDay();
+  const busiest = busiestDay || '—';
 
   // Map roles to skip org-admins
   const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
@@ -361,22 +361,24 @@ function buildMetrics() {
 /** ── ATTENDANCE BAR CHART ───────────────────────────────────────────────── */
 
 function renderAttendanceChart() {
-  const canvas = document.getElementById('attendanceChart');
+  const canvas = document.getElementById('weeklyHoursChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   const { labels, data, weekStart, weekEnd } = buildWeeklyAttendanceData();
   
-  // FIX: Update chart title to always show the date range.
-  const titleEl = document.querySelector('.activity-card .card-header h3');
-  if (titleEl) {
+  // Update the week range label
+  const rangeLabel = document.getElementById('weeklyRangeLabel');
+  if (rangeLabel) {
     const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
     const s = weekStart.toLocaleDateString(undefined, opts);
     const e = new Date(weekEnd);
     e.setUTCDate(e.getUTCDate() - 1);
-    titleEl.textContent = `Volunteer Hours: ${s} - ${e.toLocaleDateString(undefined, opts)}`;
+    rangeLabel.textContent = `${s} - ${e.toLocaleDateString(undefined, opts)}`;
   }
+  
+  // Update disabled state of navigation buttons
   document.getElementById('nextWeekBtn').disabled = weekOffset >= 0;
 
   // gradient fill
@@ -554,6 +556,40 @@ function buildWeeklyAttendanceData() {
   });
 
   return { labels, data, weekStart, weekEnd };
+}
+
+/**  ── BUSIEST DAY CALCULATION ──────────────────────────────────────────────── */
+
+function calculateBusiestDay() {
+  // Calculate the busiest day of the CURRENT WEEK (not the navigated week offset)
+  // This resets every Sunday
+  const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
+  
+  const labels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const data = new Array(7).fill(0);
+
+  const nonAdminVolunteers = appState.volunteersData.filter(v => (v.role || 'volunteer') !== 'org-admin');
+  const roles = new Map(nonAdminVolunteers.map(v => [v.id, v.role]));
+
+  // Only count approved hours
+  const approvedLogs = appState.activityData.filter(log => ['approved', 'accepted'].includes((log.approve || 'pending').toLowerCase()));
+
+  approvedLogs.forEach(log => {
+    const d = normalizeDateValue(log.date);
+    if (d && d >= startOfWeek && d < endOfWeek && roles.has(log.user_id) && roles.get(log.user_id) !== 'org-admin') {
+      data[d.getUTCDay()] += parseFloat(log.hours_contributed || log.hours) || 0;
+    }
+  });
+
+  // Find day with most hours
+  const maxHours = Math.max(...data);
+  if (maxHours <= 0) {
+    return '—'; // No activity this week
+  }
+
+  const busiestDayIndex = data.indexOf(maxHours);
+  return dayLabels[busiestDayIndex] || '—';
 }
 
 
