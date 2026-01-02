@@ -43,6 +43,63 @@
     <meta name="description"
         content="Review pending volunteer requests and approvals inside the NexoLink admin portal." />
     <link rel="icon" href="/admin/favicon.ico?favicon.7cdd2424.ico" sizes="48x48" type="image/x-icon" />
+    <script>
+        const THEME_KEY = 'theme';
+
+        const applyTheme = (theme) => {
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        };
+
+        const getStoredTheme = () => {
+            const savedTheme = localStorage.getItem(THEME_KEY);
+            if (savedTheme) {
+                return savedTheme;
+            }
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        };
+
+        const normalizeAdminLinks = () => {
+            const currentPath = window.location.pathname;
+            const adminIndex = currentPath.indexOf('/admin/');
+            const basePath = adminIndex === -1 ? '/admin/' : `${currentPath.slice(0, adminIndex)}/admin/`;
+
+            document.querySelectorAll('a[href^="/admin/"]').forEach((anchor) => {
+                const href = anchor.getAttribute('href');
+                if (!href) {
+                    return;
+                }
+                const trimmed = href.replace(/^\/admin\//, '');
+                anchor.setAttribute('href', `${basePath}${trimmed}`);
+            });
+        };
+
+        applyTheme(getStoredTheme());
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggleBtn = document.getElementById('theme-toggle');
+
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    const isDark = document.documentElement.classList.contains('dark');
+                    const nextTheme = isDark ? 'light' : 'dark';
+                    applyTheme(nextTheme);
+                    localStorage.setItem(THEME_KEY, nextTheme);
+                });
+            }
+
+            window.addEventListener('storage', (event) => {
+                if (event.key === THEME_KEY) {
+                    applyTheme(event.newValue || 'light');
+                }
+            });
+
+            normalizeAdminLinks();
+        });
+    </script>
 </head>
 
 <body class="outfit_43d50961-module__KOAtAG__className dark:bg-gray-900">
@@ -64,8 +121,8 @@
                                             d="M5.5 3.25A2.25 2.25 0 0 0 3.25 5.5V9a2.25 2.25 0 0 0 2.25 2.25H9A2.25 2.25 0 0 0 11.25 9V5.5A2.25 2.25 0 0 0 9 3.25zM4.75 5.5a.75.75 0 0 1 .75-.75H9a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75H5.5A.75.75 0 0 1 4.75 9zm.75 7.25A2.25 2.25 0 0 0 3.25 15v3.5a2.25 2.25 0 0 0 2.25 2.25H9a2.25 2.25 0 0 0 2.25-2.25V15A2.25 2.25 0 0 0 9 12.75zM4.75 15a.75.75 0 0 1 .75-.75H9a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-.75.75H5.5a.75.75 0 0 1-.75-.75zm8-9.5A2.25 2.25 0 0 1 15 3.25h3.5a2.25 2.25 0 0 1 2.25 2.25V9a2.25 2.25 0 0 1-2.25 2.25H15A2.25 2.25 0 0 1 12.75 9zM15 4.75a.75.75 0 0 0-.75.75V9c0 .414.336.75.75.75h3.5a.75.75 0 0 0 .75-.75V5.5a.75.75 0 0 0-.75-.75zm0 8A2.25 2.25 0 0 0 12.75 15v3.5A2.25 2.25 0 0 0 15 20.75h3.5a2.25 2.25 0 0 0 2.25-2.25V15a2.25 2.25 0 0 0-2.25-2.25zM14.25 15a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-.75.75H15a.75.75 0 0 1-.75-.75z"
                                             clip-rule="evenodd"></path>
                                     </svg></span><span class="menu-item-text">Impact Overview</span></a></li>
-                        <li><a class="menu-item group menu-item-inactive"
-                                href="/admin/volunteer-requests/index.html"><span class="menu-item-icon-inactive"><svg
+                        <li><a class="menu-item group menu-item-active"
+                                href="/admin/volunteer-requests/index.html"><span class="menu-item-icon-active"><svg
                                         xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none">
                                         <path fill="currentColor" fill-rule="evenodd"
                                             d="M5.5 3.25A2.25 2.25 0 0 0 3.25 5.5v13a2.25 2.25 0 0 0 2.25 2.25h13a2.25 2.25 0 0 0 2.25-2.25v-13a2.25 2.25 0 0 0-2.25-2.25zM4.75 5.5a.75.75 0 0 1 .75-.75h13a.75.75 0 0 1 .75.75v13a.75.75 0 0 1-.75.75h-13a.75.75 0 0 1-.75-.75zm1.5 4.214a.75.75 0 0 1 .75-.75h10a.75.75 0 1 1 0 1.5H7a.75.75 0 0 1-.75-.75m0 4.572a.75.75 0 0 1 .75-.75h10a.75.75 0 1 1 0 1.5H7a.75.75 0 0 1-.75-.75"
@@ -113,7 +170,7 @@
                     <div
                         class="hidden items-center justify-between w-full gap-4 px-5 py-4 lg:flex shadow-theme-md lg:justify-end lg:px-0 lg:shadow-none">
                         <div class="flex items-center gap-2 2xsm:gap-3"><button
-                                class="relative flex items-center justify-center text-gray-500 transition-colors bg-white border border-gray-200 rounded-full hover:text-dark-900 h-11 w-11 hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"><svg
+                                id="theme-toggle" class="relative flex items-center justify-center text-gray-500 transition-colors bg-white border border-gray-200 rounded-full hover:text-dark-900 h-11 w-11 hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"><svg
                                     class="hidden dark:block" width="20" height="20" viewBox="0 0 20 20" fill="none"
                                     xmlns="http://www.w3.org/2000/svg">
                                     <path fill-rule="evenodd" clip-rule="evenodd"
@@ -183,6 +240,6 @@
     </div>
     </div>
     <script type="module" src="/admin/qr-inject.js"></script>
+    <script src="/admin/dashboard.js"></script>
 </body>
-
 </html>

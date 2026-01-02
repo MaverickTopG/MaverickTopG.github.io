@@ -7,12 +7,74 @@ const STRIPE_PUBLISHABLE_KEY = 'REDACTED_STRIPE_LIVE_PUBLISHABLE_KEY';
 const FALLBACK_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
 const FALLBACK_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
 const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
+const THEME_KEY = 'theme';
 
 let latestInvoiceFetchPromise = null;
 let invoiceHistoryFetchPromise = null;
 let subscriptionDatasetFetchPromise = null;
 let planOverlayKeyHandler = null;
 let billingLoaderEl = null;
+
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+}
+
+function getStoredTheme() {
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme) {
+    return savedTheme;
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function initBillingTheme() {
+  applyTheme(getStoredTheme());
+  const toggleBtn = document.getElementById('theme-toggle');
+  if (toggleBtn && !toggleBtn.dataset.themeBound) {
+    toggleBtn.dataset.themeBound = 'true';
+    toggleBtn.addEventListener('click', () => {
+      const isDark = document.documentElement.classList.contains('dark');
+      const nextTheme = isDark ? 'light' : 'dark';
+      applyTheme(nextTheme);
+      localStorage.setItem(THEME_KEY, nextTheme);
+    });
+  }
+  window.addEventListener('storage', (event) => {
+    if (event.key === THEME_KEY) {
+      applyTheme(event.newValue || 'light');
+    }
+  });
+}
+
+function normalizePath(path) {
+  if (!path) return '/';
+  let next = path.replace(/\/index\.html$/, '/');
+  if (!next.endsWith('/')) {
+    next += '/';
+  }
+  return next;
+}
+
+function setActiveAdminNav() {
+  const currentPath = normalizePath(window.location.pathname);
+  document.querySelectorAll('.menu-item').forEach((item) => {
+    const href = item.getAttribute('href');
+    if (!href) return;
+    const targetPath = normalizePath(new URL(href, window.location.origin).pathname);
+    const isActive = targetPath === currentPath;
+    item.classList.toggle('menu-item-active', isActive);
+    item.classList.toggle('menu-item-inactive', !isActive);
+    const icon = item.querySelector('.menu-item-icon-active, .menu-item-icon-inactive');
+    if (icon) {
+      icon.classList.toggle('menu-item-icon-active', isActive);
+      icon.classList.toggle('menu-item-icon-inactive', !isActive);
+    }
+  });
+}
 
 function isDemoBillingLocked() {
   return isDemoAccount(appState.currentAdmin || auth.currentUser);
@@ -72,6 +134,8 @@ function resolveBasePriceId(plan) {
 }
 
 export function initBillingModule() {
+  initBillingTheme();
+  setActiveAdminNav();
   if (!appState.isBillingInitialized) {
     // The functions are now called via fetch, so no special initialization is needed here.
     // We just need to ensure the event listener is attached.

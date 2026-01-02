@@ -195,6 +195,7 @@ export async function initializeDashboard() {
       renderEventActivityChart();
       renderCalendarHeatmap();
       refreshAnalytics();
+      updateStatistics();
       if (source !== 'approval') {
         renderApprovalQueue();
       }

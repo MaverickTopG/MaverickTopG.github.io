@@ -57,6 +57,7 @@
       } else {
         document.documentElement.classList.remove('dark');
       }
+
     </script>
 
     <meta name="next-size-adjust" content="" />
@@ -281,6 +282,7 @@
             >
               <div class="flex items-center gap-2 2xsm:gap-3">
                 <button
+                  id="theme-toggle"
                   class="relative flex items-center justify-center text-gray-500 transition-colors bg-white border border-gray-200 rounded-full hover:text-dark-900 h-11 w-11 hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
                 >
                   <svg class="hidden dark:block" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -454,6 +456,36 @@
                           ></path>
                         </svg>
                       </button>
+                      <div
+                        data-impact-goal-menu
+                        class="fixed inset-0 hidden items-center justify-center bg-black/40 z-[999999] flex"
+                      >
+                        <div
+                          data-impact-goal-panel
+                          class="rounded-xl border border-gray-200 bg-white p-6 shadow-lg dark:border-gray-800 dark:bg-white"
+                          style="width: min(90vw, 190px);"
+                        >
+                          <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                            Set Monthly Goal (Hours)
+                          </p>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputmode="numeric"
+                            class="mt-4 w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-lg text-gray-700 dark:border-gray-300 dark:bg-white dark:text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            data-impact-goal-input
+                            placeholder="Enter hours"
+                          />
+                          <button
+                            type="button"
+                            class="mt-4 w-full rounded-lg bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition"
+                            data-impact-goal-save
+                          >
+                            Save Goal
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -654,140 +686,7 @@
 
     <script type="module" src="/admin/qr-inject.js"></script>
 
-    <!-- DASHBOARD UI LOGIC (charts + arc) -->
-    <script>
-      // NOTE: Real data is loaded from Firebase via admin-data.js
-      // This script handles Chart.js initialization only
-      // All impact overview values are populated by admin-data.js
-
-      // ---------------------------
-      // 4) WEEKLY CHART (Bar) - Now managed by dashboard.js
-      // ---------------------------
-      // NOTE: Weekly hours chart is initialized and managed by dashboard.js
-      // Do not initialize it here to avoid conflicts
-
-      // ---------------------------
-      // 5) IMPACT OVER YEAR CHART (Line) - Data populated by admin-data.js
-      // ---------------------------
-      window.impactChart = null;
-      function renderImpact(mode = "monthly"){
-        const ctx = document.getElementById("impactYearChart");
-        if (!ctx || !window.Chart) return;
-
-        const labels = [];
-        const values = [];
-
-        const setText = (id, val) => {
-          const el = document.getElementById(id);
-          if (el) el.textContent = String(val);
-        };
-
-        setText("impactTotal", "0");
-
-        if (window.impactChart) window.impactChart.destroy();
-
-        window.impactChart = new Chart(ctx, {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              {
-                label: "Hours approved",
-                data: [],
-                borderColor: "#1E40AF",
-                backgroundColor: "rgba(30,64,175,0.1)",
-                fill: true,
-                borderWidth: 3,
-                pointRadius: 4,
-                pointHoverRadius: 6,
-                pointBackgroundColor: "#1E40AF",
-                tension: 0.35,
-              }
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { display: false },
-              tooltip: {
-                callbacks: {
-                  label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y || 0}`,
-                },
-              },
-            },
-            scales: {
-              x: {
-                grid: { display: false },
-                ticks: { color: "#64748b" },
-              },
-              y: {
-                beginAtZero: true,
-                grid: { color: "rgba(148,163,184,0.25)" },
-                ticks: { color: "#64748b" },
-              },
-            },
-          },
-        });
-      }
-
-      (function initImpactTabs(){
-        const buttons = Array.from(document.querySelectorAll(".impactTab"));
-
-        const setActive = (btn) => {
-          buttons.forEach(b => {
-            b.classList.remove("shadow-theme-xs","text-gray-900","dark:text-white","bg-white","dark:bg-gray-800");
-            b.classList.add("text-gray-500","dark:text-gray-400");
-          });
-          btn.classList.add("shadow-theme-xs","text-gray-900","dark:text-white","bg-white","dark:bg-gray-800");
-          btn.classList.remove("text-gray-500","dark:text-gray-400");
-        };
-
-        buttons.forEach(btn => {
-          btn.addEventListener("click", () => {
-            const mode = btn.getAttribute("data-impact-tab") || "monthly";
-            setActive(btn);
-            renderImpact(mode);
-          });
-        });
-
-        // Initial render
-        renderImpact("monthly");
-      })();
-
-      // Theme toggle functionality
-      (function initThemeToggle(){
-        // Find the theme toggle button - it's the first button in the header's gap-2 flex container (has sun/moon icon)
-        const headerButtonsContainer = document.querySelector('header .flex.items-center.gap-2');
-        const themeToggleBtn = headerButtonsContainer ? headerButtonsContainer.querySelector('button:first-child') : null;
-        if (!themeToggleBtn) return;
-
-        const toggleTheme = () => {
-          const htmlElement = document.documentElement;
-          const isDark = htmlElement.classList.contains('dark');
-          
-          if (isDark) {
-            htmlElement.classList.remove('dark');
-            localStorage.setItem('theme', 'light');
-          } else {
-            htmlElement.classList.add('dark');
-            localStorage.setItem('theme', 'dark');
-          }
-        };
-
-        themeToggleBtn.addEventListener('click', toggleTheme);
-
-        // Load saved theme on page load
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        if (savedTheme === 'dark') {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
-      })();
-    </script>
-
-    <!-- Load Firebase data management and population -->
-    <script src="/js/admin-data.js" defer></script>
+<script src="/js/admin-data.js" defer></script>
+  <script src="/admin/dashboard.js"></script>
   </body>
 </html>

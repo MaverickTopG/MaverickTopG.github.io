@@ -955,10 +955,13 @@
     });
   };
   const updateBusiestDay = (busiest, wowPercent = null) => {
-    const nameEl = document.getElementById('busiestDayName');
-    const hoursEl = document.getElementById('busiestDayHours');
-    if (nameEl) nameEl.textContent = busiest.label || '—';
-    if (hoursEl) hoursEl.textContent = `${formatHours(busiest.hours)}`;
+    const metricEl = document.getElementById('metricBusiestDay');
+    if (!metricEl) return;
+    if (!busiest || !busiest.hours) {
+      metricEl.textContent = '—';
+      return;
+    }
+    metricEl.textContent = `${busiest.label} • ${formatHours(busiest.hours)} hrs`;
   };
 
   const updateAvgHours = (avgHours, deltaPercent = null) => {
@@ -1756,23 +1759,19 @@
     editButton.classList.add('relative');
 
     const ensureMenu = () => {
-      let menu = card.querySelector('[data-impact-goal-menu]');
-      if (menu) return menu;
-      menu = document.createElement('div');
-      menu.dataset.impactGoalMenu = 'true';
-      menu.className = [
-        'absolute', 'right-0', 'mt-3', 'w-[48rem]', 'max-w-2xl', 'rounded-xl', 'border',
-        'border-gray-200', 'bg-white', 'p-6', 'shadow-lg', 'dark:border-gray-800',
-        'dark:bg-gray-900', 'hidden', 'z-[999999]'
-      ].join(' ');
-      menu.innerHTML = `
-        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Set Monthly Goal (Hours)</p>
-        <input type="number" min="0" step="1" inputmode="numeric" class="mt-4 w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-lg text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-500" data-impact-goal-input placeholder="Enter hours" />
-        <button type="button" class="mt-4 w-full rounded-lg bg-brand-500 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition" data-impact-goal-save>
-          Save Goal
-        </button>
-      `;
-      editButton.parentElement?.appendChild(menu);
+      const menu = card.querySelector('[data-impact-goal-menu]');
+      if (!menu) return null;
+      if (menu.dataset.bound) return menu;
+      menu.dataset.bound = 'true';
+      const panel = menu.querySelector('[data-impact-goal-panel]');
+      const stopMenuClose = (event) => {
+        event.stopPropagation();
+      };
+      panel?.addEventListener('mousedown', stopMenuClose);
+      panel?.addEventListener('click', stopMenuClose);
+      menu.addEventListener('click', () => {
+        menu.classList.add('hidden');
+      });
       const input = menu.querySelector('[data-impact-goal-input]');
       const saveBtn = menu.querySelector('[data-impact-goal-save]');
       if (saveBtn && input) {
@@ -1810,6 +1809,7 @@
       event.preventDefault();
       event.stopPropagation();
       const menu = ensureMenu();
+      if (!menu) return;
       const input = menu.querySelector('[data-impact-goal-input]');
       if (input) input.value = String(impactGoalState.goal ?? DEFAULT_IMPACT_GOAL);
       menu.classList.toggle('hidden');
@@ -1839,14 +1839,20 @@
     }
     const data = engagementState.data[engagementState.period];
     if (data) {
-      updateApexChartInCard(
-        'Impact Over the Year',
+      updateApexChart(
+        'volunteer-engagement',
         [
           { name: 'Hours approved', data: data.hours },
         ],
         data.labels,
         false
       );
+      // Update total hours display
+      const totalHours = data.hours.reduce((sum, h) => sum + (Number(h) || 0), 0);
+      const totalEl = document.getElementById('impactTotal');
+      if (totalEl) {
+        totalEl.textContent = formatHours(totalHours);
+      }
     }
   };
 
@@ -1902,18 +1908,8 @@
     
     const isEmpty = false;
     
-    // Update the chart in the card view (if it exists)
-    const updatedCard = updateApexChartInCard(
-      'Impact Over the Year',
-      [
-        { name: 'Hours approved', data: data.hours },
-      ],
-      data.labels,
-      isEmpty
-    );
-    
-    // Update the standalone chart
-    updateApexChart(
+    // Update the chart
+    const updated = updateApexChart(
       'volunteer-engagement',
       [
         { name: 'Hours approved', data: data.hours },
@@ -1922,8 +1918,15 @@
       isEmpty
     );
     
+    // Update total hours display
+    const totalHours = data.hours.reduce((sum, h) => sum + (Number(h) || 0), 0);
+    const totalEl = document.getElementById('impactTotal');
+    if (totalEl) {
+      totalEl.textContent = formatHours(totalHours);
+    }
+    
     // Retry only if chart wasn't found and this is the first attempt
-    if (!updatedCard && attempt < 4) {
+    if (!updated && attempt < 4) {
       engagementState.pendingRequest = setTimeout(() => applyEngagementChart(period, attempt + 1), 400);
     } else {
       engagementState.pendingRequest = null;
@@ -1979,7 +1982,7 @@
 
   const BILLING_PRICE_SCHOOL = 'price_1SXZMfH9sPZuClpwNAJK5Uj2';
   const BILLING_PRICE_SCHOOL_YEARLY = 'price_1ShyF8HbGg7F5Ky7xTVwCMYk';
-  const SUPPORT_EMAIL = 'support@nexolink.app';
+  const SUPPORT_EMAIL = 'ayanshashish@gmail.com';
 
   const formatMoney = (amountCents, currency = 'usd') => {
     if (typeof amountCents !== 'number') return '—';
@@ -2092,6 +2095,22 @@
     return row;
   };
 
+  const removeBillingRow = (card, labelText) => {
+    if (!card) return;
+    const rows = Array.from(card.querySelectorAll('div.flex.items-center.justify-between'));
+    const row = rows.find((node) => node.textContent.includes(labelText));
+    if (row) row.remove();
+  };
+
+  const resolvePlanTitle = (subscription) => (
+    subscription?.plan?.nickname
+    || subscription?.plan?.name
+    || subscription?.plan_name
+    || subscription?.planName
+    || subscription?.metadata?.plan_name
+    || null
+  );
+
   const updateBillingPage = ({ subscription, invoices = [] }) => {
     const planCard = Array.from(document.querySelectorAll('h3')).find(
       (el) => el.textContent.trim() === 'Current Plan'
@@ -2113,6 +2132,7 @@
     const paidInvoices = invoices.filter((inv) => inv?.status === 'paid' || inv?.amountPaid > 0).length;
 
     const planKey = resolvePlanKey(subscription);
+    const planTitle = resolvePlanTitle(subscription);
     const intervalLabel = planKey === 'school'
       ? interval === 'year'
         ? 'School Annual Plan'
@@ -2124,11 +2144,12 @@
           : interval
             ? `${interval.charAt(0).toUpperCase()}${interval.slice(1)} Plan`
             : 'Subscription';
+    const basePlanLabel = planTitle || intervalLabel;
     const planName = !hasSubscription
       ? 'No active plan'
       : statusRaw === 'trialing'
-        ? `Trial · ${intervalLabel}`
-        : intervalLabel;
+        ? `Trial · ${basePlanLabel}`
+        : basePlanLabel;
 
     const planNameEl = planCard.querySelector('p.mt-1');
     if (planNameEl) planNameEl.textContent = planName;
@@ -2184,6 +2205,42 @@
       statusPill.className = `rounded-full px-3 py-1 text-sm font-semibold ${pillClass}`;
     }
 
+    const heading = planCard.querySelector('h3');
+    if (heading) {
+      let header = planCard.querySelector('[data-plan-header]');
+      if (!header) {
+        header = document.createElement('div');
+        header.dataset.planHeader = 'true';
+        header.className = 'flex items-start justify-between gap-4';
+        heading.parentNode.insertBefore(header, heading);
+        header.appendChild(heading);
+      }
+
+      let cancelTop = header.querySelector('[data-plan-header-action]');
+      if (!cancelTop) {
+        cancelTop = document.createElement('button');
+        cancelTop.type = 'button';
+        cancelTop.dataset.planHeaderAction = 'true';
+        cancelTop.dataset.cancelSubscription = 'true';
+        cancelTop.className = 'inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/[0.03]';
+        header.appendChild(cancelTop);
+      }
+
+      if (!hasSubscription) {
+        cancelTop.classList.add('hidden');
+      } else {
+        cancelTop.classList.remove('hidden');
+        cancelTop.textContent = cancelAtPeriodEnd ? 'Cancellation scheduled' : 'Cancel subscription';
+        if (cancelAtPeriodEnd) {
+          cancelTop.setAttribute('disabled', 'true');
+          cancelTop.classList.add('opacity-60', 'cursor-not-allowed');
+        } else {
+          cancelTop.removeAttribute('disabled');
+          cancelTop.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+      }
+    }
+
     const actions = planCard.querySelector('.mt-6.flex.flex-wrap');
     if (actions) {
       actions.dataset.billingActionsReady = 'true';
@@ -2193,25 +2250,11 @@
       const schoolMonthlyEnabled = Boolean(schoolPrices.monthly);
       const schoolYearlyEnabled = Boolean(schoolPrices.yearly);
       if (!hasSubscription) {
-        actions.innerHTML = `
-          <button class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-brand-600" data-billing-upgrade="monthly">
-            Start Monthly
-          </button>
-          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-upgrade="yearly">
-            Start Yearly
-          </button>
-          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-plan-key="school" data-billing-plan-billing="monthly" ${schoolMonthlyEnabled ? '' : 'disabled'}>
-            Start School Monthly
-          </button>
-          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-billing-plan-key="school" data-billing-plan-billing="yearly" ${schoolYearlyEnabled ? '' : 'disabled'}>
-            Start School Yearly
-          </button>
-        `;
+        actions.innerHTML = '';
+        actions.classList.add('hidden');
       } else {
+        actions.classList.remove('hidden');
         actions.innerHTML = `
-          <button class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]" data-cancel-subscription ${cancelDisabled ? 'disabled' : ''}>
-            ${cancelDisabled ? 'Cancellation scheduled' : 'Cancel subscription'}
-          </button>
           <button class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-brand-600" data-billing-upgrade="yearly" ${intervalKey === 'yearly' && planKey !== 'school' ? 'disabled' : ''}>
             ${intervalKey === 'yearly' && planKey !== 'school' ? 'Current Plan' : 'Switch to Yearly'}
           </button>
@@ -2225,28 +2268,28 @@
             ${planKey === 'school' && intervalKey === 'yearly' ? 'Current Plan' : 'Switch to School Yearly'}
           </button>
         `;
-        if (cancelDisabled) {
-          const cancelBtn = actions.querySelector('[data-cancel-subscription]');
-          cancelBtn?.classList.add('opacity-60', 'cursor-not-allowed');
-        }
         actions.querySelectorAll('button[disabled]').forEach((btn) => {
           btn.classList.add('opacity-60', 'cursor-not-allowed');
+        });
+        if (planKey === 'school') {
+          actions.querySelectorAll('[data-billing-upgrade]').forEach((btn) => btn.remove());
+        } else {
+          actions.querySelectorAll('[data-billing-plan-key="school"]').forEach((btn) => btn.remove());
+        }
+        actions.querySelectorAll('button').forEach((btn) => {
+          if (btn.textContent.trim() === 'Current Plan') {
+            btn.remove();
+          }
         });
       }
     }
 
-    updateBillingRow(summaryCard, 'Invoices paid', `${paidInvoices}`, 'Total invoices paid');
-    updateBillingRow(summaryCard, 'Billing status', hasSubscription ? (statusRaw === 'trialing' ? 'Trial' : statusRaw || 'Inactive') : 'Inactive');
     updateBillingRow(summaryCard, 'Support plan', SUPPORT_EMAIL, 'Support email');
-    ensureBillingRow(summaryCard, 'Total invoices paid', `${paidInvoices}`);
-    ensureBillingRow(summaryCard, 'Billing status', hasSubscription ? (statusRaw === 'trialing' ? 'Trial' : statusRaw || 'Inactive') : 'Inactive');
     ensureBillingRow(summaryCard, 'Support email', SUPPORT_EMAIL);
-    ensureBillingRow(summaryCard, 'Next billing', nextBilling ? formatDateShort(nextBilling) : '—');
-    if (hasSubscription && amount != null && nextBilling) {
-      ensureBillingRow(summaryCard, 'Upcoming invoice', `${formatMoney(amount, currency)} on ${formatDateShort(nextBilling)}`);
-    } else {
-      ensureBillingRow(summaryCard, 'Upcoming invoice', '—');
-    }
+    removeBillingRow(summaryCard, 'Total invoices paid');
+    removeBillingRow(summaryCard, 'Subscription plan');
+    removeBillingRow(summaryCard, 'Billing status');
+    removeBillingRow(summaryCard, 'Upcoming invoice');
   };
 
   const updateBillingInvoiceList = (invoices, upcomingInvoice = null) => {
@@ -2256,34 +2299,41 @@
     const card = heading?.closest('div.rounded-2xl');
     if (!card) return;
 
-    let list = card.querySelector('[data-invoice-list]');
-    if (!list) {
-      list = document.createElement('div');
-      list.dataset.invoiceList = 'true';
-      list.className = 'mt-6 space-y-3';
-      card.appendChild(list);
+    let section = card.querySelector('[data-invoice-section]');
+    if (!section) {
+      section = document.createElement('div');
+      section.dataset.invoiceSection = 'true';
+      section.className = 'mt-6';
+      section.innerHTML = `
+        <button type="button" class="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-900" data-invoice-toggle aria-expanded="false">
+          <span>Invoice history</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400" data-invoice-toggle-label>Show</span>
+        </button>
+        <div class="mt-4 space-y-3 hidden" data-invoice-list></div>
+      `;
+      card.appendChild(section);
     }
+
+    const toggle = section.querySelector('[data-invoice-toggle]');
+    const toggleLabel = section.querySelector('[data-invoice-toggle-label]');
+    const list = section.querySelector('[data-invoice-list]');
+    if (!toggle || !list) return;
+
+    if (!toggle.dataset.bound) {
+      toggle.dataset.bound = 'true';
+      toggle.addEventListener('click', () => {
+        const isHidden = list.classList.contains('hidden');
+        list.classList.toggle('hidden', !isHidden);
+        toggle.setAttribute('aria-expanded', String(isHidden));
+        if (toggleLabel) toggleLabel.textContent = isHidden ? 'Hide' : 'Show';
+      });
+    }
+
     list.innerHTML = '';
 
-    if (!invoices.length && !upcomingInvoice) {
+    if (!invoices.length) {
       list.innerHTML = '<p class="text-sm text-gray-500 dark:text-gray-400">No invoices yet.</p>';
       return;
-    }
-
-    if (upcomingInvoice) {
-      const row = document.createElement('div');
-      row.className = 'flex items-center justify-between rounded-xl border border-dashed border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-300';
-      row.innerHTML = `
-        <div>
-          <p class="font-semibold text-gray-800 dark:text-white/90">Upcoming invoice</p>
-          <span class="text-xs text-gray-500 dark:text-gray-400">${upcomingInvoice.dateLabel || '—'}</span>
-        </div>
-        <div class="flex items-center gap-4">
-          <span class="font-semibold text-gray-800 dark:text-white/90">${upcomingInvoice.amountLabel || '—'}</span>
-          <span class="text-xs font-semibold text-brand-500">Estimated</span>
-        </div>
-      `;
-      list.appendChild(row);
     }
 
     invoices.forEach((invoice) => {
@@ -2303,6 +2353,13 @@
           ${link !== '#' ? `<a class="text-xs font-semibold text-brand-500 hover:text-brand-600" href="${link}" target="_blank" rel="noreferrer">View</a>` : ''}
         </div>
       `;
+      if (link !== '#') {
+        row.classList.add('cursor-pointer');
+        row.addEventListener('click', (event) => {
+          if (event.target.closest('a')) return;
+          window.open(link, '_blank', 'noreferrer');
+        });
+      }
       list.appendChild(row);
     });
   };
@@ -2479,6 +2536,74 @@
     return best;
   };
 
+  const initializeImpactChart = () => {
+    const canvas = document.getElementById('impactYearChart');
+    if (!canvas || window.impactChart) return false;
+
+    if (!window.Chart) {
+      console.warn('Chart.js not loaded yet');
+      return false;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+
+    // Create gradient (matching impact chart blue color)
+    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    grad.addColorStop(0, 'rgba(30,64,175,0.85)');
+    grad.addColorStop(1, 'rgba(30,64,175,0.2)');
+
+    window.impactChart = new window.Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Hours approved',
+          data: [],
+          fill: true,
+          backgroundColor: grad,
+          borderColor: '#1E40AF',
+          borderWidth: 2,
+          tension: 0.4,
+          pointRadius: 4,
+          pointBackgroundColor: '#1E40AF',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(30,64,175,0.9)',
+            padding: 8,
+            cornerRadius: 4,
+            callbacks: {
+              label: (context) => `${context.parsed.y.toFixed(1)} hrs`
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: 'rgba(30,64,175,0.55)' },
+            grid: { display: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: 'rgba(30,64,175,0.45)' },
+            grid: { color: 'rgba(30,64,175,0.15)' }
+          }
+        }
+      }
+    });
+
+    return true;
+  };
+
   const updateApexChart = (chartId, series, categories, empty = false) => {
     // Map chartId to canvas element ID
     const canvasIdMap = {
@@ -2491,9 +2616,20 @@
       return false;
     }
 
+    // Check if canvas exists on this page
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) {
+      return true; // Silently succeed if canvas doesn't exist (not on this page)
+    }
+
     // NOTE: Weekly hours chart is now managed by dashboard.js using Chart.js, skip it here
     if (canvasId === 'weeklyHoursChart') {
       return true;
+    }
+
+    // Initialize impact chart if needed
+    if (canvasId === 'impactYearChart' && !window.impactChart) {
+      initializeImpactChart();
     }
 
     if (window.impactChart && canvasId === 'impactYearChart') {
@@ -3112,7 +3248,6 @@
         approved: 0,
         today: 0,
       });
-      console.info('[nexolink-admin] resolved org context', { orgCode, orgId, orgName });
       const isExcludedVolunteer = createVolunteerExclusionChecker({ adminUser: user, orgId });
       insertOrgBadges({ orgName, orgCode });
       updateSidebarOrgName(orgName);
@@ -3369,7 +3504,6 @@
           volunteerMap.set(change.doc.id, entry);
         });
         latestUsers = Array.from(volunteerMap.values());
-        console.info('[nexolink-admin] volunteer snapshot', { size: snapshot.size });
         renderFromLogs(latestLogs);
       };
 
@@ -3405,7 +3539,6 @@
           value: lastMeta.value || null,
           target: snapshot.query?._queryOptions || {},
         };
-        console.info('[nexolink-admin] log snapshot', info);
         debugState.lastLogSnap = info;
         mergeLogMaps();
       };
@@ -3433,7 +3566,6 @@
       ];
       codeCandidates.forEach((code) => {
         logCodeFields.forEach((field) => {
-          console.info('[nexolink-admin] log listener start', { field, code });
           logListeners.push(
             db.collection('volunteer_logs')
               .where(field, '==', code)
@@ -3449,7 +3581,6 @@
       });
       if (orgId) {
         logIdFields.forEach((field) => {
-          console.info('[nexolink-admin] log listener start', { field, id: orgId });
           logListeners.push(
             db.collection('volunteer_logs')
               .where(field, '==', orgId)
@@ -3767,9 +3898,19 @@
     bindEngagementToggleDelegate();
     setImpactOverviewDefaults();
     initVolunteerHistoryState();
+    // Only initialize impact chart if the canvas exists (main admin page)
+    if (document.getElementById('impactYearChart')) {
+      initializeImpactChart();
+    }
     setTimeout(() => {
-      updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset, 0);
-      applyEngagementChart(engagementState.period);
+      // Only update weekly hours card if the chart exists (main admin page)
+      if (document.getElementById('weeklyHoursChart')) {
+        updateWeeklyHoursCard(weeklyChartState.totals, weeklyChartState.offset, 0);
+      }
+      // Only apply engagement chart if the chart exists (main admin page)
+      if (document.getElementById('volunteerEngagementChart')) {
+        applyEngagementChart(engagementState.period);
+      }
     }, 800);
     ensureFirebase()
       .then(loadDashboard)

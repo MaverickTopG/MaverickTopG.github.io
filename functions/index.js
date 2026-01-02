@@ -1619,9 +1619,17 @@ export const listInvoices = onRequest(
         || subscription.customer
         || userData.stripeCustomerId
         || userData.stripeCustomer;
+      const fallbackEmail = userData.email || decodedToken.email || null;
 
-      if (!customerId) {
-        res.status(404).json({ error: 'This admin is not yet linked to Stripe billing. Please contact support to enable billing.' });
+      const stripe = getStripeClient();
+      let resolvedCustomerId = customerId;
+      if (!resolvedCustomerId && fallbackEmail) {
+        const customers = await stripe.customers.list({ email: fallbackEmail, limit: 1 });
+        resolvedCustomerId = customers.data?.[0]?.id || null;
+      }
+
+      if (!resolvedCustomerId) {
+        res.status(404).json({ error: 'No Stripe customer record found for this account.' });
         return;
       }
 
@@ -1633,9 +1641,8 @@ export const listInvoices = onRequest(
         limit = 50;
       }
 
-      const stripe = getStripeClient();
       const { data } = await stripe.invoices.list({
-        customer: customerId,
+        customer: resolvedCustomerId,
         limit,
         // Avoid deep expansion errors; price info is enough for UI.
         expand: ['data.lines.data.price'],
@@ -1653,7 +1660,7 @@ export const listInvoices = onRequest(
         lines: normalizeInvoiceLines(invoice.lines?.data || []),
       }));
 
-      res.json({ customerId, invoices });
+      res.json({ customerId: resolvedCustomerId, invoices });
     } catch (error) {
       logger.error('Invoice list retrieval failed', error);
       res.status(500).json({ error: 'Unable to fetch invoices.' });
@@ -1664,6 +1671,7 @@ export const listInvoices = onRequest(
 export const listSubscriptions = onRequest(
   {
     cors: true,
+    secrets: [STRIPE_SECRET_KEY],
   },
   async (req, res) => {
     if (req.method !== 'GET') {
@@ -1685,7 +1693,7 @@ export const listSubscriptions = onRequest(
       }
 
       const userData = userDoc.data() || {};
-      const subscription = userData.subscription || null;
+      let subscription = userData.subscription || null;
       const subscriptionHistory = Array.isArray(userData.subscriptionHistory)
         ? [...userData.subscriptionHistory]
         : [];
@@ -1693,6 +1701,31 @@ export const listSubscriptions = onRequest(
         ? [...userData.invoiceHistory]
         : [];
       const lastInvoice = userData.lastInvoice || null;
+      const fallbackEmail = userData.email || decodedToken.email || null;
+      const customerId = subscription?.customerId
+        || subscription?.customer_id
+        || subscription?.customer
+        || userData.stripeCustomerId
+        || userData.stripeCustomer
+        || null;
+
+      if (!subscription && fallbackEmail) {
+        const stripe = getStripeClient();
+        let resolvedCustomerId = customerId;
+        if (!resolvedCustomerId) {
+          const customers = await stripe.customers.list({ email: fallbackEmail, limit: 1 });
+          resolvedCustomerId = customers.data?.[0]?.id || null;
+        }
+        if (resolvedCustomerId) {
+          const subs = await stripe.subscriptions.list({
+            customer: resolvedCustomerId,
+            status: 'all',
+            limit: 1,
+            expand: ['data.items.data.price'],
+          });
+          subscription = subs.data?.[0] || null;
+        }
+      }
 
       subscriptionHistory.sort((a, b) => (b?.recordedAtMs || 0) - (a?.recordedAtMs || 0));
       invoiceHistory.sort((a, b) => (b?.created || 0) - (a?.created || 0));
