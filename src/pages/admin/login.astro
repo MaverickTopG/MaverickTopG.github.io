@@ -12,7 +12,8 @@ const firebaseConfig = {
 };
 
 const metadata = {
-  title: 'Admin Login | NexoLink',
+  title: 'NexoLink | Login',
+  ignoreTitleTemplate: true,
   description: 'Sign in to the NexoLink admin portal.',
 };
 ---
@@ -56,13 +57,62 @@ const metadata = {
                 <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-400">
                   Password <span class="text-red-500">*</span>
                 </label>
-                <input
-                  type="password"
-                  name="password"
-                  placeholder="Enter your password"
-                  class="h-11 w-full rounded-lg border border-gray-300 bg-transparent px-4 py-2.5 text-sm text-gray-800 shadow-sm placeholder:text-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-3 focus:ring-indigo-500/10 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 dark:placeholder:text-white/30 dark:focus:border-indigo-300"
-                  required
-                />
+                <div class="relative">
+                  <input
+                    type="password"
+                    name="password"
+                    data-password-input
+                    placeholder="Enter your password"
+                    class="h-11 w-full rounded-lg border border-gray-300 bg-transparent px-4 py-2.5 pr-11 text-sm text-gray-800 shadow-sm placeholder:text-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-3 focus:ring-indigo-500/10 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 dark:placeholder:text-white/30 dark:focus:border-indigo-300"
+                    required
+                  />
+                  <button
+                    type="button"
+                    data-toggle-password
+                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-white"
+                    aria-label="Show password"
+                  >
+                    <svg
+                      data-password-show
+                      class="h-5 w-5"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                    <svg
+                      data-password-hide
+                      class="hidden h-5 w-5"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.6 21.6 0 0 1 5.06-6.06" />
+                      <path d="M9.88 9.88A3 3 0 0 0 12 15a3 3 0 0 0 2.12-.88" />
+                      <path d="M1 1l22 22" />
+                      <path d="M10.58 5.08A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.6 21.6 0 0 1-4.19 5.19" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="mt-2 text-right">
+                  <button
+                    type="button"
+                    data-forgot-password
+                    class="text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -79,22 +129,8 @@ const metadata = {
         </div>
       </div>
 
-      <div class="relative hidden h-full w-full items-center justify-center overflow-hidden rounded-3xl bg-slate-900 px-10 py-12 text-white shadow-xl lg:flex lg:w-1/2">
-        <div class="absolute right-0 top-0 w-full max-w-[280px] xl:max-w-[420px]">
-          <img src="/images/shape/grid-01.svg" alt="" class="w-full opacity-80" loading="lazy" />
-        </div>
-        <div class="absolute bottom-0 left-0 w-full max-w-[280px] rotate-180 xl:max-w-[420px]">
-          <img src="/images/shape/grid-01.svg" alt="" class="w-full opacity-80" loading="lazy" />
-        </div>
-
-        <div class="relative z-10 flex flex-col items-center space-y-4 text-center">
-          <a href="/" class="block">
-            <img src="/images/logo/auth-logo.svg" alt="NexoLink" class="mx-auto h-10 w-auto" loading="lazy" />
-          </a>
-          <p class="max-w-xs text-sm text-gray-300">
-            Free and open-source Tailwind CSS admin dashboard template, tailored for NexoLink access.
-          </p>
-        </div>
+      <div class="relative hidden h-full w-full items-center justify-center overflow-hidden rounded-3xl bg-transparent px-10 py-12 lg:flex lg:w-1/2">
+        <img src="/login.png" alt="NexoLink" class="h-full w-full object-cover" loading="lazy" />
       </div>
     </div>
   </section>
@@ -110,7 +146,11 @@ const metadata = {
   const form = document.querySelector('[data-signin-form]');
   const submitBtn = form?.querySelector('[data-signin-submit]');
   const emailInput = form?.querySelector('input[name="email"]');
-  const passwordInput = form?.querySelector('input[name="password"]');
+  const passwordInput = form?.querySelector('[data-password-input]');
+  const forgotPasswordBtn = form?.querySelector('[data-forgot-password]');
+  const togglePasswordButton = form?.querySelector('[data-toggle-password]');
+  const toggleIconShow = form?.querySelector('[data-password-show]');
+  const toggleIconHide = form?.querySelector('[data-password-hide]');
 
   const setStatus = (message, type = 'warning') => {
     if (!statusEl) return;
@@ -164,6 +204,36 @@ const metadata = {
     }
     return window.firebase.auth();
   };
+
+  if (togglePasswordButton && passwordInput) {
+    togglePasswordButton.addEventListener('click', () => {
+      const isHidden = passwordInput.type === 'password';
+      passwordInput.type = isHidden ? 'text' : 'password';
+      toggleIconShow?.classList.toggle('hidden', !isHidden);
+      toggleIconHide?.classList.toggle('hidden', isHidden);
+      togglePasswordButton.setAttribute(
+        'aria-label',
+        isHidden ? 'Hide password' : 'Show password'
+      );
+    });
+  }
+
+  forgotPasswordBtn?.addEventListener('click', async () => {
+    const email = String(emailInput?.value || '').trim();
+    if (!email) {
+      setStatus('Please enter your email address first.', 'warning');
+      return;
+    }
+    setStatus('Sending password reset email…', 'info');
+    try {
+      const auth = await ensureFirebase();
+      await auth.sendPasswordResetEmail(email);
+      setStatus('Password reset email sent. Please check your inbox.', 'success');
+    } catch (error) {
+      console.error('[ForgotPassword] error', error);
+      setStatus(error?.message || 'Unable to send password reset email.', 'error');
+    }
+  });
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();

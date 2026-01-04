@@ -71,16 +71,16 @@ const {
       <div aria-hidden="true" class="mt-10 md:mt-0 md:basis-7/12">
         {
           image && (
-            <div class="relative">
+            <div class="relative overflow-hidden rounded-3xl shadow-lg">
               {typeof image === 'string' ? (
                 <Fragment set:html={image} />
               ) : (
                 <Image
-                  class="w-full h-full object-cover bg-gray-500 shadow-lg"
+                  class="w-full h-full object-cover bg-gray-500"
                   width={500}
                   height={500}
-                  widths={[400, 768]}
-                  sizes="(max-width: 768px) 100vw, 432px"
+                  widths={[768, 1024, 1600, 2048, 2560, 3840]}
+                  sizes="100vw"
                   layout="responsive"
                   {...image}
                 />

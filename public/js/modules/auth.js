@@ -197,10 +197,8 @@ function syncSignupCheckoutStatus() {
   } else if (checkoutStatus === 'cancel') {
     sessionStorage.removeItem(SIGNUP_CHECKOUT_KEY);
     sessionStorage.removeItem(SIGNUP_CHECKOUT_EMAIL_KEY);
-    params.delete('checkout');
-    const newQuery = params.toString();
-    const newUrl = window.location.pathname + (newQuery ? `?${newQuery}` : '');
-    window.history.replaceState({}, '', newUrl);
+    window.location.replace('/pricing');
+    return;
   }
 
   if (checkoutSessionId) {
@@ -491,24 +489,7 @@ function isSubscriptionActive(subscription, legacyPaid = false) {
   if (shouldHonorLegacyPaidFlag(legacyPaid)) return true;
   if (!subscription) return false;
   const status = (subscription.status || '').toLowerCase();
-  const cancelAtPeriodEnd = Boolean(
-    subscription.cancelAtPeriodEnd
-    || subscription.cancel_at_period_end
-  );
-  const cancelAt = subscription.cancelAt instanceof Date
-    ? subscription.cancelAt
-    : subscription.cancel_at instanceof Date
-      ? subscription.cancel_at
-      : null;
-
-  if (status === 'trialing' && (cancelAtPeriodEnd || (cancelAt && cancelAt.getTime() <= Date.now()))) {
-    return false;
-  }
-
   const activeStatuses = ['active', 'trialing'];
-  if (!activeStatuses.includes(status)) {
-    return false;
-  }
   try {
     const periodEnd = subscription.currentPeriodEnd
       || subscription.current_period_end
@@ -517,7 +498,7 @@ function isSubscriptionActive(subscription, legacyPaid = false) {
       || null;
 
     if (!periodEnd) {
-      return true;
+      return activeStatuses.includes(status);
     }
 
     const normalizedEnd = periodEnd instanceof Date
@@ -525,11 +506,22 @@ function isSubscriptionActive(subscription, legacyPaid = false) {
       : new Date(periodEnd);
 
     if (Number.isNaN(normalizedEnd.getTime())) {
-      return true;
+      return activeStatuses.includes(status);
     }
-    return normalizedEnd.getTime() > Date.now();
+    const hasTimeRemaining = normalizedEnd.getTime() > Date.now();
+
+    if (status === 'canceled') {
+      return hasTimeRemaining;
+    }
+    if (status === 'trialing') {
+      return hasTimeRemaining;
+    }
+    if (!activeStatuses.includes(status)) {
+      return false;
+    }
+    return hasTimeRemaining;
   } catch (error) {
-    return true;
+    return activeStatuses.includes(status);
   }
 }
 

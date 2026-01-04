@@ -10,6 +10,9 @@ import { showMessage } from './ui.js';
 import { notifyVolunteersUpdate, syncVolunteerHoursFromActivity } from './volunteerOps.js';
 
 let activityUpdateHandler = () => {};
+const SCHOOL_PLAN_KEY = 'school';
+const SCHOOL_VOLUNTEER_CHUNK_SIZE = 10;
+const schoolLogsByChunk = new Map();
 
 export function registerActivityUpdateHandler(handler) {
   activityUpdateHandler = typeof handler === 'function' ? handler : () => {};
@@ -17,6 +20,64 @@ export function registerActivityUpdateHandler(handler) {
 
 function notifyActivityUpdate() {
   activityUpdateHandler();
+}
+
+function normalizePlanValue(value) {
+  if (value == null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized || null;
+}
+
+function subscriptionMentionsSchool(subscription = {}, admin = {}) {
+  const candidates = [
+    subscription.planKey,
+    subscription.plan_key,
+    subscription.planNickname,
+    subscription.plan?.nickname,
+    subscription.plan?.name,
+    subscription.plan_name,
+    subscription.product_name,
+    subscription.price?.nickname,
+    subscription.price?.name,
+    subscription.product?.name,
+    subscription.metadata?.plan_key,
+    admin.planKey,
+    admin.plan_key,
+    admin.plan,
+    admin.planType,
+    admin.subscription_plan_key,
+  ];
+  return candidates.some((value) => {
+    const normalized = normalizePlanValue(value);
+    return normalized ? normalized.includes(SCHOOL_PLAN_KEY) : false;
+  });
+}
+
+function isSchoolAdminPlan() {
+  const admin = appState.currentAdmin || {};
+  const subscription = admin.subscription || admin.subscriptionData || admin.subscriptionSnapshot || {};
+  if (subscriptionMentionsSchool(subscription, admin)) return true;
+  const items = subscription.items || subscription.subscription_items || subscription.products || subscription.subscription_products;
+  if (Array.isArray(items)) {
+    return items.some((item) => subscriptionMentionsSchool(item, admin));
+  }
+  return false;
+}
+
+function getVolunteerIdsForSchool() {
+  const volunteers = Array.isArray(appState.volunteersData) ? appState.volunteersData : [];
+  const ids = volunteers.map((volunteer) =>
+    volunteer.user_id || volunteer.userId || volunteer.uid || volunteer.id || null,
+  );
+  return Array.from(new Set(ids.filter(Boolean)));
+}
+
+function normalizeSchoolLog(log, orgCode) {
+  return {
+    ...log,
+    approve: 'accepted',
+    school_auto_approved: true,
+  };
 }
 
 function resetSharedLogsListener() {
@@ -30,6 +91,19 @@ function resetSharedLogsListener() {
   }
 }
 
+function resetSchoolVolunteerLogsListener() {
+  if (appState.schoolLogsUnsub) {
+    try {
+      appState.schoolLogsUnsub();
+    } catch (error) {
+      console.warn('schoolLogsUnsub error', error);
+    }
+    appState.schoolLogsUnsub = null;
+  }
+  schoolLogsByChunk.clear();
+  appState.schoolVolunteerLogs = [];
+}
+
 export function resetActivityListener() {
   if (appState.logsUnsub) {
     try {
@@ -39,6 +113,7 @@ export function resetActivityListener() {
     }
     appState.logsUnsub = null;
   }
+  resetSchoolVolunteerLogsListener();
   resetSharedLogsListener();
 }
 
@@ -149,7 +224,13 @@ function buildCombinedActivity(baseLogs, sharedEntries) {
   const normalizedShared = Array.isArray(sharedEntries)
     ? sharedEntries.map(normalizeSharedLogForTotals).filter(Boolean)
     : [];
-  return [...base, ...normalizedShared];
+  const combined = [...base, ...normalizedShared];
+  const deduped = new Map();
+  combined.forEach((entry) => {
+    if (!entry || !entry.id) return;
+    deduped.set(entry.id, entry);
+  });
+  return Array.from(deduped.values());
 }
 
 function updateVolunteerAggregates() {
@@ -158,13 +239,105 @@ function updateVolunteerAggregates() {
   notifyVolunteersUpdate();
 }
 
+function applySchoolLogsSnapshot(chunkKey, orgCode, snapshot) {
+  const records = [];
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const normalized = normalizeSchoolLog({ id: docSnap.id, ...data }, orgCode);
+    records.push(normalized);
+  });
+  schoolLogsByChunk.set(chunkKey, records);
+  const combined = [];
+  schoolLogsByChunk.forEach((entries) => {
+    combined.push(...entries);
+  });
+  appState.schoolVolunteerLogs = combined;
+  refreshActivityData();
+}
+
+function refreshActivityData() {
+  const baseLogs = Array.isArray(appState.baseOrgLogs) ? appState.baseOrgLogs : [];
+  const schoolLogs = Array.isArray(appState.schoolVolunteerLogs) ? appState.schoolVolunteerLogs : [];
+  const merged = new Map();
+  baseLogs.forEach((entry) => entry?.id && merged.set(entry.id, entry));
+  schoolLogs.forEach((entry) => entry?.id && merged.set(entry.id, entry));
+  const combined = Array.from(merged.values());
+  combined.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
+  appState.activityData = combined;
+  updateVolunteerAggregates();
+  notifyActivityUpdate();
+}
+
+function loadSchoolVolunteerLogs(orgCode) {
+  resetSchoolVolunteerLogsListener();
+  if (!orgCode || !isSchoolAdminPlan()) {
+    refreshActivityData();
+    return;
+  }
+
+  const volunteerIds = getVolunteerIdsForSchool();
+  if (!volunteerIds.length) {
+    refreshActivityData();
+    return;
+  }
+
+  const subscriptions = [];
+  const chunks = [];
+  for (let i = 0; i < volunteerIds.length; i += SCHOOL_VOLUNTEER_CHUNK_SIZE) {
+    chunks.push(volunteerIds.slice(i, i + SCHOOL_VOLUNTEER_CHUNK_SIZE));
+  }
+
+  const idFields = ['user_id', 'volunteer_id', 'uid'];
+
+  chunks.forEach((chunk, index) => {
+    const chunkKey = `chunk-${index}`;
+    idFields.forEach((field) => {
+      try {
+        const logsQuery = query(
+          collection(db, 'volunteer_logs'),
+          where(field, 'in', chunk),
+        );
+        const unsub = onSnapshot(
+          logsQuery,
+          (snapshot) => applySchoolLogsSnapshot(`${chunkKey}-${field}`, orgCode, snapshot),
+          (error) => {
+            console.error('school logs onSnapshot error:', error);
+            showMessage(`Error loading school logs: ${error.message || error}`, 'error');
+          },
+        );
+        subscriptions.push(unsub);
+      } catch (error) {
+        console.error('school logs listener setup failed:', error);
+        showMessage(`Unable to subscribe to school logs: ${error.message || error}`, 'error');
+      }
+    });
+  });
+
+  appState.schoolLogsUnsub = () => {
+    subscriptions.forEach((unsub) => {
+      try {
+        unsub();
+      } catch (error) {
+        console.warn('school logs unsubscribe error', error);
+      }
+    });
+  };
+}
+
+export function refreshSchoolVolunteerLogs() {
+  const orgCode = (appState.currentOrgCode || '').trim().toUpperCase();
+  loadSchoolVolunteerLogs(orgCode);
+}
+
 export function loadActivityData() {
   resetActivityListener();
 
   const normalizedOrgCode = (appState.currentOrgCode || '').trim().toUpperCase();
   if (!normalizedOrgCode) {
     appState.activityData = [];
+    appState.baseOrgLogs = [];
     appState.sharedLogs = [];
+    appState.schoolVolunteerLogs = [];
     updateVolunteerAggregates();
     notifyActivityUpdate();
     return;
@@ -184,17 +357,18 @@ export function loadActivityData() {
         if (logData.approve === undefined) {
           logData.approve = 'pending';
         }
+        if (isSchoolAdminPlan()) {
+          logData.approve = 'accepted';
+          logData.school_auto_approved = true;
+        }
         activity.push({
           id: doc.id,
           ...logData,
         });
       });
 
-      activity.sort((a, b) => parseDateForSort(b) - parseDateForSort(a));
-
-      appState.activityData = activity;
-      updateVolunteerAggregates();
-      notifyActivityUpdate();
+      appState.baseOrgLogs = activity;
+      refreshActivityData();
     },
     (error) => {
       console.error('logs onSnapshot error:', error);
@@ -203,6 +377,7 @@ export function loadActivityData() {
   );
 
   loadSharedLogs(normalizedOrgCode);
+  loadSchoolVolunteerLogs(normalizedOrgCode);
 }
 
 export function getCurrentWeekBoundaries(referenceDate = new Date()) {

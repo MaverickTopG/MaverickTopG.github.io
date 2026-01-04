@@ -1,9 +1,28 @@
 ---
 title: 'How I Built NexoLink: A Founder Story in 5 Minutes'
 layout: '~/layouts/MarkdownLayout.astro'
+relatedPosts:
+  - title: 'Designing Volunteer Journeys That Stick'
+    href: '/blog/designing-volunteer-journeys'
+    date: 'Dec 27, 2025'
+    author: 'NexoLink Team'
+    category: 'Design'
+    excerpt: 'From discovery to recognition, learn how we craft a volunteer flow that keeps engagement strong.'
+    tags: ['design', 'volunteers', 'experience']
+    image: '~/assets/images/blog-journeys.png'
+    imageAlt: 'Volunteer experience highlights'
+  - title: 'Impact Reporting That Boards Actually Trust'
+    href: '/blog/impact-reporting-that-builds-trust'
+    date: 'Jan 3, 2026'
+    author: 'NexoLink Team'
+    category: 'Reporting'
+    excerpt: 'Clean data, fast exports, and visual clarity turn volunteer hours into stories your partners can act on.'
+    tags: ['reporting', 'analytics', 'impact']
+    image: '~/assets/images/blog-reporting.png'
+    imageAlt: 'Product development work'
 ---
 
-Effective: January 3, 2025  
+Effective: December 20, 2025  
 Read time: ~5 minutes
 
 ## Why I Started

@@ -33,5 +33,5 @@ f:["$","$1","c",{"children":[["$","div",null,{"children":["$","div",null,{"class
 b:"$0:f:0:1:1:children:0:props:children:1:props:serverProvidedParams:params"
 1c:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
 22:I[66319,["/admin/_next/static/chunks/5b43047cd61d92b0.js","/admin/_next/static/chunks/a3be58b80173873b.js"],"IconMark"]
-1f:[["$","title","0",{"children":"Volunteers | NexoLink Admin"}],["$","meta","1",{"name":"description","content":"Track volunteer roster details inside the NexoLink admin dashboard."}],["$","link","2",{"rel":"icon","href":"/admin/favicon.ico?favicon.7cdd2424.ico","sizes":"48x48","type":"image/x-icon"}],["$","$L22","3",{}]]
+1f:[["$","title","0",{"children":"NexoLink | Volunteer"}],["$","meta","1",{"name":"description","content":"Track volunteer roster details inside the NexoLink admin dashboard."}],["$","link","2",{"rel":"icon","href":"/admin/favicon.ico?favicon.7cdd2424.ico","sizes":"48x48","type":"image/x-icon"}],["$","$L22","3",{}]]
 21:null

@@ -11,13 +11,19 @@ import Steps from '~/components/widgets/Steps.astro';
 import Button from '~/components/ui/Button.astro';
 import Image from '~/components/common/Image.astro';
 import photoImage from '~/assets/images/photo.png';
+import amazingImage from '~/assets/images/amazing.png';
+import experienceImage from '~/assets/images/experience.png';
+import developingImage from '~/assets/images/developing.png';
 
 const appStoreImg = '~/assets/images/app-store.png';
+const googlePlayImg = '~/assets/images/google-play.png';
 const appStoreDownloadLink = 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone';
+const googlePlayDownloadLink = 'https://play.google.com/store/apps/details?id=com.ayanshsingh.nexo';
 const aspectRatio = photoImage.width / photoImage.height;
 
 const metadata = {
-  title: 'NexoLink App',
+  title: 'NexoLink | App',
+  ignoreTitleTemplate: true,
 };
 ---
 
@@ -27,8 +33,8 @@ const metadata = {
     image={{
       src: photoImage,
       alt: 'NexoLink mobile experience',
-      height: 600,
-      width: 300,
+      height: 720,
+      width: 340,
     }}
   >
     <Fragment slot="bg">
@@ -44,9 +50,12 @@ const metadata = {
       mirror the admin portal, giving every volunteer an immersive home for service.
     </Fragment>
 
-    <div slot="actions" class="flex max-w-sm gap-4">
+    <div slot="actions" class="flex max-w-sm gap-4 flex-wrap">
       <Button variant="link" href={appStoreDownloadLink}>
         <Image src={appStoreImg} alt="Download on the App Store" width={200} />
+      </Button>
+      <Button variant="link" href={googlePlayDownloadLink}>
+        <Image src={googlePlayImg} alt="Get it on Google Play" width={200} class="relative -top-2 scale-[1.15]" />
       </Button>
     </div>
   </Hero2>
@@ -74,8 +83,8 @@ const metadata = {
       },
     ]}
     image={{
-      src: 'https://images.unsplash.com/photo-1521517407911-565264e7d82d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2069&q=80',
-      alt: 'Volunteer mission cards',
+      src: amazingImage,
+      alt: 'Volunteer experience highlights',
     }}
   />
 
@@ -104,8 +113,8 @@ const metadata = {
       },
     ]}
     image={{
-      src: 'https://images.unsplash.com/photo-1576153192621-7a3be10b356e?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1674&q=80',
-      alt: 'NexoLink app interface',
+      src: developingImage,
+      alt: 'Product development work',
     }}
   >
     <Fragment slot="content">
@@ -129,15 +138,15 @@ const metadata = {
       },
     ]}
     image={{
-      src: 'https://images.unsplash.com/photo-1453738773917-9c3eff1db985?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80',
-      alt: 'Volunteer community gathering',
+      src: experienceImage,
+      alt: 'Volunteer experience highlights',
     }}
   />
 
   <Stats
     title="Volunteer momentum in motion"
     stats={[
-      { amount: '22k+', title: 'Hours logged in-app' },
+      { amount: '4,200+', title: 'Hours logged in-app' },
       { amount: '5.0', title: 'Volunteer rating' },
       { amount: '3 clicks', title: 'To log hours' },
     ]}
@@ -147,11 +156,13 @@ const metadata = {
     title="Ready to volunteer with style?"
     subtitle="Download NexoLink and bring the volunteer stats universe to your phone. Thousands of lights, one joyful orchestration."
   >
-    <div slot="actions" class="flex max-w-sm gap-4">
+    <div slot="actions" class="flex max-w-sm gap-4 flex-wrap">
       <Button variant="link" href={appStoreDownloadLink}>
         <Image src={appStoreImg} alt="Get the App" width={200} />
       </Button>
-      <Button href="/admin/login" variant="primary">Manage as an Admin</Button>
+      <Button variant="link" href={googlePlayDownloadLink}>
+        <Image src={googlePlayImg} alt="Get it on Google Play" width={200} class="relative -top-2 scale-[1.15]" />
+      </Button>
     </div>
   </CallToAction>
 </Layout>

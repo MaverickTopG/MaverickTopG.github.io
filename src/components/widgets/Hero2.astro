@@ -80,9 +80,9 @@ const {
                 <Fragment set:html={image} />
               ) : (
                 <Image
-                  class="mx-auto rounded-md w-full"
-                  widths={[400, 768, 1024, 2040]}
-                  sizes="(max-width: 767px) 400px, (max-width: 1023px) 768px, (max-width: 2039px) 1024px, 2040px"
+                  class="mx-auto rounded-[2.5rem] w-full"
+                  widths={[768, 1024, 1600, 2048, 2560, 3840]}
+                  sizes="100vw"
                   loading="eager"
                   {...image}
                 />

@@ -36,7 +36,7 @@ const {
   id = 'header',
   links = [],
   actions = [],
-  isSticky = false,
+  isSticky = true,
   isDark = false,
   isFullWidth = false,
   showToggleTheme = false,
@@ -49,10 +49,11 @@ const currentPath = `/${trimSlash(new URL(Astro.url).pathname)}`;
 
 <header
   class:list={[
-    { sticky: isSticky, relative: !isSticky, dark: isDark },
-    'top-0 z-40 flex-none mx-auto w-full border-b border-gray-50/0 transition-[opacity] ease-in-out',
+    { dark: isDark },
+    'fixed top-0 left-0 right-0 z-40 flex-none mx-auto w-full border-b border-gray-50/0 transition-[opacity] ease-in-out',
   ]}
-  {...isSticky ? { 'data-aw-sticky-header': true } : {}}
+  style="position: fixed; top: 0; left: 0; right: 0;"
+  data-aw-sticky-header
   {...id ? { id } : {}}
 >
   <div class="absolute inset-0"></div>
@@ -141,10 +142,16 @@ const currentPath = `/${trimSlash(new URL(Astro.url).pathname)}`;
         </div>
         {
           actions?.length ? (
-            <span class="ml-4 rtl:ml-0 rtl:mr-4">
-              {actions.map((btnProps) => (
-                <Button {...btnProps} class="ml-2 py-2.5 px-5.5 md:px-6 font-semibold shadow-none text-sm w-auto" />
-              ))}
+            <span class="ml-4 rtl:ml-0 rtl:mr-4 flex items-center">
+              <span class="flex items-center rounded-full border border-gray-300 bg-white p-1 pl-1 shadow-theme-xs dark:border-gray-700 dark:bg-gray-800">
+                {actions.map((btnProps) => (
+                  <Button
+                    {...btnProps}
+                    variant="link"
+                    class="flex h-9 w-9 items-center justify-center rounded-full pr-[0.5625rem] text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.03]"
+                  />
+                ))}
+              </span>
             </span>
           ) : (
             ''

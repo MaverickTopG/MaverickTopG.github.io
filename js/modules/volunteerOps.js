@@ -434,6 +434,7 @@ export function loadVolunteersData() {
 
         volunteers.push({
           id: d.id,
+          user_id: data.user_id || data.userId || data.uid || d.id,
           firstName: resolvedFirstName,
           lastName,
           email: normalizedEmail,

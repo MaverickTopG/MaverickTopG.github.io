@@ -187,6 +187,42 @@
     return new Date(y, m - 1, d, hours, minutes, 0, 0);
   };
 
+  const SCHOOL_PLAN_TOKEN = 'school';
+  const normalizePlanValue = (value) => {
+    if (value == null) return '';
+    return String(value).toLowerCase().trim();
+  };
+  const subscriptionMentionsSchool = (source = {}) => {
+    const candidates = [
+      source.planKey,
+      source.plan_key,
+      source.plan,
+      source.planType,
+      source.plan_type,
+      source.subscription_plan_key,
+      source.subscriptionPlanKey,
+      source.planNickname,
+      source.plan_name,
+      source.planName,
+      source?.plan?.nickname,
+      source?.plan?.name,
+      source?.plan?.id,
+      source?.metadata?.plan_key,
+      source?.metadata?.plan_name,
+      source?.price?.nickname,
+      source?.price?.name,
+      source?.product?.name,
+      source?.items?.data?.[0]?.price?.nickname,
+      source?.items?.data?.[0]?.price?.id,
+    ];
+    return candidates.some((value) => normalizePlanValue(value).includes(SCHOOL_PLAN_TOKEN));
+  };
+  const isSchoolPlanRecord = (record = {}) => (
+    subscriptionMentionsSchool(record)
+    || subscriptionMentionsSchool(record.subscription || {})
+    || subscriptionMentionsSchool(record.subscriptionData || {})
+    || subscriptionMentionsSchool(record.subscriptionSnapshot || {})
+  );
   const normalizeStatus = (value) => {
     const raw = String(value || '').toLowerCase().trim();
     if (!raw) return 'pending';
@@ -923,15 +959,16 @@
       list.innerHTML = `
         <div class="animate-pulse space-y-3">
           <div class="h-3 w-40 rounded-full bg-gray-100 dark:bg-gray-800"></div>
-          <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
-          <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
-          <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
+        <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
+        <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
+        <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
+        <div class="h-6 w-full rounded-xl bg-gray-100 dark:bg-gray-800"></div>
         </div>
       `;
       return;
     }
 
-    volunteers.slice(0, 4).forEach((vol) => {
+    volunteers.slice(0, 5).forEach((vol) => {
       const row = document.createElement('div');
       row.className = 'flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/40';
 
@@ -2222,6 +2259,7 @@
         cancelTop.type = 'button';
         cancelTop.dataset.planHeaderAction = 'true';
         cancelTop.dataset.cancelSubscription = 'true';
+        cancelTop.setAttribute('data-cancel-subscription', 'true');
         cancelTop.className = 'inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 shadow-theme-xs transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/[0.03]';
         header.appendChild(cancelTop);
       }
@@ -3131,12 +3169,14 @@
       let orgId = null;
       let orgName = null;
       let userRecord = null;
+      let isSchoolPlan = false;
 
       if (!orgCode || !orgId) {
         try {
           const userDoc = await db.collection('users').doc(user.uid).get();
           const data = userDoc.exists ? userDoc.data() || {} : {};
           userRecord = data;
+          isSchoolPlan = isSchoolPlanRecord(data);
           orgCode = orgCode || data.accessCode || data.access_code || null;
           orgId = orgId || data.organizationId || data.organization_id || null;
           orgName = orgName || data.organizationName || data.organization_name || null;
@@ -3275,6 +3315,9 @@
       let latestUsers = [];
       const logMapByCode = new Map();
       const logMapById = new Map();
+      const logMapBySchool = new Map();
+      let schoolLogListeners = [];
+      let lastSchoolSignature = '';
       const debugState = { orgCode, orgId };
       window.__nexolinkDebug = debugState;
 
@@ -3463,7 +3506,7 @@
       const volunteerMap = new Map();
       const buildVolunteerEntry = (docSnap) => {
         const data = docSnap.data() || {};
-        const volunteerId = data.user_id || data.userId || docSnap.id;
+        const volunteerId = data.user_id || data.userId || data.uid || docSnap.id;
         const email = data.email || data.user_email || data.volunteer_email || '';
         const rawName = data.volunteer_name || data.user_name || data.name || data.displayName || '';
         const combinedName = `${data.firstName || ''} ${data.lastName || ''}`.trim();
@@ -3471,6 +3514,8 @@
         return {
           entry: {
             id: volunteerId,
+            user_id: volunteerId,
+            uid: data.uid || data.user_id || data.userId || volunteerId,
             name,
             firstName: data.firstName || name,
             lastName: data.lastName || '',
@@ -3504,6 +3549,7 @@
           volunteerMap.set(change.doc.id, entry);
         });
         latestUsers = Array.from(volunteerMap.values());
+        syncSchoolLogListeners();
         renderFromLogs(latestLogs);
       };
 
@@ -3518,6 +3564,7 @@
         const merged = new Map();
         logMapByCode.forEach((value, key) => merged.set(key, value));
         logMapById.forEach((value, key) => merged.set(key, value));
+        logMapBySchool.forEach((value, key) => merged.set(key, value));
         const logs = Array.from(merged.values());
         latestLogs = logs;
 
@@ -3529,7 +3576,12 @@
           if (change.type === 'removed') {
             map.delete(change.doc.id);
           } else {
-            map.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
+            const data = change.doc.data() || {};
+            if (isSchoolPlan) {
+              data.approve = 'accepted';
+              data.school_auto_approved = true;
+            }
+            map.set(change.doc.id, { id: change.doc.id, ...data });
           }
         });
         const lastMeta = debugState.lastLogSnap || {};
@@ -3541,6 +3593,66 @@
         };
         debugState.lastLogSnap = info;
         mergeLogMaps();
+      };
+
+      const resetSchoolLogListeners = () => {
+        schoolLogListeners.forEach((unsub) => {
+          try {
+            unsub();
+          } catch (error) {
+            console.warn('school log listener unsubscribe error', error);
+          }
+        });
+        schoolLogListeners = [];
+        logMapBySchool.clear();
+      };
+
+      const syncSchoolLogListeners = () => {
+        if (!isSchoolPlan) {
+          if (schoolLogListeners.length) {
+            resetSchoolLogListeners();
+            mergeLogMaps();
+          }
+          return;
+        }
+        const ids = Array.from(
+          new Set(
+            latestUsers
+              .map((vol) => vol.user_id || vol.userId || vol.uid || vol.id || null)
+              .filter(Boolean)
+          )
+        );
+        const signature = ids.slice().sort().join('|');
+        if (signature === lastSchoolSignature) return;
+        lastSchoolSignature = signature;
+        resetSchoolLogListeners();
+        if (!ids.length) {
+          mergeLogMaps();
+          return;
+        }
+        const fields = ['user_id', 'userId', 'volunteer_id', 'uid'];
+        const chunkSize = 10;
+        for (let i = 0; i < ids.length; i += chunkSize) {
+          const chunk = ids.slice(i, i + chunkSize);
+          fields.forEach((field) => {
+            schoolLogListeners.push(
+              db.collection('volunteer_logs')
+                .where(field, 'in', chunk)
+                .onSnapshot(
+                  (snap) => {
+                    debugState.lastLogSnap = {
+                      field,
+                      value: chunk.join(','),
+                      size: snap.size,
+                      source: 'school',
+                    };
+                    handleLogSnapshot(snap, logMapBySchool);
+                  },
+                  (err) => console.warn(`Unable to listen for school logs (${field})`, err)
+                )
+            );
+          });
+        }
       };
 
       const logListeners = [];
@@ -3829,9 +3941,17 @@
           updateBillingPage({ subscription, invoices: mergedInvoices });
           updateBillingInvoiceList(mergedInvoices, upcomingInvoice);
 
-          const cancelButton = document.querySelector('[data-cancel-subscription]');
-          if (cancelButton && subscription && !cancelButton.disabled) {
+          const cancelButtons = Array.from(
+            document.querySelectorAll('[data-cancel-subscription], [data-plan-header-action][data-cancel-subscription]')
+          );
+          cancelButtons.forEach((cancelButton) => {
+            if (!subscription || cancelButton.disabled || cancelButton.dataset.cancelBound === 'true') return;
+            cancelButton.dataset.cancelBound = 'true';
             cancelButton.addEventListener('click', async () => {
+              if (cancelButton.disabled) return;
+              if (!window.confirm('Cancel your subscription? You will keep access until the end of your current period, then the account will lock. Charges already processed are non-refundable.')) {
+                return;
+              }
               try {
                 cancelButton.setAttribute('disabled', 'true');
                 const resp = await fetch('/api/cancelSubscription', {
@@ -3845,7 +3965,7 @@
                 cancelButton.removeAttribute('disabled');
               }
             });
-          }
+          });
 
           document.querySelectorAll('[data-billing-upgrade], [data-billing-plan-key]').forEach((button) => {
             if (button.dataset.checkoutBound === 'true' || button.disabled) return;

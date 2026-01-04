@@ -25,8 +25,15 @@ export const headerData = {
   ],
   actions: [
     {
-      text: 'Get the App',
+      icon: 'tabler:brand-apple',
+      ariaLabel: 'Download on the App Store',
       href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
+      target: '_blank',
+    },
+    {
+      icon: 'tabler:brand-google-play',
+      ariaLabel: 'Get it on Google Play',
+      href: 'https://play.google.com/store/apps/details?id=com.ayanshsingh.nexo',
       target: '_blank',
     },
   ],
@@ -70,6 +77,11 @@ export const footerData = {
       ariaLabel: 'App Store',
       icon: 'tabler:brand-apple',
       href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
+    },
+    {
+      ariaLabel: 'Google Play',
+      icon: 'tabler:brand-google-play',
+      href: 'https://play.google.com/store/apps/details?id=com.ayanshsingh.nexo',
     },
   ],
   footNote: `

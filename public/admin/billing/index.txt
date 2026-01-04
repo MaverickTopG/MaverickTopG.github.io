@@ -25,5 +25,5 @@ e:["$","$1","h",{"children":[null,["$","$L13",null,{"children":"$@14"}],["$","di
 b:"$0:f:0:1:1:children:0:props:children:1:props:serverProvidedParams:params"
 14:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
 1a:I[66319,["/admin/_next/static/chunks/5b43047cd61d92b0.js","/admin/_next/static/chunks/a3be58b80173873b.js"],"IconMark"]
-17:[["$","title","0",{"children":"Billing | NexoLink Admin"}],["$","meta","1",{"name":"description","content":"Manage billing details for your NexoLink admin workspace."}],["$","link","2",{"rel":"icon","href":"/admin/favicon.ico?favicon.7cdd2424.ico","sizes":"48x48","type":"image/x-icon"}],["$","$L1a","3",{}]]
+17:[["$","title","0",{"children":"NexoLink | Billing"}],["$","meta","1",{"name":"description","content":"Manage billing details for your NexoLink admin workspace."}],["$","link","2",{"rel":"icon","href":"/admin/favicon.ico?favicon.7cdd2424.ico","sizes":"48x48","type":"image/x-icon"}],["$","$L1a","3",{}]]
 19:null

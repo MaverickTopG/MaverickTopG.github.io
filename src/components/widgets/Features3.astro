@@ -33,18 +33,19 @@ const {
 >
   <Headline title={title} subtitle={subtitle} tagline={tagline} classes={classes?.headline as Record<string, string>} />
 
-  <div aria-hidden="true" class="aspect-w-16 aspect-h-7">
+  <div aria-hidden="true" class="h-[590px]">
     {
       image && (
-        <div class="w-full h-80 object-cover rounded-xl mx-auto bg-gray-500 shadow-lg">
+        <div class="w-full h-full rounded-xl mx-auto shadow-lg overflow-hidden">
           {typeof image === 'string' ? (
             <Fragment set:html={image} />
           ) : (
             <Image
-              class="w-full h-80 object-cover rounded-xl mx-auto bg-gray-500 shadow-lg"
+              class="block w-full h-full object-cover"
               width="auto"
-              height={320}
-              widths={[400, 768]}
+              height={610}
+              widths={[768, 1024, 1600, 2048, 2560, 3840]}
+              sizes="100vw"
               layout="fullWidth"
               {...image}
             />

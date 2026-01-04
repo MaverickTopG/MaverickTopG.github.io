@@ -12,7 +12,7 @@ import ImageModal from '~/components/widgets/ImageModal.astro';
 import dashboardImage from '~/assets/images/dashboard.png';
 
 const metadata = {
-  title: 'NexoLink - Connect. Volunteer. Impact.',
+  title: 'NexoLink | Home',
   ignoreTitleTemplate: true,
 };
 ---
@@ -134,7 +134,7 @@ const metadata = {
     id="impact"
     title="Impact you can feel"
     stats={[
-      { title: 'Volunteer hours approved this month', amount: '4,200+' },
+      { title: 'Volunteer hours', amount: '4,200+' },
       { title: 'Reduction in time spent validating hours', amount: '65%' },
       { title: 'Increase in volunteer retention', amount: '3.5x' },
       { title: 'Uptime across analytics, approvals, and messaging', amount: '99.9%' },
@@ -178,12 +178,6 @@ const metadata = {
 
   <CallToAction
     actions={[
-      {
-        variant: 'primary',
-        text: 'Launch the App',
-        href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
-        target: '_blank',
-      },
       {
         text: 'Enter Admin Experience',
         href: '/admin/login',

@@ -54,14 +54,54 @@ const metadata = {
           </div>
           <div>
             <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-slate-200">Password</label>
-            <input
-              type="password"
-              name="password"
-              class="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-              placeholder="Create a secure password"
-              minlength="8"
-              required
-            />
+            <div class="relative">
+              <input
+                type="password"
+                name="password"
+                data-password-input
+                class="w-full rounded-xl border border-slate-200 px-4 py-3 pr-11 text-sm text-gray-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                placeholder="Create a secure password"
+                minlength="8"
+                required
+              />
+              <button
+                type="button"
+                data-toggle-password
+                class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-white"
+                aria-label="Show password"
+              >
+                <svg
+                  data-password-show
+                  class="h-5 w-5"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                <svg
+                  data-password-hide
+                  class="hidden h-5 w-5"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.6 21.6 0 0 1 5.06-6.06" />
+                  <path d="M9.88 9.88A3 3 0 0 0 12 15a3 3 0 0 0 2.12-.88" />
+                  <path d="M1 1l22 22" />
+                  <path d="M10.58 5.08A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.6 21.6 0 0 1-4.19 5.19" />
+                </svg>
+              </button>
+            </div>
           </div>
           <button
             type="submit"
@@ -84,6 +124,10 @@ const metadata = {
   const form = document.querySelector('[data-create-org-form]');
   const submitButton = document.querySelector('[data-submit-button]');
   const emailInput = document.querySelector('[data-email-input]');
+  const passwordInput = document.querySelector('[data-password-input]');
+  const togglePasswordButton = document.querySelector('[data-toggle-password]');
+  const toggleIconShow = document.querySelector('[data-password-show]');
+  const toggleIconHide = document.querySelector('[data-password-hide]');
 
   const setStatus = (message, type = 'info') => {
     if (!statusEl) return;
@@ -100,10 +144,26 @@ const metadata = {
   const sessionId = params.get('session_id');
   const checkoutStatus = params.get('checkout');
 
-  if (checkoutStatus === 'cancel') {
-    setStatus('Checkout was cancelled. You can restart billing from the pricing page.', 'warning');
-  } else if (!sessionId) {
-    setStatus('We could not verify your checkout session. Please make sure you completed payment.', 'warning');
+  const redirectToPricing = () => {
+    window.location.replace('/pricing');
+  };
+
+  if (checkoutStatus === 'cancel' || !sessionId) {
+    redirectToPricing();
+    return;
+  }
+
+  if (togglePasswordButton && passwordInput) {
+    togglePasswordButton.addEventListener('click', () => {
+      const isHidden = passwordInput.type === 'password';
+      passwordInput.type = isHidden ? 'text' : 'password';
+      toggleIconShow?.classList.toggle('hidden', !isHidden);
+      toggleIconHide?.classList.toggle('hidden', isHidden);
+      togglePasswordButton.setAttribute(
+        'aria-label',
+        isHidden ? 'Hide password' : 'Show password'
+      );
+    });
   }
 
   const lockEmailInput = (email) => {
@@ -177,6 +237,16 @@ const metadata = {
       setLoading(false);
       return;
     }
+    if (password.length < 8) {
+      setStatus('Password must be at least 8 characters.', 'warning');
+      setLoading(false);
+      return;
+    }
+    if (/\s/.test(password)) {
+      setStatus('Password cannot contain spaces.', 'warning');
+      setLoading(false);
+      return;
+    }
 
     try {
       const auth = await loadFirebaseSdk();
@@ -186,10 +256,18 @@ const metadata = {
         userCredential = await auth.createUserWithEmailAndPassword(email, password);
       } catch (error) {
         if (error?.code === 'auth/email-already-in-use') {
-          userCredential = await auth.signInWithEmailAndPassword(email, password);
-        } else {
-          throw error;
+          setStatus('An account with this email already exists. Please sign in to finish setup.', 'warning');
+          return;
         }
+        if (error?.code === 'auth/invalid-email' || error?.code === 'auth/invalid-credential') {
+          setStatus('Please use a valid email and password to create your account.', 'warning');
+          return;
+        }
+        if (error?.code === 'auth/weak-password') {
+          setStatus('Please choose a stronger password (at least 8 characters).', 'warning');
+          return;
+        }
+        throw error;
       }
 
       const user = userCredential?.user;

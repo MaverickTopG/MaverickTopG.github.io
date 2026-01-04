@@ -29,7 +29,8 @@ import {
   resetActivityListener,
   loadActivityData,
   registerActivityUpdateHandler,
-  getCurrentWeekBoundaries
+  getCurrentWeekBoundaries,
+  refreshSchoolVolunteerLogs
 } from './programsEvents.js';
 import { initApprovalsModule, renderApprovalQueue } from './approvals.js';
 import { renderAnalytics, refreshAnalytics, renderCalendarHeatmap } from './analytics.js';
@@ -42,6 +43,20 @@ const VOLUNTEER_HOUR_VALUE = 28.27;
 let weekOffset = 0;        // 0 = this week, -1 = last week, etc.
 let navigationInitialized = false;
 let activeView = 'overview';
+const DASHBOARD_TITLES = {
+  overview: 'NexoLink | Dashboard',
+  'volunteer-requests': 'NexoLink | Request',
+  volunteers: 'NexoLink | Volunteer',
+  billing: 'Billing',
+};
+
+function updateDashboardTitle(view) {
+  if (typeof document === 'undefined') return;
+  const title = DASHBOARD_TITLES[view];
+  if (title) {
+    document.title = title;
+  }
+}
 
 /** ── NAVIGATION & VIEW SWITCHING ─────────────────────────────────────────── */
 
@@ -86,6 +101,7 @@ export function setActiveView(view) {
   }
 
   activeView = view;
+  updateDashboardTitle(view);
 
   if (previousView === 'event-detail' && view !== 'event-detail') {
     closeEventDetail({ skipNavigation: true });
@@ -174,6 +190,7 @@ export async function initializeDashboard() {
     initBillingModule();
 
     registerVolunteersUpdateHandler(() => {
+      refreshSchoolVolunteerLogs();
       updateStatistics();
       renderAttendanceChart();
       renderTopVolunteers();

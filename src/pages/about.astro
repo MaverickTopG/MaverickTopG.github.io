@@ -5,9 +5,11 @@ import Features3 from '~/components/widgets/Features3.astro';
 import Steps2 from '~/components/widgets/Steps2.astro';
 import CallToAction from '~/components/widgets/CallToAction.astro';
 import Layout from '~/layouts/PageLayout.astro';
+import workingImage from '~/assets/images/working.png';
 
 const metadata = {
-  title: 'About Us',
+  title: 'NexoLink | About Us',
+  ignoreTitleTemplate: true,
 };
 ---
 
@@ -15,8 +17,8 @@ const metadata = {
   <Hero
     tagline="About NexoLink"
     image={{
-      src: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1740&q=80',
-      alt: 'Community volunteers collaborating',
+      src: workingImage,
+      alt: 'Team working together',
     }}
   >
     <Fragment slot="bg">
@@ -36,7 +38,7 @@ const metadata = {
   <Stats
     title="Impact you can feel"
     stats={[
-      { title: 'Volunteer hours approved this month', amount: '4,200+' },
+      { title: 'Volunteer hours', amount: '4,200+' },
       { title: 'Reduction in time spent validating hours', amount: '65%' },
       { title: 'Increase in volunteer retention', amount: '3.5x' },
       { title: 'Uptime across analytics, approvals, and messaging', amount: '99.9%' },
@@ -106,13 +108,17 @@ const metadata = {
     actions={[
       {
         variant: 'primary',
-        text: 'Launch the App',
+        text: 'Apple',
         href: 'https://apps.apple.com/th/app/nexolink/id6636497206?platform=iphone',
         target: '_blank',
+        icon: 'tabler:brand-apple',
       },
       {
-        text: 'Admin Portal',
-        href: '/admin/login',
+        variant: 'secondary',
+        text: 'Google Play',
+        href: 'https://play.google.com/store/apps/details?id=com.ayanshsingh.nexo',
+        target: '_blank',
+        icon: 'tabler:brand-google-play',
       },
     ]}
   />

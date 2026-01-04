@@ -6,7 +6,8 @@ import FAQs from '~/components/widgets/FAQs.astro';
 import CallToAction from '~/components/widgets/CallToAction.astro';
 
 const metadata = {
-  title: 'Pricing',
+  title: 'NexoLink | Pricing',
+  ignoreTitleTemplate: true,
 };
 ---
 
@@ -22,7 +23,7 @@ const metadata = {
     subtitle="Only pay for what your organization needs."
     prices={[
       {
-        title: 'Monthly',
+        title: 'Organization',
         planKey: 'monthly',
         subtitle: 'Flexible month-to-month access',
         billing: 'monthly',
@@ -46,7 +47,7 @@ const metadata = {
         },
       },
       {
-        title: 'Yearly',
+        title: 'Organization',
         planKey: 'yearly',
         subtitle: 'Save 17% with annual billing',
         billing: 'yearly',

@@ -28,5 +28,5 @@ f:["$","$1","h",{"children":[null,["$","$L16",null,{"children":"$@17"}],["$","di
 b:"$0:f:0:1:1:children:0:props:children:1:props:serverProvidedParams:params"
 17:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
 1d:I[66319,["/admin/_next/static/chunks/5b43047cd61d92b0.js","/admin/_next/static/chunks/a3be58b80173873b.js"],"IconMark"]
-1a:[["$","title","0",{"children":"Volunteer Requests | NexoLink Admin"}],["$","meta","1",{"name":"description","content":"Review pending volunteer requests and approvals inside the NexoLink admin portal."}],["$","link","2",{"rel":"icon","href":"/admin/favicon.ico?favicon.7cdd2424.ico","sizes":"48x48","type":"image/x-icon"}],["$","$L1d","3",{}]]
+1a:[["$","title","0",{"children":"NexoLink | Request"}],["$","meta","1",{"name":"description","content":"Review pending volunteer requests and approvals inside the NexoLink admin portal."}],["$","link","2",{"rel":"icon","href":"/admin/favicon.ico?favicon.7cdd2424.ico","sizes":"48x48","type":"image/x-icon"}],["$","$L1d","3",{}]]
 1c:null

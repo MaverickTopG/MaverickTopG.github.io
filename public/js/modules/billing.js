@@ -6,6 +6,8 @@ import { isDemoAccount, getDemoAccountDescription } from './accessControl.js';
 const STRIPE_PUBLISHABLE_KEY = 'REDACTED_STRIPE_LIVE_PUBLISHABLE_KEY';
 const FALLBACK_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
 const FALLBACK_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
+const FALLBACK_PRICE_SCHOOL_MONTHLY = 'price_1SZIdTHbGg7F5Ky7gJUAu10c';
+const FALLBACK_PRICE_SCHOOL_YEARLY = 'price_1ShyF8HbGg7F5Ky7xTVwCMYk';
 const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
 const THEME_KEY = 'theme';
 
@@ -133,6 +135,71 @@ function resolveBasePriceId(plan) {
     || FALLBACK_PRICE_MONTHLY;
 }
 
+function resolveSchoolPriceId(intervalKey) {
+  const env = import.meta?.env;
+  const w = typeof window !== 'undefined' ? window : undefined;
+  if (intervalKey === 'yearly') {
+    return w?.STRIPE_PRICE_SCHOOL_YEARLY
+      || env?.VITE_STRIPE_PRICE_SCHOOL_YEARLY
+      || FALLBACK_PRICE_SCHOOL_YEARLY;
+  }
+  return w?.STRIPE_PRICE_SCHOOL
+    || env?.VITE_STRIPE_PRICE_SCHOOL
+    || FALLBACK_PRICE_SCHOOL_MONTHLY;
+}
+
+function normalizeIntervalKey(value) {
+  const key = (value || '').toLowerCase();
+  if (key === 'year' || key === 'yearly') return 'yearly';
+  if (key === 'month' || key === 'monthly') return 'monthly';
+  return key;
+}
+
+function detectSubscriptionPlanKey(subscription) {
+  const candidates = [
+    subscription?.planKey,
+    subscription?.plan_key,
+    subscription?.metadata?.plan_key,
+    subscription?.plan?.metadata?.plan_key,
+    subscription?.plan?.nickname,
+    subscription?.plan?.name,
+    subscription?.plan?.id,
+    subscription?.items?.data?.[0]?.price?.nickname,
+    subscription?.items?.data?.[0]?.price?.id,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  return candidates.some((value) => value.includes('school')) ? 'school' : null;
+}
+
+function resolveReactivationTarget(subscription) {
+  if (!subscription) return null;
+  const intervalKey = normalizeIntervalKey(
+    subscription?.plan?.interval
+    || subscription?.plan_interval
+    || subscription?.interval
+    || subscription?.items?.data?.[0]?.price?.recurring?.interval
+  );
+  const planKey = detectSubscriptionPlanKey(subscription);
+
+  if (planKey === 'school') {
+    return {
+      plan: 'school',
+      priceId: resolveSchoolPriceId(intervalKey || 'monthly')
+    };
+  }
+
+  if (intervalKey === 'yearly') {
+    return { plan: 'yearly', priceId: resolveBasePriceId('yearly') };
+  }
+  if (intervalKey === 'monthly') {
+    return { plan: 'monthly', priceId: resolveBasePriceId('monthly') };
+  }
+
+  return null;
+}
+
 export function initBillingModule() {
   initBillingTheme();
   setActiveAdminNav();
@@ -169,7 +236,14 @@ export function initBillingModule() {
 
 function handleCancelOrReactivate(action, button) {
   if (action === 'reactivate') {
-    openReactivateOverlay();
+    const target = resolveReactivationTarget(appState.currentAdmin?.subscription);
+    if (target && button) {
+      button.dataset.checkoutPlan = target.plan;
+      button.dataset.priceId = target.priceId;
+      createCheckoutSession(button);
+    } else {
+      openReactivateOverlay();
+    }
   } else {
     cancelRecurringSubscription(button);
   }
@@ -450,7 +524,7 @@ async function cancelRecurringSubscription(button) {
     return;
   }
   if (!button) return;
-  if (!window.confirm('Cancel future renewals? Charges already processed are non-refundable. We will preserve your data so you can resubscribe later.')) {
+  if (!window.confirm('Cancel your subscription? You will keep access until the end of your current period, then the account will lock. Charges already processed are non-refundable.')) {
     return;
   }
 
@@ -614,9 +688,9 @@ function updateBillingUI(subscription, stripeRole) {
       cancelSubscriptionBtn.disabled = false;
       cancelSubscriptionBtn.style.opacity = '';
       cancelSubscriptionBtn.style.pointerEvents = '';
-      cancelSubscriptionBtn.title = 'Reactivate subscription';
-      cancelSubscriptionBtn.setAttribute('aria-label', 'Reactivate subscription');
-      if (cancelLabel) cancelLabel.textContent = 'Reactivate Subscription';
+      cancelSubscriptionBtn.title = 'Reactivate account';
+      cancelSubscriptionBtn.setAttribute('aria-label', 'Reactivate account');
+      if (cancelLabel) cancelLabel.textContent = 'Reactivate Account';
       cancelSubscriptionBtn.classList.add('btn-primary');
     } else {
       // Cancel state
