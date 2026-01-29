@@ -6,7 +6,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import crypto from 'crypto';
 import Stripe from 'stripe';
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, FieldPath } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
 const STRIPE_SECRET_KEY = defineSecret('STRIPE_SECRET_KEY');
@@ -61,7 +61,11 @@ function resolvePublicBase(req, fallback = 'https://nexolink-b8eb5.web.app') {
 }
 
 function getStripeClient() {
-  const key = process.env.STRIPE_SECRET_KEY || safeSecretValue(STRIPE_SECRET_KEY, DEFAULT_STRIPE_SECRET_KEY);
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIREBASE_EMULATOR_HUB);
+  const testKey = process.env.STRIPE_SECRET_KEY_TEST;
+  const key = (isEmulator && testKey)
+    ? testKey
+    : (process.env.STRIPE_SECRET_KEY || safeSecretValue(STRIPE_SECRET_KEY, DEFAULT_STRIPE_SECRET_KEY));
   if (!key) {
     throw new Error('Stripe secret key is not configured.');
   }
@@ -432,6 +436,19 @@ async function ensureUserOrganizationLink(orgAccessCode, orgId, adminId, adminUs
 }
 
 function getPriceMap() {
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIREBASE_EMULATOR_HUB);
+  if (isEmulator) {
+    const testMonthly = process.env.STRIPE_PRICE_MONTHLY_TEST || process.env.PUBLIC_STRIPE_PRICE_MONTHLY;
+    const testYearly = process.env.STRIPE_PRICE_YEARLY_TEST || process.env.PUBLIC_STRIPE_PRICE_YEARLY;
+    const testSchoolMonthly = process.env.STRIPE_PRICE_SCHOOL_TEST || process.env.PUBLIC_STRIPE_PRICE_SCHOOL;
+    const testSchoolYearly = process.env.STRIPE_PRICE_SCHOOL_YEARLY_TEST || process.env.PUBLIC_STRIPE_PRICE_SCHOOL_YEARLY;
+    return {
+      monthly: testMonthly || safeSecretValue(STRIPE_PRICE_MONTHLY, DEFAULT_PRICE_MONTHLY),
+      yearly: testYearly || safeSecretValue(STRIPE_PRICE_YEARLY, DEFAULT_PRICE_YEARLY),
+      school: testSchoolMonthly || safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
+      school_yearly: testSchoolYearly || testSchoolMonthly || safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
+    };
+  }
   const envMonthly = process.env.STRIPE_PRICE_MONTHLY;
   const envYearly = process.env.STRIPE_PRICE_YEARLY;
   const envSchool = process.env.STRIPE_PRICE_SCHOOL;
@@ -443,6 +460,14 @@ function getPriceMap() {
 }
 
 function getProductMap() {
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIREBASE_EMULATOR_HUB);
+  if (isEmulator) {
+    return {
+      monthly: process.env.STRIPE_PRODUCT_MONTHLY_TEST || process.env.PUBLIC_STRIPE_PRODUCT_MONTHLY || DEFAULT_PRODUCT_MONTHLY,
+      yearly: process.env.STRIPE_PRODUCT_YEARLY_TEST || process.env.PUBLIC_STRIPE_PRODUCT_YEARLY || DEFAULT_PRODUCT_YEARLY,
+      school: process.env.STRIPE_PRODUCT_SCHOOL_TEST || process.env.PUBLIC_STRIPE_PRODUCT_SCHOOL || DEFAULT_PRODUCT_SCHOOL,
+    };
+  }
   return {
     monthly: process.env.STRIPE_PRODUCT_MONTHLY || DEFAULT_PRODUCT_MONTHLY,
     yearly: process.env.STRIPE_PRODUCT_YEARLY || DEFAULT_PRODUCT_YEARLY,
@@ -700,6 +725,59 @@ async function decodeAuthHeader(req) {
     logger.warn('Invalid authorization token supplied', error);
     return null;
   }
+}
+
+function isAdminRole(value) {
+  if (!value) return false;
+  const allowed = new Set(['admin', 'owner', 'superadmin']);
+  if (Array.isArray(value)) {
+    return value.some((role) => allowed.has(String(role).toLowerCase()));
+  }
+  return allowed.has(String(value).toLowerCase());
+}
+
+function hasAdminFlag(data = {}) {
+  return data.isAdmin === true || data.is_admin === true || data.admin === true;
+}
+
+async function isAuthorizedAdmin(decoded = {}) {
+  if (!decoded?.uid) return false;
+
+  if (decoded.admin === true || decoded.isAdmin === true || isAdminRole(decoded.role) || isAdminRole(decoded.roles)) {
+    return true;
+  }
+
+  try {
+    const userSnap = await db.collection('users').doc(decoded.uid).get();
+    if (userSnap.exists) {
+      const userData = userSnap.data() || {};
+      if (hasAdminFlag(userData) || isAdminRole(userData.role) || isAdminRole(userData.roles)) {
+        return true;
+      }
+    }
+  } catch (error) {
+    logger.warn('Unable to verify admin status from users collection', error);
+  }
+
+  try {
+    const adminGroup = await db
+      .collectionGroup('admins')
+      .where(FieldPath.documentId(), '==', decoded.uid)
+      .limit(1)
+      .get();
+
+    if (!adminGroup.empty) {
+      const adminData = adminGroup.docs[0].data() || {};
+      if (adminData.allowedCheckin === false) {
+        return false;
+      }
+      return true;
+    }
+  } catch (error) {
+    logger.warn('Unable to verify admin status from org admins', error);
+  }
+
+  return false;
 }
 
 async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fallbackUid = null) {
@@ -1702,29 +1780,86 @@ export const listSubscriptions = onRequest(
         : [];
       const lastInvoice = userData.lastInvoice || null;
       const fallbackEmail = userData.email || decodedToken.email || null;
-      const customerId = subscription?.customerId
-        || subscription?.customer_id
-        || subscription?.customer
-        || userData.stripeCustomerId
-        || userData.stripeCustomer
-        || null;
+      const getStripeId = (val) => {
+        if (typeof val === 'string') return val;
+        if (typeof val === 'object' && val !== null && val.id) return val.id;
+        return null;
+      };
+
+      const baseCustomerId = getStripeId(subscription?.customerId)
+        || getStripeId(subscription?.customer_id)
+        || getStripeId(subscription?.customer)
+        || getStripeId(userData.stripeCustomerId)
+        || getStripeId(userData.stripeCustomer);
+
+      const stripe = getStripeClient();
+      const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIREBASE_EMULATOR_HUB);
+      logger.info('Billing diagnostic', { 
+        userId: decodedToken.uid, 
+        isEmulator, 
+        hasBaseCustomerId: !!baseCustomerId,
+        resolvedCustomerId: baseCustomerId
+      });
 
       if (!subscription && fallbackEmail) {
-        const stripe = getStripeClient();
-        let resolvedCustomerId = customerId;
-        if (!resolvedCustomerId) {
-          const customers = await stripe.customers.list({ email: fallbackEmail, limit: 1 });
-          resolvedCustomerId = customers.data?.[0]?.id || null;
+        let lookupId = baseCustomerId;
+        if (!lookupId) {
+          try {
+            const customers = await stripe.customers.list({ email: fallbackEmail, limit: 1 });
+            lookupId = customers.data?.[0]?.id || null;
+          } catch (err) {
+            logger.warn('Initial customer lookup failed', { email: fallbackEmail });
+          }
         }
-        if (resolvedCustomerId) {
-          const subs = await stripe.subscriptions.list({
-            customer: resolvedCustomerId,
-            status: 'all',
-            limit: 1,
-            expand: ['data.items.data.price'],
+        if (lookupId) {
+          try {
+            const subs = await stripe.subscriptions.list({
+              customer: lookupId,
+              status: 'all',
+              limit: 1,
+              expand: ['data.items.data.price', 'data.items.data.price.product', 'data.default_payment_method'],
+            });
+            subscription = subs.data?.[0] || null;
+          } catch (err) {
+            logger.warn('Subscription list failed', { customer: lookupId });
+          }
+        }
+      }
+
+      // Ensure we have the most complete subscription object possible
+      if (subscription?.id) {
+        try {
+          const expanded = await stripe.subscriptions.retrieve(subscription.id, {
+            expand: [
+              'items.data.price', 
+              'items.data.price.product', 
+              'latest_invoice.payment_intent.payment_method',
+              'default_payment_method'
+            ],
           });
-          subscription = subs.data?.[0] || null;
+          if (expanded) {
+            subscription = expanded;
+          }
+        } catch (error) {
+          logger.warn('Unable to expand subscription details', { message: error?.message });
         }
+      }
+
+      const finalCustomerId = getStripeId(baseCustomerId)
+        || getStripeId(subscription?.customer)
+        || getStripeId(subscription?.customer_id)
+        || null;
+
+      let paymentMethod = null;
+      try {
+        paymentMethod = await findStripePaymentMethod(stripe, {
+          subscription,
+          customerId: finalCustomerId,
+          email: fallbackEmail,
+        });
+        logger.info('Resolved payment method', { userId: decodedToken.uid, found: !!paymentMethod });
+      } catch (error) {
+        logger.warn('Payment method resolution failed', { message: error?.message });
       }
 
       subscriptionHistory.sort((a, b) => (b?.recordedAtMs || 0) - (a?.recordedAtMs || 0));
@@ -1735,6 +1870,7 @@ export const listSubscriptions = onRequest(
         subscriptionHistory,
         invoiceHistory,
         lastInvoice,
+        paymentMethod,
       });
     } catch (error) {
       logger.error('Subscription history retrieval failed', error);
@@ -1826,6 +1962,130 @@ export const syncUserClaims = onDocumentWritten('users/{userId}', async (event) 
   }
 
   await syncCustomClaimsForUser(userId, paid);
+});
+
+const PURGE_COLLECTIONS = [
+  'badges',
+  'organization_join_requests',
+  'organization_settings',
+  'organization_shared_logs',
+  'organizations',
+  'orgs',
+  'pendingSubscriptions',
+  'stripe_events',
+  'stripe_handoff',
+  'user_organizations',
+  'users',
+  'volunteer_funfacts',
+  'volunteer_logs',
+  'volunteer_organizations',
+];
+
+async function deleteEmailDocs(collectionName, emails) {
+  const deletedPaths = new Set();
+  let total = 0;
+
+  for (const email of emails) {
+    while (true) {
+      const snap = await db.collection(collectionName).where('email', '==', email).limit(200).get();
+      if (snap.empty) break;
+      const deletions = [];
+      snap.docs.forEach((doc) => {
+        const path = doc.ref.path;
+        if (deletedPaths.has(path)) return;
+        deletedPaths.add(path);
+        deletions.push(doc.ref.delete());
+      });
+      if (deletions.length) {
+        await Promise.all(deletions);
+        total += deletions.length;
+      }
+      if (snap.size < 200) break;
+    }
+  }
+
+  return total;
+}
+
+export const purgeEmail = onRequest(async (req, res) => {
+  if (handleCorsPreflight(req, res, ['POST'])) return;
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
+  }
+
+  const decodedToken = await decodeAuthHeader(req);
+  if (!decodedToken) {
+    res.status(401).json({ error: 'Missing or invalid authorization token.' });
+    return;
+  }
+
+  const isAdmin = await isAuthorizedAdmin(decodedToken);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Admin access required.' });
+    return;
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const emailInput = String(body.email || '').trim();
+  if (!emailInput) {
+    res.status(400).json({ error: 'Email is required.' });
+    return;
+  }
+
+  const normalizedEmail = emailInput;
+  const lowerEmail = normalizedEmail.toLowerCase();
+  const emails = new Set([normalizedEmail]);
+  if (lowerEmail && lowerEmail !== normalizedEmail) {
+    emails.add(lowerEmail);
+  }
+
+  const deleteAuth = Boolean(body.deleteAuth);
+
+  const summary = {};
+  let totalDeleted = 0;
+  const errors = [];
+
+  for (const collectionName of PURGE_COLLECTIONS) {
+    try {
+      const deleted = await deleteEmailDocs(collectionName, emails);
+      summary[collectionName] = deleted;
+      totalDeleted += deleted;
+    } catch (error) {
+      logger.error('Purge failed for collection', { collectionName, error });
+      summary[collectionName] = 0;
+      errors.push({ collection: collectionName, message: error?.message || 'Failed to delete.' });
+    }
+  }
+
+  let authDeleted = false;
+  let authUid = null;
+  if (deleteAuth) {
+    try {
+      const userRecord = await authAdmin.getUserByEmail(normalizedEmail);
+      authUid = userRecord?.uid || null;
+      if (authUid) {
+        await authAdmin.deleteUser(authUid);
+        authDeleted = true;
+      }
+    } catch (error) {
+      if (error?.code !== 'auth/user-not-found') {
+        logger.warn('Unable to delete auth user', error);
+        errors.push({ collection: 'auth', message: error?.message || 'Failed to delete auth user.' });
+      }
+    }
+  }
+
+  res.json({
+    ok: true,
+    email: normalizedEmail,
+    deleteAuth,
+    totalDeleted,
+    perCollection: summary,
+    authDeleted,
+    authUid,
+    errors,
+  });
 });
 
 export const issueAdminQr = onRequest(
@@ -2239,3 +2499,91 @@ export const cleanupPendingSubscriptions = onSchedule('every 24 hours', async (c
 
   return null;
 });
+
+/**
+ * Hyper-robust payment method lookup for Stripe.
+ * Attempts to find card details across subscription, customer, and invoices.
+ */
+async function findStripePaymentMethod(stripe, { subscription, customerId, email }) {
+  let resolvedPm = null;
+
+  // 1. Try Default Payment Method on Subscription
+  let subPm = subscription?.default_payment_method;
+  if (subPm) {
+    if (typeof subPm === 'string') {
+      try { subPm = await stripe.paymentMethods.retrieve(subPm); } catch (e) { subPm = null; }
+    }
+    if (subPm) resolvedPm = serializeStripePm(subPm);
+  }
+
+  // 2. Try Default Payment Method/Source on Customer
+  if (!resolvedPm && customerId) {
+    try {
+      const customer = await stripe.customers.retrieve(customerId);
+      let custPmId = customer?.invoice_settings?.default_payment_method || customer?.default_source;
+      
+      if (custPmId) {
+        if (typeof custPmId === 'string') {
+          if (custPmId.startsWith('pm_')) {
+            const pm = await stripe.paymentMethods.retrieve(custPmId);
+            if (pm) resolvedPm = serializeStripePm(pm);
+          } else if (custPmId.startsWith('card_') || custPmId.startsWith('src_')) {
+            const src = await stripe.customers.retrieveSource(customerId, custPmId);
+            if (src) resolvedPm = serializeStripeSource(src);
+          }
+        } else if (custPmId.id) {
+          resolvedPm = serializeStripePm(custPmId);
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // 3. Try Latest Invoice
+  if (!resolvedPm && subscription?.latest_invoice) {
+    let inv = subscription.latest_invoice;
+    if (typeof inv === 'string') {
+      try { inv = await stripe.invoices.retrieve(inv, { expand: ['payment_intent.payment_method'] }); } catch (e) { inv = null; }
+    }
+    const pm = inv?.payment_intent?.payment_method;
+    if (pm) resolvedPm = serializeStripePm(pm);
+  }
+
+  // 4. Fallback: List all payment methods for customer (checking cards first as most common)
+  if (!resolvedPm && customerId) {
+    try {
+      const methods = await stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 });
+      if (methods.data?.[0]) resolvedPm = serializeStripePm(methods.data[0]);
+    } catch (e) { /* ignore */ }
+  }
+
+  if (resolvedPm && !resolvedPm.brand && resolvedPm.type === 'card') {
+    resolvedPm.brand = 'Card';
+  }
+  return resolvedPm;
+}
+
+function serializeStripePm(pm) {
+  if (!pm) return null;
+  const type = pm.type || 'card';
+  return {
+    type,
+    brand: pm.card?.brand || null,
+    last4: pm.card?.last4 || null,
+    expMonth: pm.card?.exp_month || null,
+    expYear: pm.card?.exp_year || null,
+    funding: pm.card?.funding || null,
+  };
+}
+
+function serializeStripeSource(src) {
+  // Handles legacy card sources
+  const card = src.card || src;
+  return {
+    type: 'card',
+    brand: card.brand || null,
+    last4: card.last4 || null,
+    expMonth: card.exp_month || null,
+    expYear: card.exp_year || null,
+    funding: card.funding || null,
+  };
+}

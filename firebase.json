@@ -3,7 +3,7 @@
     "source": "functions"
   },
   "hosting": {
-    "public": "dist",
+    "public": "volunteer-dashboard (2)/nexolink-landing-page/dist",
     "cleanUrls": true,
     "predeploy": [
       "npm run build"
@@ -25,19 +25,16 @@
         ]
       }
     ],
-    "redirects": [
+    "redirects": [],
+    "rewrites": [
       {
-        "source": "/admin/",
-        "destination": "/admin",
-        "type": 301
+        "source": "/admin",
+        "destination": "/admin/index.html"
       },
       {
-        "source": "/admin/:path*/",
-        "destination": "/admin/:path*",
-        "type": 301
-      }
-    ],
-    "rewrites": [
+        "source": "/admin/**",
+        "destination": "/admin/index.html"
+      },
       {
         "source": "/api/checkout",
         "function": "createCheckout"
@@ -81,6 +78,10 @@
       {
         "source": "/api/issueAdminQr",
         "function": "issueAdminQr"
+      },
+      {
+        "source": "/api/purgeEmail",
+        "function": "purgeEmail"
       }
     ]
   }
