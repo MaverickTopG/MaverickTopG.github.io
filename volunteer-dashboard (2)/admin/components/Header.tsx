@@ -8,50 +8,34 @@ import {
   Check, 
   FileSpreadsheet, 
   FileText,
-  Copy
+  Copy,
+  Monitor
 } from 'lucide-react';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { resolveOrgContext, subscribeToOrgCollection, fetchOrgCollectionDocs } from '../lib/orgContext';
+import { KioskModal } from './KioskModal';
 
-export const Header: React.FC = () => {
-  const [accessCode, setAccessCode] = useState('—');
+
+interface HeaderProps {
+  isKioskOpen: boolean;
+  setIsKioskOpen: (open: boolean) => void;
+  orgContext: { id: string; code: string; name: string };
+}
+
+export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, orgContext }) => {
   const [copied, setCopied] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [orgCode, setOrgCode] = useState('');
-  const [orgId, setOrgId] = useState('');
   const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string }>>([]);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
 
-  useEffect(() => {
-    const auth = getFirebaseAuth();
-    const db = getFirestoreDb();
-
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        setAccessCode('—');
-        setOrgCode('');
-        setRequests([]);
-        return;
-      }
-
-      try {
-        const context = await resolveOrgContext(db, user.uid);
-        const normalized = context.orgCode || '';
-        setOrgCode(normalized);
-        setOrgId(context.orgId || '');
-        setAccessCode(normalized || '—');
-      } catch (error) {
-        console.error('Unable to load org code', error);
-        setAccessCode('—');
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
+  const orgCode = orgContext.code;
+  const orgId = orgContext.id;
+  const accessCode = orgCode || '—';
 
   useEffect(() => {
     if (!orgCode && !orgId) return;
@@ -65,7 +49,7 @@ export const Header: React.FC = () => {
       onData: (rows) => {
         const pending: Array<{ id: string; name: string; role: string; time: string }> = [];
         rows.forEach((row) => {
-          const data = row.data || {};
+          const data = row.data as any || {};
           const createdAt = data.created_at || data.createdAt || null;
           const createdAtDate =
             typeof createdAt?.toDate === 'function'
@@ -104,7 +88,6 @@ export const Header: React.FC = () => {
     setActiveDropdown(activeDropdown === name ? null : name);
   };
 
-  // Close dropdowns when clicking outside (handled by a backdrop)
   const closeDropdowns = () => setActiveDropdown(null);
 
   const dropdownVariants = {
@@ -130,7 +113,7 @@ export const Header: React.FC = () => {
     const rows: Array<Record<string, string | number>> = [];
     const records = await fetchOrgCollectionDocs(db, 'volunteer_logs', orgCode || null, orgId || null);
     records.forEach((docSnap) => {
-      const data = docSnap.data || {};
+      const data = docSnap.data as any || {};
       rows.push({
         name: data.volunteer_name || data.name || 'Volunteer',
         task: data.volunteering_task || data.task || data.site || 'Service',
@@ -227,6 +210,16 @@ export const Header: React.FC = () => {
              </>
           )}
         </button>
+
+        {/* Kiosk Button */}
+        <button 
+          onClick={() => setIsKioskOpen(true)}
+          className="w-12 h-12 bg-white rounded-full flex items-center justify-center hover:bg-gray-50 transition-all shadow-sm border border-gray-100 group"
+          aria-label="Kiosk"
+        >
+          <Monitor className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
+        </button>
+
 
         {/* QR Code Button & Dropdown */}
         <div className="relative">
@@ -411,6 +404,9 @@ export const Header: React.FC = () => {
         </div>
 
       </div>
+
+      <KioskModal isOpen={isKioskOpen} onClose={() => setIsKioskOpen(false)} />
     </header>
+
   );
 };

@@ -40,6 +40,12 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
         duration: 1,
         ease: "expo.out"
       }, "-=0.8")
+      .from(".create-subtitle", {
+        y: 20,
+        opacity: 0,
+        duration: 1,
+        ease: "power2.out"
+      }, "-=0.8")
       .from(".create-input", {
         x: 40,
         opacity: 0,
@@ -114,8 +120,8 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
                     SCALE YOUR <br/> <span className="text-neon">MISSION.</span>
                 </h2>
               </div>
-              <p className="create-title text-white/40 text-lg md:text-xl font-medium leading-relaxed mb-12">
-                  Built by students for real organizations — already trusted in active school programs. 
+              <p className="create-subtitle text-white/40 text-lg md:text-xl font-medium italic uppercase tracking-[0.2em] mb-12">
+                  Built for real organizations and school programs.
               </p>
 
               <div className="create-title space-y-6">

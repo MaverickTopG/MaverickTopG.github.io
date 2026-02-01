@@ -9,6 +9,7 @@ import {
   buildMonthlySeries,
   buildYearlySeries,
   buildLastNDaysSeries,
+  normalizeDateValue,
   type ActivityLog,
   type VolunteerRecord,
   type DashboardMetrics,
@@ -215,9 +216,9 @@ export const useDashboardMetrics = (): MetricsState => {
 };
 
 const getMonthHoursForVolunteer = (volunteer: VolunteerRecord, logs: ActivityLog[]) => {
-  const now = new Date();
-  const currentMonth = now.getUTCMonth();
-  const currentYear = now.getUTCFullYear();
+  const today = normalizeDateValue(new Date());
+  const currentMonth = today ? today.getMonth() : new Date().getMonth();
+  const currentYear = today ? today.getFullYear() : new Date().getFullYear();
   const volunteerId = volunteer.id;
   const volunteerEmail = (volunteer.email || '').trim().toLowerCase();
   const volunteerName = `${volunteer.firstName || ''} ${volunteer.lastName || ''}`.trim().toLowerCase();
@@ -231,9 +232,9 @@ const getMonthHoursForVolunteer = (volunteer: VolunteerRecord, logs: ActivityLog
     }
     const status = String(log.approve || 'pending').toLowerCase();
     if (status !== 'approved' && status !== 'accepted') return sum;
-    const date = (log.date as { toDate?: () => Date })?.toDate?.() ?? new Date(String(log.date || ''));
-    if (Number.isNaN(date.getTime())) return sum;
-    if (date.getUTCFullYear() !== currentYear || date.getUTCMonth() !== currentMonth) return sum;
+    const date = normalizeDateValue(log.date);
+    if (!date) return sum;
+    if (date.getFullYear() !== currentYear || date.getMonth() !== currentMonth) return sum;
     return sum + (parseFloat(String(log.hours_contributed ?? log.hours ?? 0)) || 0);
   }, 0);
 };

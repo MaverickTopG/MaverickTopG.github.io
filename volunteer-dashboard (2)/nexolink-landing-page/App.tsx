@@ -16,6 +16,9 @@ import AppPage from './pages/AppPage';
 import PricingPage from './pages/PricingPage';
 import BlogPage from './pages/BlogPage';
 import FounderStoryPage from './pages/FounderStoryPage';
+import AboutUsPage from './pages/AboutUsPage';
+import VolunteersInfoPage from './pages/VolunteersInfoPage';
+import DonatePage from './pages/DonatePage';
 import OpinionPage from './pages/OpinionPage';
 import LoginPage from './pages/LoginPage';
 import CreatePage from './pages/CreatePage';
@@ -23,11 +26,36 @@ import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import TermsPage from './pages/TermsPage';
 import ImpactNexus from './components/ImpactNexus';
 import VelocityStream from './components/VelocityStream';
+import VolunteerLoginPage from './pages/VolunteerLoginPage';
+import VolunteerSignupPage from './pages/VolunteerSignupPage';
+import VolunteerDashboardPage from './pages/VolunteerDashboardPage';
 
 gsap.registerPlugin(ScrollTrigger);
 
 const App: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<'home' | 'app' | 'pricing' | 'blog' | 'story' | 'opinion' | 'login' | 'create' | 'privacy' | 'terms'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'app' | 'pricing' | 'blog' | 'story' | 'opinion' | 'login' | 'create' | 'privacy' | 'terms' | 'volunteer-login' | 'volunteer-signup' | 'about' | 'volunteers-info' | 'donate'>('home');
+
+  useEffect(() => {
+    const titles: Record<string, string> = {
+      home: 'Home',
+      app: 'App',
+      pricing: 'Pricing',
+      blog: 'Blog',
+      story: 'Founder Story',
+      opinion: 'Opinion',
+      login: 'Login',
+      create: 'Create Account',
+      privacy: 'Privacy Policy',
+      terms: 'Terms of Service',
+      'volunteer-login': 'Volunteer Login',
+      'volunteer-signup': 'Volunteer Signup',
+      'volunteer-dashboard': 'Volunteer Dashboard',
+      about: 'Our Story',
+      'volunteers-info': 'Volunteers',
+      donate: 'Donate'
+    };
+    document.title = `NexoLink | ${titles[currentPage] || 'Volunteer Smarter'}`;
+  }, [currentPage]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -76,6 +104,12 @@ const App: React.FC = () => {
         return <FounderStoryPage onNavigate={setCurrentPage} />;
       case 'opinion':
         return <OpinionPage onNavigate={setCurrentPage} />;
+      case 'about':
+        return <AboutUsPage onNavigate={setCurrentPage} />;
+      case 'volunteers-info':
+        return <VolunteersInfoPage onNavigate={setCurrentPage} />;
+      case 'donate':
+        return <DonatePage onNavigate={setCurrentPage} />;
       case 'login':
         return <LoginPage onNavigate={setCurrentPage} />;
       case 'create':
@@ -84,6 +118,10 @@ const App: React.FC = () => {
         return <PrivacyPolicyPage />;
       case 'terms':
         return <TermsPage />;
+      case 'volunteer-login':
+        return <VolunteerLoginPage onNavigate={setCurrentPage} />;
+      case 'volunteer-signup':
+        return <VolunteerSignupPage onNavigate={setCurrentPage} />;
       case 'home':
       default:
         return (
@@ -113,7 +151,7 @@ const App: React.FC = () => {
     exit: { opacity: 0, y: -20, transition: { duration: 0.4, ease: "easeIn" } }
   };
 
-  const isAuthPage = currentPage === 'login' || currentPage === 'create';
+  const isAuthPage = currentPage === 'login' || currentPage === 'create' || currentPage === 'volunteer-login' || currentPage === 'volunteer-signup';
 
   return (
     <div className="relative selection:bg-neon selection:text-charcoal bg-transparent font-sans text-charcoal min-h-screen">

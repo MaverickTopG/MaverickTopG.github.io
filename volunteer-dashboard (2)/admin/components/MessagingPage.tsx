@@ -84,6 +84,7 @@ export const MessagingPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [showNewChat, setShowNewChat] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -142,6 +143,7 @@ export const MessagingPage: React.FC = () => {
       const first = String(data.firstName || data.name || '').trim();
       const last = String(data.lastName || data.last_name || '').trim();
       setSenderName([first, last].filter(Boolean).join(' ').trim() || user.email || 'Coordinator');
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -564,7 +566,14 @@ export const MessagingPage: React.FC = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto no-scrollbar space-y-2 px-1">
-            {filteredThreads.map((thread) => {
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3">
+                  <Plus className="w-6 h-6 text-gray-300 animate-spin" />
+                </div>
+                <p className="text-xs font-medium">Loading volunteers...</p>
+              </div>
+            ) : filteredThreads.map((thread) => {
               const latest = messagesByThread[thread.id]?.slice(-1)[0];
               return (
                 <button
@@ -639,6 +648,9 @@ export const MessagingPage: React.FC = () => {
                   </div>
                 )}
                 <div className="flex items-center gap-1.5 px-1">
+                  {msg.senderId !== getFirebaseAuth().currentUser?.uid && activeThread?.type === 'group' && (
+                    <span className="text-[10px] text-lime-600 font-black uppercase tracking-wider mr-1">{msg.senderName}</span>
+                  )}
                   <span className="text-[10px] text-gray-400 font-bold">{formatTime(msg.createdAt)}</span>
                   {msg.senderId === getFirebaseAuth().currentUser?.uid && (
                     <CheckCheck className="w-3 h-3 text-lime-500" />

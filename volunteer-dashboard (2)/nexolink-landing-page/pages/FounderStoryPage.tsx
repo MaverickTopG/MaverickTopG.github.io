@@ -51,6 +51,9 @@ const FounderStoryPage: React.FC<FounderStoryPageProps> = ({ onNavigate }) => {
             <h1 className="text-4xl md:text-6xl font-display font-black text-charcoal leading-tight">
               How I Built NexoLink: A Founder Story in 5 Minutes
             </h1>
+            <p className="text-lg md:text-xl font-medium text-charcoal/40 italic uppercase tracking-[0.2em]">
+              The principles and moments that shaped the mission.
+            </p>
             <p className="text-xl text-charcoal/50">
               Why NexoLink exists, the principles behind the product, and the moments that shaped it.
             </p>

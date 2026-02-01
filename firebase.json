@@ -36,6 +36,14 @@
         "destination": "/admin/index.html"
       },
       {
+        "source": "/volunteer",
+        "destination": "/volunteer/index.html"
+      },
+      {
+        "source": "/volunteer/**",
+        "destination": "/volunteer/index.html"
+      },
+      {
         "source": "/api/checkout",
         "function": "createCheckout"
       },

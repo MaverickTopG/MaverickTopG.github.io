@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
-import { Eye, EyeOff, Lock, Mail, Plus } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, Plus, Shield } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth,
@@ -72,6 +72,12 @@ const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
         duration: 0.8,
         ease: "expo.out"
       }, "-=0.6")
+      .from(".login-subtitle", {
+        y: 20,
+        opacity: 0,
+        duration: 1,
+        ease: "power2.out"
+      }, "-=0.6")
       .from(".input-group", {
         x: -30,
         opacity: 0,
@@ -116,16 +122,16 @@ const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
           <div className="relative z-10 max-w-lg text-center md:text-left">
               <div className="login-art-element mb-12 flex justify-center md:justify-start">
                   <div className="w-24 h-24 bg-neon rounded-3xl flex items-center justify-center shadow-[0_0_60px_rgba(158,255,79,0.4)] rotate-12 group transition-transform hover:rotate-0">
-                      <Lock className="w-12 h-12 text-charcoal" />
+                      <Shield className="w-12 h-12 text-charcoal" />
                   </div>
               </div>
               <div className="overflow-hidden">
                 <h2 className="login-text text-4xl md:text-7xl font-display font-black text-charcoal leading-[0.9] tracking-tighter uppercase mb-6 italic">
-                    WELCOME <br/> <span className="text-neon">BACK.</span>
+                    ADMIN <br/> <span className="text-neon">CENTER.</span>
                 </h2>
               </div>
-              <p className="login-text text-charcoal/40 text-lg md:text-xl font-medium leading-relaxed mb-12">
-                  Sign in to manage volunteers, approvals, and reports.
+              <p className="login-subtitle text-charcoal/40 text-lg md:text-xl font-medium italic uppercase tracking-[0.2em] mb-12">
+                  Sign in to manage your mission operations.
               </p>
 
               <div className="login-text space-y-6">

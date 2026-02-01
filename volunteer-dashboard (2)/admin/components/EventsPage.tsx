@@ -15,9 +15,13 @@ import {
   MoreHorizontal,
   Phone,
   Filter,
-  Download
+  Download,
+  Trash2,
+  X,
+  AlertCircle
 } from 'lucide-react';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { deleteDoc, doc } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 
@@ -162,6 +166,10 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
   const [events, setEvents] = useState<Event[]>([]);
   const [drafts, setDrafts] = useState<Event[]>([]);
   const [signupsByEvent, setSignupsByEvent] = useState<Record<string, Signup[]>>({});
+  const [deleteTarget, setDeleteTarget] = useState<Event | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -256,6 +264,48 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
     return events.filter(isUpcomingEvent);
   }, [events, drafts, filter]);
 
+  const openDeleteModal = (event: Event) => {
+    setDeleteTarget(event);
+    setDeletePassword('');
+    setDeleteError(null);
+  };
+
+  const closeDeleteModal = () => {
+    if (deleteLoading) return;
+    setDeleteTarget(null);
+    setDeletePassword('');
+    setDeleteError(null);
+  };
+
+  const handleDeleteEvent = async () => {
+    if (!deleteTarget) return;
+    if (!deletePassword) {
+      setDeleteError('Password is required to delete this event.');
+      return;
+    }
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      const auth = getFirebaseAuth();
+      const db = getFirestoreDb();
+      const user = auth.currentUser;
+      if (!user || !user.email) throw new Error('Auth state invalid.');
+      const credential = EmailAuthProvider.credential(user.email, deletePassword);
+      await reauthenticateWithCredential(user, credential);
+      await deleteDoc(doc(db, 'events', deleteTarget.id));
+      closeDeleteModal();
+    } catch (err: any) {
+      console.error('Failed to delete event', err);
+      if (err?.code === 'auth/wrong-password') {
+        setDeleteError('Incorrect password. Please try again.');
+      } else {
+        setDeleteError(err?.message || 'Failed to delete event.');
+      }
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const container = {
     hidden: { opacity: 0 },
     show: {
@@ -270,8 +320,9 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
   };
 
   return (
-    <AnimatePresence mode="wait">
-      {selectedEvent ? (
+    <>
+      <AnimatePresence mode="wait">
+        {selectedEvent ? (
         <motion.div 
           key="detail"
           initial={{ opacity: 0, x: 50 }}
@@ -578,9 +629,20 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                                     <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {formatLocation(event) || 'Location TBA'}</span>
                                 </div>
                              </div>
-                             <button className="p-2 text-gray-300 hover:text-gray-900 rounded-full transition-colors">
-                                <MoreVertical className="w-5 h-5" />
-                             </button>
+                             <div className="flex items-center gap-2">
+                               {String(event.status || 'published').toLowerCase() !== 'draft' && (
+                                 <button
+                                   onClick={() => openDeleteModal(event)}
+                                   className="p-2 text-red-400 hover:text-red-600 rounded-full transition-colors"
+                                   title="Delete event"
+                                 >
+                                   <Trash2 className="w-5 h-5" />
+                                 </button>
+                               )}
+                               <button className="p-2 text-gray-300 hover:text-gray-900 rounded-full transition-colors">
+                                 <MoreVertical className="w-5 h-5" />
+                               </button>
+                             </div>
                         </div>
 
                         {/* Progress & Users */}
@@ -617,7 +679,76 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
             )}
           </div>
         </motion.div>
-      )}
-    </AnimatePresence>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteTarget && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6"
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeDeleteModal} />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-white rounded-[2.5rem] w-full max-w-md relative shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-8 pb-6 flex items-start justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold text-gray-900">Delete Event</h3>
+                  <p className="text-gray-500 mt-1 text-sm">This will permanently delete “{deleteTarget.title}”.</p>
+                </div>
+                <button
+                  onClick={closeDeleteModal}
+                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-8 space-y-6 pb-8">
+                <div>
+                  <label className="block text-xs font-bold text-red-500 uppercase tracking-widest mb-2 ml-1">Confirm with Password</label>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      placeholder="Your login password"
+                      value={deletePassword}
+                      onChange={(e) => setDeletePassword(e.target.value)}
+                      disabled={deleteLoading}
+                      className="w-full h-14 pl-4 pr-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-gray-900 font-bold focus:border-red-400 focus:bg-white outline-none transition-all"
+                    />
+                  </div>
+                </div>
+                {deleteError && (
+                  <div className="p-4 rounded-2xl bg-red-50 text-red-600 text-sm font-medium flex items-center gap-3 border border-red-100">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    {deleteError}
+                  </div>
+                )}
+                <button
+                  onClick={handleDeleteEvent}
+                  disabled={deleteLoading}
+                  className="w-full py-4 rounded-2xl bg-red-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-red-600 transition-colors disabled:opacity-60"
+                >
+                  <Trash2 className="w-5 h-5" />
+                  {deleteLoading ? 'Deleting...' : 'Delete Event'}
+                </button>
+                <button
+                  onClick={closeDeleteModal}
+                  disabled={deleteLoading}
+                  className="w-full py-3 rounded-2xl text-gray-500 font-semibold text-sm hover:text-gray-800 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 };

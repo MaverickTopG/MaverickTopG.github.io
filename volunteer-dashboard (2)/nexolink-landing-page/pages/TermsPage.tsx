@@ -57,7 +57,8 @@ const TermsPage: React.FC = () => {
       .from(".terms-hero-sub", {
         opacity: 0,
         y: 20,
-        duration: 1
+        duration: 1,
+        ease: "power2.out"
       }, "-=0.8");
 
       // 2. Terms Reveal
@@ -95,24 +96,24 @@ const TermsPage: React.FC = () => {
 
   const terms = [
     {
-      title: "Agreement to Terms",
-      content: "By using NexoLink, you agree to follow your organization’s rules and provide accurate service information.",
+      title: "Ironclad Agreement",
+      content: "By using NexoLink, you agree that the platform is provided 'AS IS'. We are not liable for any inaccuracies, errors, or service failures.",
       icon: <FileCheck className="w-8 h-8" />
     },
     {
       title: "User Obligations",
-      content: "Log hours honestly, include clear descriptions, and respond to admin requests when verification is needed.",
+      content: "Log hours honestly. You are solely responsible for the content you upload and any consequences arising from inaccurate logs.",
       icon: <Scale className="w-8 h-8" />
     },
     {
-      title: "Impact IP",
-      content: "NexoLink’s platform and design are protected. You may use them for legitimate volunteer management only.",
-      icon: <Gavel className="w-8 h-8" />
+      title: "Total Liability Waiver",
+      content: "NexoLink is NOT responsible for any harm, injury, or loss occurring during volunteer events. We do not vet third parties; all risks are yours.",
+      icon: <AlertCircle className="w-8 h-8" />
     },
     {
-      title: "Limitation of Risk",
-      content: "Service events are organized by partner organizations. Please follow their safety guidance and policies.",
-      icon: <AlertCircle className="w-8 h-8" />
+      title: "Strategic Disclaimer",
+      content: "All information is safely stored in Firebase. We make no guarantees regarding platform uptime, data permanence, or the verification of hours. Blame cannot be assigned to NexoLink.",
+      icon: <Gavel className="w-8 h-8" />
     }
   ];
 
@@ -138,8 +139,8 @@ const TermsPage: React.FC = () => {
                 <span className="text-transparent" style={{ WebkitTextStroke: '2.5px #0F1115' }}>SYNTAX.</span>
             </h1>
 
-            <p className="terms-hero-sub text-xl md:text-3xl font-medium text-charcoal/30 max-w-2xl mx-auto leading-tight italic">
-                Straightforward guidelines for <br/> real-world volunteer programs.
+            <p className="terms-hero-sub mt-8 text-xl md:text-2xl font-medium text-charcoal/40 max-w-2xl mx-auto italic uppercase tracking-[0.2em]">
+                Straightforward guidelines for community programs.
             </p>
         </div>
 
@@ -185,11 +186,7 @@ const TermsPage: React.FC = () => {
                 </p>
                 <div className="flex flex-col md:flex-row gap-6 justify-center">
                     <button className="px-12 py-7 bg-neon text-charcoal rounded-3xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-xl">
-                        I Agree
-                    </button>
-                    <button className="px-12 py-7 border-2 border-white/10 text-white rounded-3xl font-black uppercase tracking-widest text-xs hover:border-white transition-all flex items-center justify-center gap-3">
-                        <Download className="w-4 h-4" />
-                        Download PDF
+                        I Agree & Accept Responsibility
                     </button>
                 </div>
             </div>

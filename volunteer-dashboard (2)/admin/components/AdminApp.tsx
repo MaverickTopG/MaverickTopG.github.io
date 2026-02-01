@@ -13,9 +13,19 @@ import { MessagingPage } from './MessagingPage';
 import { VolunteerRequestsPage } from './VolunteerRequestsPage';
 import { EventsPage } from './EventsPage';
 import { CreateEventPage } from './CreateEventPage';
+import { KioskModal } from './KioskModal';
 import { Users, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDashboardMetrics } from '../hooks/useDashboardMetrics';
+import { onAuthStateChanged } from 'firebase/auth';
+import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
+import { resolveOrgContext } from '../lib/orgContext';
+
+interface OrgContextState {
+  id: string;
+  code: string;
+  name: string;
+}
 
 const container = {
   hidden: { opacity: 0 },
@@ -34,6 +44,8 @@ const item = {
 
 export const AdminApp: React.FC = () => {
   const [currentView, setCurrentView] = useState('impact');
+  const [isKioskOpen, setIsKioskOpen] = useState(false);
+  const [orgContext, setOrgContext] = useState<OrgContextState>({ id: '', code: '', name: '' });
   const {
     metrics,
     topVolunteers,
@@ -47,6 +59,28 @@ export const AdminApp: React.FC = () => {
     retentionRate,
     topVolunteerMonthLabel,
   } = useDashboardMetrics();
+
+  React.useEffect(() => {
+    const auth = getFirebaseAuth();
+    const db = getFirestoreDb();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setOrgContext({ id: '', code: '', name: '' });
+        return;
+      }
+      try {
+        const context = await resolveOrgContext(db, user.uid);
+        setOrgContext({
+          id: context.orgId || '',
+          code: context.orgCode || '',
+          name: context.orgName || ''
+        });
+      } catch (error) {
+        console.error('Failed to resolve org context', error);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   const formatted = useMemo(() => {
     const formatNumber = (value: number, fraction = 0) =>
@@ -73,14 +107,18 @@ export const AdminApp: React.FC = () => {
   return (
     <div className="flex w-full h-screen bg-[#F3F4F6] overflow-hidden">
       {/* Left Sidebar */}
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      {!isKioskOpen && <Sidebar currentView={currentView} onNavigate={setCurrentView} />}
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         <main className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-8">
           <div className="max-w-[1600px] mx-auto">
             {/* Header Section */}
-            <Header />
+            <Header 
+              isKioskOpen={isKioskOpen} 
+              setIsKioskOpen={setIsKioskOpen} 
+              orgContext={orgContext}
+            />
 
             <AnimatePresence mode="wait">
               {currentView === 'impact' ? (
@@ -240,6 +278,14 @@ export const AdminApp: React.FC = () => {
           </div>
         </main>
       </div>
+      {/* Kiosk Modal */}
+      {isKioskOpen && (
+        <KioskModal 
+          isOpen={isKioskOpen} 
+          onClose={() => setIsKioskOpen(false)} 
+          orgContext={orgContext}
+        />
+      )}
     </div>
   );
 };

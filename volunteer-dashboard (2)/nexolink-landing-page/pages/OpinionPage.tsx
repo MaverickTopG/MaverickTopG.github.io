@@ -48,6 +48,9 @@ const OpinionPage: React.FC<OpinionPageProps> = ({ onNavigate }) => {
             <h1 className="text-4xl md:text-6xl font-display font-black text-charcoal leading-tight">
               The end of paper logs is near
             </h1>
+            <p className="text-lg md:text-xl font-medium text-charcoal/40 italic uppercase tracking-[0.2em]">
+              Why volunteer programs are finally moving past spreadsheets.
+            </p>
             <p className="text-xl text-charcoal/50">
               Why volunteer programs are finally moving past clipboards and spreadsheets — and why that matters.
             </p>

@@ -104,7 +104,7 @@ const StatsSection: React.FC = () => {
                         </div>
                     </div>
                     <div>
-                        <div className="text-8xl font-display font-black tracking-tighter mb-2 text-charcoal">98.1k</div>
+                        <div className="text-8xl font-display font-black tracking-tighter mb-2 text-charcoal">100k</div>
                         <span className="font-bold text-charcoal/60 uppercase tracking-wider text-sm">Verified Hours Logged</span>
                     </div>
                 </div>

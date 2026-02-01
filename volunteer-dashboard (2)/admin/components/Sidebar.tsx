@@ -77,12 +77,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
         >
           {/* Logo Section */}
           <div className="flex items-center px-4 mb-10 h-12 w-full">
-             <div className="w-12 h-12 bg-gray-800 rounded-2xl flex items-center justify-center border border-gray-700 shrink-0 overflow-hidden">
-                {logoUrl ? (
-                  <img src={logoUrl} alt={`${orgName} logo`} className="w-full h-full object-cover" />
-                ) : (
-                  <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
-                )}
+             <div className="w-12 h-12 bg-charcoal rounded-2xl flex items-center justify-center border border-gray-700/50 shadow-lg transition-all duration-300 overflow-hidden shrink-0">
+                <img 
+                  src="/logo.png" 
+                  alt="Logo" 
+                  className="w-full h-full object-contain hover:scale-110 transition-transform" 
+                />
              </div>
              <AnimatePresence>
                {isHovered && (

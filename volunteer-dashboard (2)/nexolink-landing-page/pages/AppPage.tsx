@@ -260,7 +260,8 @@ const AppPage: React.FC = () => {
   useLayoutEffect(() => {
     window.scrollTo(0, 0);
     const ctx = gsap.context(() => {
-      gsap.from(".blog-word", {
+      const tl = gsap.timeline();
+      tl.from(".blog-word", {
         y: 150,
         opacity: 0,
         rotateX: -30,
@@ -268,7 +269,13 @@ const AppPage: React.FC = () => {
         duration: 1.4,
         ease: "power4.out",
         delay: 0.2
-      });
+      })
+      .from(".app-subtitle", {
+        y: 20,
+        opacity: 0,
+        duration: 1,
+        ease: "power2.out"
+      }, "-=0.8");
     }, containerRef);
     return () => ctx.revert();
   }, []);
@@ -287,6 +294,9 @@ const AppPage: React.FC = () => {
                     SYNTAX.
                  </h1>
             </div>
+            <p className="app-subtitle mt-8 text-xl md:text-2xl font-medium text-charcoal/40 max-w-2xl mx-auto italic uppercase tracking-[0.2em]">
+                The most powerful companion for every volunteer.
+            </p>
         </div>
       </section>
 

@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "npm --prefix \"volunteer-dashboard (2)/nexolink-landing-page\" run dev -- --host",
     "start": "npm --prefix \"volunteer-dashboard (2)/nexolink-landing-page\" run dev -- --host",
-    "build": "npm --prefix \"volunteer-dashboard (2)/nexolink-landing-page\" run build && npm --prefix \"volunteer-dashboard (2)/admin\" run build && rm -rf \"volunteer-dashboard (2)/nexolink-landing-page/dist/admin\" && mkdir -p \"volunteer-dashboard (2)/nexolink-landing-page/dist/admin\" && cp -R \"volunteer-dashboard (2)/admin/dist/\"* \"volunteer-dashboard (2)/nexolink-landing-page/dist/admin/\"",
+    "build": "npm --prefix \"volunteer-dashboard (2)/nexolink-landing-page\" run build && npm --prefix \"volunteer-dashboard (2)/admin\" run build && npm --prefix \"volunteer-dashboard (2)/volunteer\" run build && rm -rf \"volunteer-dashboard (2)/nexolink-landing-page/dist/admin\" && rm -rf \"volunteer-dashboard (2)/nexolink-landing-page/dist/volunteer\" && mkdir -p \"volunteer-dashboard (2)/nexolink-landing-page/dist/admin\" && mkdir -p \"volunteer-dashboard (2)/nexolink-landing-page/dist/volunteer\" && cp -R \"volunteer-dashboard (2)/admin/dist/\"* \"volunteer-dashboard (2)/nexolink-landing-page/dist/admin/\" && cp -R \"volunteer-dashboard (2)/volunteer/dist/\"* \"volunteer-dashboard (2)/nexolink-landing-page/dist/volunteer/\"",
     "preview": "npm --prefix \"volunteer-dashboard (2)/nexolink-landing-page\" run preview",
     "build:admin": "npm --prefix \"volunteer-dashboard (2)/admin\" run build"
   },

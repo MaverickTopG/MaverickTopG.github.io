@@ -36,6 +36,12 @@ const BlogPage: React.FC<BlogPageProps> = ({ onNavigate }) => {
         stagger: 0.05,
         duration: 0.8,
         ease: "power2.out"
+      }, "-=0.8")
+      .from(".blog-subtitle", {
+        y: 20,
+        opacity: 0,
+        duration: 1,
+        ease: "power2.out"
       }, "-=0.8");
 
       // 2. Vertical List Reveal
@@ -166,6 +172,9 @@ const BlogPage: React.FC<BlogPageProps> = ({ onNavigate }) => {
                         LOG.
                      </h1>
                 </div>
+                <p className="blog-subtitle mt-8 text-xl md:text-2xl font-medium text-charcoal/40 max-w-2xl mx-auto italic uppercase tracking-[0.2em]">
+                    Engineering the future of community impact.
+                </p>
             </div>
         </section>
 

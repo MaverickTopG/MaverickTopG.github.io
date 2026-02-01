@@ -5,28 +5,37 @@ import {
   LayoutGrid, 
   CreditCard, 
   FileText, 
-  LogIn
+  LogIn,
+  User,
+  Users,
+  Info,
+  BookOpen,
+  Fingerprint,
+  Heart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface NavbarProps {
-  onNavigate: (page: 'home' | 'app' | 'pricing' | 'blog' | 'login') => void;
+  onNavigate: (page: 'home' | 'app' | 'pricing' | 'blog' | 'login' | 'volunteer-login' | 'volunteer-signup' | 'volunteer-dashboard' | 'about' | 'volunteers-info' | 'donate') => void;
   currentPage: string;
 }
 
-// Fixed the syntax error in component declaration and added proper typing for NavbarProps
 const Navbar: React.FC<NavbarProps> = ({ onNavigate, currentPage }) => {
   const [isHovered, setIsHovered] = useState(false);
   
   const navItems = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'app', label: 'App', icon: LayoutGrid },
-    { id: 'pricing', label: 'Pricing', icon: CreditCard },
-    { id: 'blog', label: 'Blog', icon: FileText },
+    { id: 'app', label: 'Mobile App', icon: LayoutGrid },
+    { id: 'volunteers-info', label: 'For Volunteers', icon: Users },
+    { id: 'about', label: 'Our Story', icon: BookOpen },
+    { id: 'pricing', label: 'Plans & Pricing', icon: CreditCard },
+    { id: 'blog', label: 'Latest News', icon: FileText },
+    { id: 'donate', label: 'Support Us', icon: Heart },
   ];
 
   const bottomItems = [
-      { id: 'login', label: 'Login', icon: LogIn },
+      { id: 'volunteer-login', label: 'Volunteer Portal', icon: Fingerprint },
+      { id: 'login', label: 'Admin Login', icon: LogIn },
   ];
 
   // Sidebar is now consistently opaque black

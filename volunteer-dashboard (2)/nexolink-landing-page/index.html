@@ -1,96 +1,110 @@
-
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NexoLink | Volunteer Smarter. Impact More.</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              neon: '#9EFF4F',
-              charcoal: '#0F1115',
-              softGray: '#F9FAFB',
-              sidebar: '#050505',
-              borderLight: 'rgba(15, 17, 21, 0.08)',
-            },
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-              display: ['Plus Jakarta Sans', 'sans-serif'],
-            },
-            boxShadow: {
-              'premium': '0 20px 50px -12px rgba(15, 17, 21, 0.08)',
-              'glass': '0 8px 32px 0 rgba(15, 17, 21, 0.05)',
-            },
-            animation: {
-              'spin-slow': 'spin 12s linear infinite',
-            }
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NexoLink</title>
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            neon: '#9EFF4F',
+            charcoal: '#0F1115',
+            softGray: '#F9FAFB',
+            sidebar: '#050505',
+            borderLight: 'rgba(15, 17, 21, 0.08)',
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            display: ['Plus Jakarta Sans', 'sans-serif'],
+          },
+          boxShadow: {
+            'premium': '0 20px 50px -12px rgba(15, 17, 21, 0.08)',
+            'glass': '0 8px 32px 0 rgba(15, 17, 21, 0.05)',
+          },
+          animation: {
+            'spin-slow': 'spin 12s linear infinite',
           }
         }
       }
-    </script>
-    <style>
-      :root {
-        --neon: #9EFF4F;
-      }
-      body {
-        background-color: #FFFFFF;
-        color: #0F1115;
-        overflow-x: hidden;
-        -webkit-font-smoothing: antialiased;
-      }
-      .bg-sidebar {
-        background-color: #050505;
-      }
-      .glass {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-      }
-      .perspective-1000 {
-        perspective: 1000px;
-      }
-      .mask-radial {
-        mask-image: radial-gradient(circle, black 40%, transparent 80%);
-      }
-      .hero-gradient {
-        background: radial-gradient(circle at 50% 50%, rgba(158, 255, 79, 0.05) 0%, rgba(255, 255, 255, 0) 70%);
-      }
-      ::-selection {
-        background: #9EFF4F;
-        color: #0F1115;
-      }
-      /* Custom scrollbar */
-      ::-webkit-scrollbar {
-        width: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #f1f1f1;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #d1d1d1;
-        border-radius: 10px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #9EFF4F;
-      }
-    </style>
-    <script>
-      window.PUBLIC_FIREBASE_API_KEY = "AIzaSyC1kY4dlbg9v38ZkuYVPJGnSulMEouvw58";
-      window.PUBLIC_FIREBASE_AUTH_DOMAIN = "nexolink-b8eb5.firebaseapp.com";
-      window.PUBLIC_FIREBASE_PROJECT_ID = "nexolink-b8eb5";
-      window.PUBLIC_FIREBASE_STORAGE_BUCKET = "nexolink-b8eb5.firebasestorage.app";
-      window.PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "247675121621";
-      window.PUBLIC_FIREBASE_APP_ID = "1:247675121621:web:98772b2e0cfbe8a381175c";
-    </script>
-    <script type="importmap">
+    }
+  </script>
+  <style>
+    :root {
+      --neon: #9EFF4F;
+    }
+
+    body {
+      background-color: #FFFFFF;
+      color: #0F1115;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .bg-sidebar {
+      background-color: #050505;
+    }
+
+    .glass {
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .perspective-1000 {
+      perspective: 1000px;
+    }
+
+    .mask-radial {
+      mask-image: radial-gradient(circle, black 40%, transparent 80%);
+    }
+
+    .hero-gradient {
+      background: radial-gradient(circle at 50% 50%, rgba(158, 255, 79, 0.05) 0%, rgba(255, 255, 255, 0) 70%);
+    }
+
+    ::-selection {
+      background: #9EFF4F;
+      color: #0F1115;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #d1d1d1;
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #9EFF4F;
+    }
+  </style>
+  <script>
+    window.PUBLIC_FIREBASE_API_KEY = "AIzaSyC1kY4dlbg9v38ZkuYVPJGnSulMEouvw58";
+    window.PUBLIC_FIREBASE_AUTH_DOMAIN = "nexolink-b8eb5.firebaseapp.com";
+    window.PUBLIC_FIREBASE_PROJECT_ID = "nexolink-b8eb5";
+    window.PUBLIC_FIREBASE_STORAGE_BUCKET = "nexolink-b8eb5.firebasestorage.app";
+    window.PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "247675121621";
+    window.PUBLIC_FIREBASE_APP_ID = "1:247675121621:web:98772b2e0cfbe8a381175c";
+  </script>
+  <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@18.2.0",
@@ -105,8 +119,10 @@
 }
 </script>
 </head>
-  <body>
-    <div id="root"></div>
+
+<body>
+  <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
+
 </html>

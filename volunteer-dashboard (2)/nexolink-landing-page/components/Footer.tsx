@@ -2,7 +2,7 @@
 import React from 'react';
 
 interface FooterProps {
-  onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'privacy' | 'terms') => void;
+  onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'privacy' | 'terms' | 'about' | 'volunteers-info' | 'donate') => void;
 }
 
 const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
@@ -28,8 +28,11 @@ const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <ul className="space-y-4 text-sm font-semibold text-charcoal/60">
                 <li><button onClick={() => onNavigate?.('home')} className="hover:text-charcoal transition-colors">Home</button></li>
                 <li><button onClick={() => onNavigate?.('app')} className="hover:text-charcoal transition-colors">App Details</button></li>
-                <li><button onClick={() => onNavigate?.('pricing')} className="hover:text-charcoal transition-colors">Pricing</button></li>
-                <li><button onClick={() => onNavigate?.('blog')} className="hover:text-charcoal transition-colors">Blog</button></li>
+                <li><button onClick={() => onNavigate?.('volunteers-info')} className="hover:text-charcoal transition-colors">For Volunteers</button></li>
+                <li><button onClick={() => onNavigate?.('about')} className="hover:text-charcoal transition-colors">Our Story</button></li>
+                <li><button onClick={() => onNavigate?.('pricing')} className="hover:text-charcoal transition-colors">Plans & Pricing</button></li>
+                <li><button onClick={() => onNavigate?.('blog')} className="hover:text-charcoal transition-colors">Latest News</button></li>
+                <li><button onClick={() => onNavigate?.('donate')} className="hover:text-charcoal transition-colors font-bold text-neon-dark underline decoration-neon/30 underline-offset-4">Support the Mission</button></li>
               </ul>
             </div>
           </div>

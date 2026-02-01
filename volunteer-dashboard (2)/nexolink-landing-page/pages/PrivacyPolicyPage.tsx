@@ -2,7 +2,7 @@
 import React, { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { Shield, Lock, Fingerprint, EyeOff, FileText, ChevronRight } from 'lucide-react';
+import { Shield, Lock, Fingerprint, EyeOff, FileText, ChevronRight, AlertCircle } from 'lucide-react';
 
 if (typeof window !== 'undefined') {
   gsap.registerPlugin(ScrollTrigger);
@@ -58,7 +58,8 @@ const PrivacyPolicyPage: React.FC = () => {
       .from(".policy-hero-sub", {
         opacity: 0,
         y: 20,
-        duration: 1
+        duration: 1,
+        ease: "power2.out"
       }, "-=0.8");
 
       // 2. Section Stagger
@@ -93,7 +94,7 @@ const PrivacyPolicyPage: React.FC = () => {
   const policies = [
     {
       title: "Data Sovereignty",
-      content: "We store volunteer profiles, hours, and approvals securely in the cloud. You control your profile and can request access or deletion at any time.",
+      content: "We store volunteer profiles, hours, and approvals securely in our Firebase cloud infrastructure. You control your profile and can request access or deletion at any time.",
       icon: <Shield className="w-6 h-6" />
     },
     {
@@ -110,6 +111,11 @@ const PrivacyPolicyPage: React.FC = () => {
       title: "Ledger Permanence",
       content: "Verified hours are saved to your service history and can be exported as CSV or PDF whenever you need them.",
       icon: <Lock className="w-6 h-6" />
+    },
+    {
+      title: "Zero Liability Node",
+      content: "NexoLink is a facilitation platform. We are not responsible for data loss, service interruptions, or unauthorized access. Users assume all data risks.",
+      icon: <AlertCircle className="w-6 h-6" />
     }
   ];
 
@@ -146,8 +152,8 @@ const PrivacyPolicyPage: React.FC = () => {
                 </div>
             </h1>
 
-            <p className="policy-hero-sub text-xl md:text-3xl font-medium text-charcoal/30 max-w-2xl mx-auto leading-tight italic">
-                Clear, student-friendly privacy practices for <br/> real-world volunteer programs.
+            <p className="policy-hero-sub mt-8 text-xl md:text-2xl font-medium text-charcoal/40 max-w-2xl mx-auto italic uppercase tracking-[0.2em]">
+                Clear, student-friendly privacy practices for your mission.
             </p>
         </div>
 

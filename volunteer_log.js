@@ -2030,14 +2030,6 @@ export default function VolunteerDashboard() {
       if (!isMounted.current) return;
       if (!accepted.length) return;
 
-      const volunteerEmail = userProfile?.email || user.email || '';
-      const volunteerFirstName = userProfile?.firstName || user.displayName?.split(' ')[0] || '';
-      const volunteerLastName = userProfile?.lastName || user.displayName?.split(' ')[1] || '';
-      const volunteerName = `${volunteerFirstName} ${volunteerLastName}`.trim()
-        || user.displayName
-        || (volunteerEmail ? volunteerEmail.split('@')[0] : '')
-        || 'Volunteer';
-
       const existingSnap = await getDocs(
         query(collection(db, 'users'), where('user_id', '==', user.uid)),
       );
@@ -2062,7 +2054,6 @@ export default function VolunteerDashboard() {
         try {
           const resolved = upperCode ? await resolveOrgByCode(upperCode) : null;
           const finalCode = resolved?.access_code || upperCode || null;
-          const finalCodeUpper = finalCode ? String(finalCode).toUpperCase() : null;
           const finalLinkedId = resolved?.linked_org_id
             || resolved?.id
             || normalizedLinkedId
@@ -2100,20 +2091,10 @@ export default function VolunteerDashboard() {
 
           const payload = {
             user_id: user.uid,
-            role: 'volunteer',
-            email: volunteerEmail,
-            user_email: volunteerEmail,
-            volunteer_email: volunteerEmail,
-            firstName: volunteerFirstName,
-            lastName: volunteerLastName,
-            user_name: volunteerName,
-            volunteer_name: volunteerName,
             name: finalName,
-            access_code: finalCodeUpper,
-            organizationCode: finalCodeUpper,
-            organization_code: finalCodeUpper,
-            org_code: finalCodeUpper,
-            org_access_code: finalCodeUpper,
+            access_code: finalCode,
+            organizationCode: finalCode,
+            org_access_code: finalCode,
             linked_org_id: finalLinkedId,
             organization_id: finalLinkedId,
             org_id: finalLinkedId,
@@ -2121,7 +2102,6 @@ export default function VolunteerDashboard() {
             org_join_request_id: req.docId,
             joined_via_request: true,
             joined_at: serverTimestamp(),
-            createdAt: serverTimestamp(),
             status: 'active',
             planKey: finalPlanKey || null,
             plan_key: finalPlanKey || null,
@@ -2140,14 +2120,7 @@ export default function VolunteerDashboard() {
     } catch (err) {
       console.error('loadUserOrgRequests error', err);
     }
-  }, [
-    user?.uid,
-    user?.email,
-    user?.displayName,
-    userProfile?.email,
-    userProfile?.firstName,
-    userProfile?.lastName,
-  ]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -2298,26 +2271,17 @@ export default function VolunteerDashboard() {
       const recipientSet = new Set(adminUids.filter(Boolean).map((uid) => String(uid)));
       if (central.owner_uid) recipientSet.add(String(central.owner_uid));
 
-      const volunteerEmail = userProfile?.email || user.email || '';
-      const volunteerFirstName = userProfile?.firstName || user.displayName?.split(' ')[0] || '';
-      const volunteerLastName = userProfile?.lastName || user.displayName?.split(' ')[1] || '';
-      const sharedUserName = `${volunteerFirstName} ${volunteerLastName}`.trim()
+      const sharedUserName = `${userProfile?.firstName || ''} ${userProfile?.lastName || ''}`.trim()
         || user.displayName
-        || (volunteerEmail ? volunteerEmail.split('@')[0] : '')
-        || 'Volunteer';
+        || '';
 
       await addDoc(collection(db, 'organization_join_requests'), {
         user_id: user.uid,
-        user_email: volunteerEmail,
+        user_email: userProfile?.email || user.email,
         user_name: sharedUserName,
-        firstName: volunteerFirstName,
-        lastName: volunteerLastName,
-        volunteer_email: volunteerEmail,
-        volunteer_name: sharedUserName,
         org_id: central.id,
         org_name: central.name || code,
         org_access_code: code,
-        organization_code: code,
         org_owner_uid: central.owner_uid || null,
         org_admin_uids: adminUids,
         org_recipient_user_ids: Array.from(recipientSet),
@@ -2452,13 +2416,6 @@ export default function VolunteerDashboard() {
     const hrs = parseFloat(newHours);
     const now = new Date();
     const currentQrPrefill = qrPrefill;
-    const volunteerEmail = userProfile?.email || user.email || '';
-    const volunteerFirstName = userProfile?.firstName || user.displayName?.split(' ')[0] || '';
-    const volunteerLastName = userProfile?.lastName || user.displayName?.split(' ')[1] || '';
-    const volunteerName = `${volunteerFirstName} ${volunteerLastName}`.trim()
-      || user.displayName
-      || (volunteerEmail ? volunteerEmail.split('@')[0] : '')
-      || 'Volunteer';
 
     const normalizedSelections = Array.from(new Set(
       (selectedOrganizations || [])
@@ -2470,22 +2427,14 @@ export default function VolunteerDashboard() {
 
     const sessionBase = {
       user_id: user.uid,
-      volunteer_id: user.uid,
-      email: volunteerEmail,
-      user_email: volunteerEmail,
-      volunteer_email: volunteerEmail,
-      firstName: volunteerFirstName,
-      lastName: volunteerLastName,
-      volunteer_name: volunteerName,
-      user_name: volunteerName,
-      role: 'volunteer',
+      email: userProfile?.email || user.email,
+      firstName: userProfile?.firstName || user.displayName?.split(' ')[0] || '',
+      lastName: userProfile?.lastName || user.displayName?.split(' ')[1] || '',
       site: newSite.trim(),
       hours_contributed: hrs,
       date: formatMMDDYYYY(now),
       time: formatTimeHHMMAMPM(),
       shared_default_codes: [],
-      source: 'manual',
-      created_at: serverTimestamp(),
     };
 
     setIsSaving(true);
@@ -2511,9 +2460,6 @@ export default function VolunteerDashboard() {
         const qrSession = {
           ...sessionBase,
           organization_id: qrOrgCode,
-          organization_code: qrOrgCode,
-          org_code: qrOrgCode,
-          org_access_code: qrOrgCode,
           organization_name: currentQrPrefill.orgName || null,
           linked_org_id: currentQrPrefill.linkedOrgId || null,
           approve: currentQrPrefill.orgName
@@ -2552,14 +2498,11 @@ export default function VolunteerDashboard() {
         const personalSession = {
           ...sessionBase,
           organization_id: personalOrgId,
-          organization_code: personalOrgId,
-          org_code: personalOrgId,
-          org_access_code: personalOrgId,
           linked_org_id: personalOrgId,
           organization_name: 'Personal',
           is_personal: true,
           approve: 'Self Logged',
-          source: 'personal',
+          created_at: Date.now(),
         };
         const docRef = await addDoc(collection(db, LOGS_COLLECTION), personalSession);
         if (defaultOrgCodes.length) {
@@ -2578,10 +2521,8 @@ export default function VolunteerDashboard() {
       for (const code of manualOrgCodes) {
         const orgSession = {
           ...sessionBase,
+          created_at: Date.now(),
           organization_id: code,
-          organization_code: code,
-          org_code: code,
-          org_access_code: code,
         };
         let orgName = code;
         try {
@@ -2594,7 +2535,6 @@ export default function VolunteerDashboard() {
         } catch (error) {
           console.warn('resolveOrgByCode failed', error);
         }
-        orgSession.organization_name = orgName;
         orgSession.approve = `Awaiting ${orgName}'s approval`;
         await addDoc(collection(db, LOGS_COLLECTION), orgSession);
         sentOrgNames.push(orgName);
@@ -2624,8 +2564,8 @@ export default function VolunteerDashboard() {
     if (log?.is_personal) return true;
     if (!log?.organization_id) return false;
     if (personalOrgId && log.organization_id === personalOrgId) return true;
-    const status = String(log.approve || '').toLowerCase();
-    if (status === 'accepted' || status === 'approved' || status.startsWith('approved')) return true;
+    if (log.approve === 'accepted') return true;
+    if (typeof log.approve === 'string' && log.approve.toLowerCase().startsWith('approved by')) return true;
     return false;
   }, [personalOrgId]);
   const isDeclinedLog = useCallback((log) => {

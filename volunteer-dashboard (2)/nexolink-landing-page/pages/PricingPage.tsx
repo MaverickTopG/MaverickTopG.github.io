@@ -81,6 +81,12 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
         ease: "power4.out",
         delay: 0.2
       })
+      .from(".pricing-subtitle", {
+        y: 20,
+        opacity: 0,
+        duration: 1,
+        ease: "power2.out"
+      }, "-=0.8")
       .from(".pricing-toggle", {
         y: 20,
         opacity: 0,
@@ -167,10 +173,6 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
     {
       question: "Can I export my impact portfolio?",
       answer: "Yes. Volunteers and admins can export verified service history as CSV or PDF for schools, applications, or audits."
-    },
-    {
-      question: "What constitutes a 'Team Seat'?",
-      answer: "A Team Seat is one admin account that can create events, approve hours, message volunteers, and export reports. Volunteer accounts are unlimited."
     },
     {
       question: "Is there a free trial?",
@@ -296,6 +298,9 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
                     CHANGE.
                  </h1>
             </div>
+            <p className="pricing-subtitle mt-8 text-xl md:text-2xl font-medium text-charcoal/40 max-w-2xl mx-auto italic uppercase tracking-[0.2em]">
+                Transparent plans for organizations of all sizes.
+            </p>
           </div>
         </div>
       </section>
