@@ -10,7 +10,8 @@ import {
   HelpCircle,
   MessageSquare,
   Calendar,
-  LogOut
+  LogOut,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -55,10 +56,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
     { id: 'volunteers', label: 'Volunteers', icon: Users },
     { id: 'messaging', label: 'Messages', icon: MessageSquare },
     { id: 'events', label: 'Events', icon: Calendar },
+    { id: 'nebulae', label: 'Nebulae AI', icon: Sparkles },
   ];
 
   const helperItems = [
-    { id: 'whats-new', icon: Rocket, label: "What's New" },
     { id: 'support', icon: HelpCircle, label: 'Support' }
   ];
 

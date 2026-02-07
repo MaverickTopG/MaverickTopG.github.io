@@ -43,12 +43,14 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [location, setLocation] = useState('');
   const [maxVolunteers, setMaxVolunteers] = useState('');
   const [coverImageUrl, setCoverImageUrl] = useState('');
+  const [coverImagePreview, setCoverImagePreview] = useState('');
   const [isDateRange, setIsDateRange] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [shifts, setShifts] = useState<Shift[]>([{ id: '1', startTime: '', endTime: '' }]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const categories = ['Community', 'Environment', 'Education', 'Health', 'Crisis Relief'];
 
   useEffect(() => {
@@ -63,9 +65,29 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current && previewUrlRef.current.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !orgData) return;
+    if (!file) return;
+
+    const localUrl = URL.createObjectURL(file);
+    if (previewUrlRef.current && previewUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+    previewUrlRef.current = localUrl;
+    setCoverImagePreview(localUrl);
+
+    if (!orgData) {
+      console.warn('Org data not ready yet. Skipping cover upload.');
+      return;
+    }
 
     setIsUploading(true);
     try {
@@ -74,6 +96,11 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
       const snapshot = await uploadBytes(storageRef, file);
       const url = await getDownloadURL(snapshot.ref);
       setCoverImageUrl(url);
+      setCoverImagePreview(url);
+      if (previewUrlRef.current === localUrl) {
+        URL.revokeObjectURL(localUrl);
+        previewUrlRef.current = null;
+      }
     } catch (error) {
       console.error('Upload failed:', error);
     } finally {
@@ -96,8 +123,12 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   };
 
   const handlePublish = async (status: 'published' | 'draft' = 'published') => {
-    if (!title || !startDate || !orgData) {
-      alert('Please fill in required fields (Title and Start Date)');
+    if (!orgData) {
+      alert('Organization data is still loading. Please try again.');
+      return;
+    }
+    if (status === 'published' && (!title || !startDate)) {
+      alert('Please fill in required fields (Title and Start Date) to publish.');
       return;
     }
 
@@ -364,11 +395,11 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
                       onClick={() => !isUploading && fileInputRef.current?.click()}
                       className={`border-2 border-dashed border-gray-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:bg-gray-50 hover:border-lime-300 transition-all cursor-pointer group h-64 relative overflow-hidden ${isUploading ? 'cursor-not-allowed opacity-50' : ''}`}
                   >
-                      {coverImageUrl ? (
+                      {coverImagePreview || coverImageUrl ? (
                           <>
-                              <img src={coverImageUrl} className="absolute inset-0 w-full h-full object-cover" />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                  <ImageIcon className="w-8 h-8 text-white" />
+                              <img src={coverImagePreview || coverImageUrl} className="absolute inset-0 w-full h-full object-cover" />
+                              <div className={`absolute inset-0 ${isUploading ? 'bg-black/40 opacity-100' : 'bg-black/40 opacity-0 group-hover:opacity-100'} transition-opacity flex items-center justify-center`}>
+                                  {isUploading ? <Loader2 className="w-8 h-8 text-white animate-spin" /> : <ImageIcon className="w-8 h-8 text-white" />}
                               </div>
                           </>
                       ) : (

@@ -42,6 +42,15 @@ const VolunteerLoginPage: React.FC<VolunteerLoginPageProps> = ({ onNavigate }) =
   }
 
   useEffect(() => {
+    const storedEmail = localStorage.getItem('nexolink_volunteer_email');
+    const storedRemember = localStorage.getItem('nexolink_volunteer_remember') === 'true';
+    if (storedEmail) {
+      setEmail(storedEmail);
+    }
+    setRememberMe(storedRemember);
+  }, []);
+
+  useEffect(() => {
     window.scrollTo(0, 0);
 
     const ctx = gsap.context(() => {
@@ -90,6 +99,14 @@ const VolunteerLoginPage: React.FC<VolunteerLoginPageProps> = ({ onNavigate }) =
       const auth = getAuth();
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
       await signInWithEmailAndPassword(auth, email.trim(), password);
+      
+      if (rememberMe) {
+        localStorage.setItem('nexolink_volunteer_email', email.trim());
+        localStorage.setItem('nexolink_volunteer_remember', 'true');
+      } else {
+        localStorage.removeItem('nexolink_volunteer_remember');
+      }
+
       // Redirect to the dedicated volunteer sub-app
       window.location.href = '/volunteer';
     } catch (err: any) {

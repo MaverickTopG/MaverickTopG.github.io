@@ -344,7 +344,7 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
                     <span className="text-7xl font-display font-black tracking-tighter">
                       ${isAnnual ? tier.annualPrice : tier.price}
                     </span>
-                    <span className={`text-sm font-bold opacity-40`}>/mo</span>
+                    <span className={`text-sm font-bold opacity-40`}>{isAnnual ? '/yr' : '/mo'}</span>
                     {isAnnual && (
                       <span className={`ml-3 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${tier.theme === 'neon' ? 'bg-charcoal text-neon' : 'bg-neon text-charcoal'}`}>
                         17% off

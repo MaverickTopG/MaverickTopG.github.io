@@ -8,11 +8,11 @@ import { RightPanel } from './RightPanel';
 import { VolunteersPage } from './VolunteersPage';
 import { BillingPage } from './BillingPage';
 import { SupportPage } from './SupportPage';
-import { WhatsNewPage } from './WhatsNewPage';
 import { MessagingPage } from './MessagingPage';
 import { VolunteerRequestsPage } from './VolunteerRequestsPage';
 import { EventsPage } from './EventsPage';
 import { CreateEventPage } from './CreateEventPage';
+import { NebulaePage } from './NebulaePage';
 import { KioskModal } from './KioskModal';
 import { Users, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -111,14 +111,16 @@ export const AdminApp: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <main className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-8">
-          <div className="max-w-[1600px] mx-auto">
+        <main className={`flex-1 overflow-y-auto no-scrollbar ${currentView === 'nebulae' ? '' : 'p-6 lg:p-8'}`}>
+          <div className={`${currentView === 'nebulae' ? 'h-full' : 'max-w-[1600px] mx-auto'}`}>
             {/* Header Section */}
-            <Header 
-              isKioskOpen={isKioskOpen} 
-              setIsKioskOpen={setIsKioskOpen} 
-              orgContext={orgContext}
-            />
+            {currentView !== 'nebulae' && (
+              <Header 
+                isKioskOpen={isKioskOpen} 
+                setIsKioskOpen={setIsKioskOpen} 
+                orgContext={orgContext}
+              />
+            )}
 
             <AnimatePresence mode="wait">
               {currentView === 'impact' ? (
@@ -239,6 +241,17 @@ export const AdminApp: React.FC = () => {
                 >
                   <CreateEventPage onBack={() => setCurrentView('events')} />
                 </motion.div>
+              ) : currentView === 'nebulae' ? (
+                <motion.div
+                  key="nebulae"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="h-full"
+                >
+                  <NebulaePage />
+                </motion.div>
               ) : currentView === 'billing' ? (
                 <motion.div
                   key="billing"
@@ -258,16 +271,6 @@ export const AdminApp: React.FC = () => {
                   transition={{ duration: 0.3 }}
                 >
                   <SupportPage />
-                </motion.div>
-              ) : currentView === 'whats-new' ? (
-                <motion.div
-                  key="whats-new"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <WhatsNewPage />
                 </motion.div>
               ) : (
                 <div key="empty" className="flex items-center justify-center h-[60vh] text-gray-400">

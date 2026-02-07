@@ -4,9 +4,7 @@ import {
   Calendar, 
   MapPin, 
   Clock, 
-  Users, 
   Plus, 
-  MoreVertical, 
   ChevronRight, 
   ArrowLeft,
   Search,
@@ -14,7 +12,6 @@ import {
   CheckCircle2,
   MoreHorizontal,
   Phone,
-  Filter,
   Download,
   Trash2,
   X,
@@ -118,6 +115,19 @@ const isPastEvent = (event: Event) => getEventStatus(event) === 'past';
 const isUpcomingEvent = (event: Event) => getEventStatus(event) === 'upcoming';
 const isLiveEvent = (event: Event) => getEventStatus(event) === 'live';
 
+const parseNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const normalized = trimmed.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+    if (!normalized) return null;
+    const parsed = Number(normalized[0]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
 const normalizeEvent = (data: Record<string, unknown>, id: string): Event => ({
   id,
   title: String(data.title || 'Untitled Event'),
@@ -130,11 +140,32 @@ const normalizeEvent = (data: Record<string, unknown>, id: string): Event => ({
   city: data.city ? String(data.city) : undefined,
   state: data.state ? String(data.state) : undefined,
   status: data.status ? String(data.status) : 'published',
-  capacity: Number.isFinite(data.capacity as number) ? Number(data.capacity) : null,
-  maxVolunteers: Number.isFinite(data.maxVolunteers as number) ? Number(data.maxVolunteers) : undefined,
-  peoplePerSlot: Number.isFinite(data.peoplePerSlot as number) ? Number(data.peoplePerSlot) : null,
+  capacity: parseNumber(data.capacity ?? data.capacity_value ?? data.maxCapacity ?? data.max_capacity),
+  maxVolunteers: parseNumber(
+    data.maxVolunteers ??
+      data.max_volunteers ??
+      data.maxVolunteer ??
+      data.max_volunteer ??
+      (typeof data.requirements === 'object' && data.requirements !== null
+        ? (data.requirements as Record<string, unknown>).maxVolunteers ??
+          (data.requirements as Record<string, unknown>).max_volunteers ??
+          (data.requirements as Record<string, unknown>).maxVolunteer ??
+          (data.requirements as Record<string, unknown>).max_volunteer
+        : undefined)
+  ) ?? undefined,
+  peoplePerSlot: parseNumber(data.peoplePerSlot ?? data.people_per_slot),
   timeSlots: Array.isArray(data.timeSlots) ? data.timeSlots : [],
-  coverImageUrl: data.coverImageUrl ? String(data.coverImageUrl) : undefined,
+  coverImageUrl: data.coverImageUrl
+    ? String(data.coverImageUrl)
+    : data.cover_image_url
+      ? String(data.cover_image_url)
+      : data.coverImage
+        ? String(data.coverImage)
+        : data.imageUrl
+          ? String(data.imageUrl)
+          : data.image_url
+            ? String(data.image_url)
+            : undefined,
   isDateRange: !!data.isDateRange,
   shifts: Array.isArray(data.shifts) ? data.shifts : [],
   category: data.category ? String(data.category) : undefined,
@@ -145,6 +176,9 @@ const normalizeEvent = (data: Record<string, unknown>, id: string): Event => ({
 const resolveEventCapacity = (event: Event, signups: Signup[]) => {
   if (Number.isFinite(event.capacity ?? NaN) && (event.capacity ?? 0) > 0) {
     return Number(event.capacity);
+  }
+  if (Number.isFinite(event.maxVolunteers ?? NaN) && (event.maxVolunteers ?? 0) > 0) {
+    return Number(event.maxVolunteers);
   }
   if (event.peoplePerSlot && Array.isArray(event.timeSlots) && event.timeSlots.length) {
     return event.timeSlots.length * event.peoplePerSlot;
@@ -170,6 +204,11 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [volunteerSearch, setVolunteerSearch] = useState('');
+
+  useEffect(() => {
+    setVolunteerSearch('');
+  }, [selectedEvent?.id]);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -306,6 +345,73 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
     }
   };
 
+  const selectedSignups = useMemo(() => {
+    if (!selectedEvent) return [];
+    return signupsByEvent[selectedEvent.id] || [];
+  }, [selectedEvent, signupsByEvent]);
+
+  const filteredSignups = useMemo(() => {
+    if (!volunteerSearch.trim()) return selectedSignups;
+    const query = volunteerSearch.trim().toLowerCase();
+    return selectedSignups.filter((signup) => {
+      const values = [
+        signup.volunteerName,
+        signup.volunteerEmail,
+        signup.status,
+        signup.role,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+      return values.some((value) => value.includes(query));
+    });
+  }, [selectedSignups, volunteerSearch]);
+
+  const handleExportRoster = () => {
+    if (!selectedEvent) return;
+    const signups = signupsByEvent[selectedEvent.id] || [];
+    if (!signups.length) {
+      window.alert('No volunteers to export yet.');
+      return;
+    }
+    const headers = ['Name', 'Email', 'Status', 'Role'];
+    const rows = signups.map((signup) => [
+      signup.volunteerName,
+      signup.volunteerEmail,
+      signup.status,
+      signup.role,
+    ]);
+    const escapeCell = (value: string) => `"${value.replace(/\"/g, '""')}"`;
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => escapeCell(String(cell || ''))).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const filenameBase = (selectedEvent.title || 'event').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `${filenameBase}_roster.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleMessageAll = () => {
+    if (!selectedEvent) return;
+    const signups = signupsByEvent[selectedEvent.id] || [];
+    const emails = signups
+      .map((signup) => signup.volunteerEmail)
+      .map((email) => String(email || '').trim())
+      .filter(Boolean);
+    if (!emails.length) {
+      window.alert('No volunteer email addresses available.');
+      return;
+    }
+    const subject = encodeURIComponent(`${selectedEvent.title} - Volunteer Update`);
+    const bcc = encodeURIComponent(emails.join(','));
+    window.location.href = `mailto:?subject=${subject}&bcc=${bcc}`;
+  };
+
   const container = {
     hidden: { opacity: 0 },
     show: {
@@ -349,11 +455,17 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                 <p className="text-gray-500 font-medium">Manage event details and volunteers.</p>
              </div>
              <div className="flex gap-2">
-                <button className="h-12 px-5 bg-white border border-gray-200 text-gray-700 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-colors">
+                <button
+                  onClick={handleExportRoster}
+                  className="h-12 px-5 bg-white border border-gray-200 text-gray-700 rounded-2xl font-bold flex items-center gap-2 hover:bg-gray-50 transition-colors"
+                >
                     <Download className="w-4 h-4" />
                     <span className="hidden md:inline">Export Roster</span>
                 </button>
-                <button className="h-12 px-5 bg-gray-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-black transition-colors shadow-lg shadow-gray-900/10">
+                <button
+                  onClick={handleMessageAll}
+                  className="h-12 px-5 bg-gray-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-black transition-colors shadow-lg shadow-gray-900/10"
+                >
                     <Mail className="w-4 h-4" />
                     <span className="hidden md:inline">Message All</span>
                 </button>
@@ -428,7 +540,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                   </div>
 
                   {/* Stats Card */}
-                  <div className="bg-gray-900 rounded-[2.5rem] p-8 shadow-sm border border-gray-800 text-white">
+                  <div className="bg-gray-900 rounded-[2.5rem] p-6 shadow-sm border border-gray-800 text-white">
                       <h3 className="font-bold text-white text-lg mb-6">Capacity</h3>
                       <div className="mb-2 flex justify-between items-end">
                           <span className="text-4xl font-bold tracking-tight">{(signupsByEvent[selectedEvent.id] || []).length}</span>
@@ -436,23 +548,13 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                             / {resolveEventCapacity(selectedEvent, signupsByEvent[selectedEvent.id] || [])} Volunteers
                           </span>
                       </div>
-                      <div className="h-4 bg-gray-800 rounded-full overflow-hidden w-full mb-6">
+                      <div className="h-4 bg-gray-800 rounded-full overflow-hidden w-full mb-4">
                           <motion.div 
                               initial={{ width: 0 }}
                               animate={{ width: `${resolveCapacityPercent(selectedEvent, signupsByEvent[selectedEvent.id] || [])}%` }}
                               transition={{ duration: 1, ease: "easeOut" }}
                               className={`h-full rounded-full ${resolveCapacityPercent(selectedEvent, signupsByEvent[selectedEvent.id] || []) >= 100 ? 'bg-red-400' : 'bg-lime-300'}`}
                           />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-6 border-t border-gray-800">
-                          <div>
-                              <span className="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Total Hours</span>
-                              <span className="text-xl font-bold text-lime-300">48 hrs</span>
-                          </div>
-                          <div>
-                              <span className="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Attendance</span>
-                              <span className="text-xl font-bold text-white">92%</span>
-                          </div>
                       </div>
                   </div>
               </div>
@@ -462,7 +564,9 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                   <div className="p-8 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
                           <h3 className="font-bold text-gray-900 text-lg">Signed Up Volunteers</h3>
-                          <span className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold">{(signupsByEvent[selectedEvent.id] || []).length}</span>
+                          <span className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold">
+                            {volunteerSearch.trim() ? filteredSignups.length : selectedSignups.length}
+                          </span>
                       </div>
                       <div className="flex items-center gap-3">
                           <div className="relative group">
@@ -470,12 +574,11 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                               <input 
                                   type="text" 
                                   placeholder="Search list..." 
+                                  value={volunteerSearch}
+                                  onChange={(e) => setVolunteerSearch(e.target.value)}
                                   className="h-10 pl-10 pr-4 bg-gray-50 rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none w-48 transition-all"
                               />
                           </div>
-                          <button className="h-10 w-10 bg-gray-50 hover:bg-gray-100 rounded-xl flex items-center justify-center text-gray-500 transition-colors">
-                              <Filter className="w-4 h-4" />
-                          </button>
                       </div>
                   </div>
 
@@ -490,7 +593,14 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                               </tr>
                           </thead>
                           <tbody>
-                              {(signupsByEvent[selectedEvent.id] || []).map((vol) => (
+                              {filteredSignups.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} className="py-10 px-6 text-center text-sm text-gray-400">
+                                    No volunteers found.
+                                  </td>
+                                </tr>
+                              ) : (
+                              filteredSignups.map((vol) => (
                                   <tr key={vol.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors group">
                                       <td className="py-4 px-6">
                                           <div className="flex items-center gap-3">
@@ -528,7 +638,8 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                                           </div>
                                       </td>
                                   </tr>
-                              ))}
+                              ))
+                              )}
                           </tbody>
                       </table>
                   </div>
@@ -596,10 +707,19 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                     key={event.id}
                     variants={item}
                     whileHover={{ scale: 1.005 }}
-                    className="bg-white rounded-[2.5rem] p-6 md:p-8 shadow-sm border border-gray-100 flex flex-col md:flex-row gap-6 md:items-center group"
+                    className="bg-white rounded-[2.5rem] p-6 md:p-8 shadow-sm border border-gray-100 flex flex-col md:flex-row gap-6 md:items-center group relative"
                 >
+                    {String(event.status || 'published').toLowerCase() !== 'draft' && (
+                      <button
+                        onClick={() => openDeleteModal(event)}
+                        className="absolute top-6 right-6 p-2 text-red-400 hover:text-red-600 rounded-full transition-colors"
+                        title="Delete event"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    )}
                     {/* Cover / Date Badge */}
-                    <div className="relative group/cover w-full md:w-32 h-40 md:h-auto shrink-0 bg-gray-50 rounded-2xl overflow-hidden border border-gray-100">
+                    <div className="relative group/cover w-full sm:w-60 md:w-48 aspect-square shrink-0 bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 self-start">
                         {event.coverImageUrl ? (
                           <img src={event.coverImageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         ) : (
@@ -614,7 +734,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                     </div>
 
                     {/* Event Details */}
-                    <div className="flex-1">
+                    <div className="flex-1 pr-24">
                         <div className="flex items-start justify-between mb-2">
                              <div className="flex flex-col gap-1">
                                 <h3 className="text-xl font-bold text-gray-900 group-hover:text-lime-600 transition-colors">{event.title}</h3>
@@ -628,20 +748,6 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                                     </span>
                                     <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {formatLocation(event) || 'Location TBA'}</span>
                                 </div>
-                             </div>
-                             <div className="flex items-center gap-2">
-                               {String(event.status || 'published').toLowerCase() !== 'draft' && (
-                                 <button
-                                   onClick={() => openDeleteModal(event)}
-                                   className="p-2 text-red-400 hover:text-red-600 rounded-full transition-colors"
-                                   title="Delete event"
-                                 >
-                                   <Trash2 className="w-5 h-5" />
-                                 </button>
-                               )}
-                               <button className="p-2 text-gray-300 hover:text-gray-900 rounded-full transition-colors">
-                                 <MoreVertical className="w-5 h-5" />
-                               </button>
                              </div>
                         </div>
 
@@ -661,19 +767,16 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                                     ></div>
                                 </div>
                             </div>
-
-                            <div className="flex items-center gap-4">
-                                <button 
-                                    onClick={() => setSelectedEvent(event)}
-                                    className="px-5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-900 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors"
-                                >
-                                    Manage
-                                    <ChevronRight className="w-4 h-4" />
-                                </button>
-                            </div>
                         </div>
                     </div>
 
+                    <button 
+                        onClick={() => setSelectedEvent(event)}
+                        className="absolute bottom-6 right-6 px-5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-900 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors"
+                    >
+                        Manage
+                        <ChevronRight className="w-4 h-4" />
+                    </button>
                 </motion.div>
             ))
             )}

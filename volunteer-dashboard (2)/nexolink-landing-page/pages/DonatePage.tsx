@@ -14,6 +14,10 @@ interface DonatePageProps {
 
 const DonatePage: React.FC<DonatePageProps> = ({ onNavigate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const GOFUNDME_URL = 'https://gofund.me/dc00981c8';
+  const GOFUNDME_EMBED_URL =
+    'https://www.gofundme.com/f/support-nexolink-making-volunteering-easier-for-all/widget/large?sharesheet=undefined&attribution_id=sl:ca658e9f-2769-4059-82b9-bbd479a0fea1';
+  const GOFUNDME_EMBED_SCRIPT = 'https://www.gofundme.com/static/js/embed.js';
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -78,6 +82,7 @@ const DonatePage: React.FC<DonatePageProps> = ({ onNavigate }) => {
 
     return () => ctx.revert();
   }, []);
+
 
   const contributionTiers = [
     {
@@ -183,13 +188,19 @@ const DonatePage: React.FC<DonatePageProps> = ({ onNavigate }) => {
                                 </div>
                             ))}
                         </div>
-                        <button className={`w-full py-5 rounded-2xl font-black uppercase tracking-widest text-xs transition-all ${
+                        <a
+                          href={GOFUNDME_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`w-full py-5 rounded-2xl font-black uppercase tracking-widest text-xs transition-all text-center ${
                             tier.featured 
                             ? 'bg-neon text-charcoal hover:bg-white' 
                             : 'bg-charcoal text-white hover:bg-neon hover:text-charcoal'
-                        }`}>
+                          }`}
+                          aria-label={`Contribute $${tier.amount} on GoFundMe`}
+                        >
                             Contribute →
-                        </button>
+                        </a>
                     </div>
                 ))}
             </div>
@@ -222,27 +233,15 @@ const DonatePage: React.FC<DonatePageProps> = ({ onNavigate }) => {
                              ))}
                          </div>
                      </div>
-                     <div className="bg-white/5 rounded-[3rem] p-12 border border-white/10 relative overflow-hidden backdrop-blur-sm">
+                     <div className="bg-white/5 rounded-[3rem] border border-white/10 relative overflow-hidden backdrop-blur-sm min-h-[500px]">
                           <Rocket className="w-64 h-64 text-neon/5 absolute -bottom-20 -right-20" />
-                          <div className="relative z-10">
-                               <h3 className="text-3xl font-display font-black uppercase italic mb-8">Current Goal</h3>
-                               <div className="mb-12">
-                                   <div className="flex justify-between text-xs font-black uppercase tracking-widest mb-4">
-                                       <span>Global Reach Pilot</span>
-                                       <span className="text-neon">78% Complete</span>
-                                   </div>
-                                   <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
-                                       <div className="h-full w-[78%] bg-neon rounded-full"></div>
-                                   </div>
-                               </div>
-                               <div className="p-8 bg-charcoal rounded-3xl border border-white/5 flex items-center gap-6">
-                                   <div className="w-12 h-12 rounded-full bg-softGray flex items-center justify-center shrink-0">
-                                       <Github className="text-charcoal w-6 h-6" />
-                                   </div>
-                                   <div className="text-xs font-black uppercase tracking-widest">
-                                       Open for collaboration 
-                                       <span className="block text-white/40 mt-1 font-medium italic">Join our dev node</span>
-                                   </div>
+                          <div className="relative z-10 w-full h-full">
+                               <div className="overflow-hidden shadow-2xl h-full w-full">
+                                 <img 
+                                   src="/gofundme_goal.png" 
+                                   alt="GoFundMe Campaign Goal"
+                                   className="w-full h-full object-cover"
+                                 />
                                </div>
                           </div>
                      </div>

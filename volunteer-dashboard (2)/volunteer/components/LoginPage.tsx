@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.65, ease: [0.22, 1, 0.36, 1] } }
+  show: { opacity: 1, y: 0, transition: { duration: 0.65, ease: [0.22, 1, 0.36, 1] as any } }
 };
 
 const stagger = {
@@ -25,8 +25,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onBack, onEnterAdmin }) =>
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const savedEmail = localStorage.getItem('nexolink_admin_email');
-    const savedRemember = localStorage.getItem('nexolink_admin_remember') === 'true';
+    const savedEmail = localStorage.getItem('nexolink_volunteer_email');
+    const savedRemember = localStorage.getItem('nexolink_volunteer_remember') === 'true';
     if (savedEmail) {
       setEmail(savedEmail);
     }
@@ -45,10 +45,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onBack, onEnterAdmin }) =>
     }
 
     if (rememberMe) {
-      localStorage.setItem('nexolink_admin_email', email.trim());
-      localStorage.setItem('nexolink_admin_remember', 'true');
+      localStorage.setItem('nexolink_volunteer_email', email.trim());
+      localStorage.setItem('nexolink_volunteer_remember', 'true');
     } else {
-      localStorage.removeItem('nexolink_admin_remember');
+      localStorage.removeItem('nexolink_volunteer_remember');
     }
 
     onEnterAdmin();

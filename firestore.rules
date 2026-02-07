@@ -9,6 +9,21 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.paid == true;
     }
 
+    function userOrgDoc() {
+      return get(/databases/$(database)/documents/user_organizations/$(request.auth.uid));
+    }
+
+    function isOrgMember(orgId) {
+      return isSignedIn()
+        && userOrgDoc().exists()
+        && (
+          userOrgDoc().data.org_id == orgId ||
+          userOrgDoc().data.orgId == orgId ||
+          userOrgDoc().data.organization_id == orgId ||
+          userOrgDoc().data.organizationId == orgId
+        );
+    }
+
     match /users/{userId} {
       allow create: if isSignedIn() && request.auth.uid == userId;
       allow read: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
@@ -38,6 +53,21 @@ service cloud.firestore {
 
     match /report_schedules/{document=**} {
       allow read, write: if hasPaidAccess();
+    }
+
+    match /volunteer_organizations/{orgId} {
+      allow read, update: if hasPaidAccess() || isOrgMember(orgId);
+      allow create, delete: if hasPaidAccess();
+    }
+
+    match /organizations/{orgId} {
+      allow read, update: if hasPaidAccess() || isOrgMember(orgId);
+      allow create, delete: if hasPaidAccess();
+    }
+
+    match /orgs/{orgId} {
+      allow read, update: if hasPaidAccess() || isOrgMember(orgId);
+      allow create, delete: if hasPaidAccess();
     }
 
     match /{document=**} {

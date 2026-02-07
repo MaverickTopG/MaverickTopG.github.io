@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MapPin, Calendar, Clock, ArrowRight, Filter, Search, Check, ChevronRight } from 'lucide-react';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
@@ -21,9 +21,20 @@ interface Event {
   coverImageUrl?: string;
   description?: string;
   location?: string;
+  orgId?: string;
+  org_id?: string;
+  organizationId?: string;
+  orgCode?: string;
+  org_code?: string;
+  organizationCode?: string;
   shifts?: any[];
   peoplePerSlot?: number;
   capacity?: number;
+  maxVolunteers?: number;
+  max_volunteers?: number;
+  maxVolunteer?: number;
+  max_volunteer?: number;
+  timeSlots?: Array<{ id: string; capacity?: number | null }>;
 }
 
 interface Signup {
@@ -39,6 +50,7 @@ interface VolunteerEventsPageProps {
 export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userProfile }) => {
   const [events, setEvents] = useState<Event[]>([]);
   const [signups, setSignups] = useState<Record<string, Signup>>({}); // Map eventId -> Signup
+  const [signupCounts, setSignupCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -49,6 +61,42 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [hoveringOrganizations, setHoveringOrganizations] = useState(false);
   const [organizations, setOrganizations] = useState<string[]>([]);
+  const orgHoverTimeoutRef = useRef<number | null>(null);
+
+  const parseNumber = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const normalized = trimmed.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+      if (!normalized) return null;
+      const parsed = Number(normalized[0]);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const resolveEventCapacity = (event: Event) => {
+    const capacity = parseNumber(event.capacity ?? (event as any).capacity_value ?? (event as any).maxCapacity ?? (event as any).max_capacity);
+    if (Number.isFinite(capacity ?? NaN) && (capacity ?? 0) > 0) {
+      return Number(capacity);
+    }
+    const maxVolunteers = parseNumber(
+      event.maxVolunteers ??
+        event.max_volunteers ??
+        event.maxVolunteer ??
+        event.max_volunteer ??
+        (event as any).requirements?.maxVolunteers ??
+        (event as any).requirements?.max_volunteers
+    );
+    if (Number.isFinite(maxVolunteers ?? NaN) && (maxVolunteers ?? 0) > 0) {
+      return Number(maxVolunteers);
+    }
+    if (event.peoplePerSlot && Array.isArray(event.timeSlots) && event.timeSlots.length) {
+      return event.timeSlots.length * event.peoplePerSlot;
+    }
+    return 0;
+  };
 
   useEffect(() => {
     const db = getFirestoreDb();
@@ -113,7 +161,14 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
           
           const isMatch = (evtOrgCode && myOrgCodes.has(evtOrgCode)) || (evtOrgId && myOrgIds.has(evtOrgId));
           if (isMatch) {
-            loaded.push({ id: docSnap.id, ...data } as Event);
+            const coverImageUrl =
+              data.coverImageUrl ||
+              data.cover_image_url ||
+              data.coverImage ||
+              data.imageUrl ||
+              data.image_url ||
+              undefined;
+            loaded.push({ id: docSnap.id, coverImageUrl, ...data } as Event);
           }
         });
         loaded.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
@@ -146,7 +201,86 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     };
   }, []);
 
-  const handleReserve = async () => {
+  useEffect(() => {
+    const db = getFirestoreDb();
+    if (!events.length) {
+      setSignupCounts({});
+      return;
+    }
+
+    const eventIds = events.map((event) => event.id);
+    const chunks: string[][] = [];
+    for (let i = 0; i < eventIds.length; i += 10) {
+      chunks.push(eventIds.slice(i, i + 10));
+    }
+
+    setSignupCounts({});
+
+    const unsubscribers = chunks.map((chunk) =>
+      onSnapshot(
+        query(collection(db, 'event_signups'), where('eventId', 'in', chunk)),
+        (snapshot) => {
+          const counts: Record<string, number> = {};
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as Record<string, any>;
+            const eventId = String(data.eventId || data.event_id || '');
+            if (!eventId) return;
+            counts[eventId] = (counts[eventId] || 0) + 1;
+          });
+          setSignupCounts((prev) => {
+            const next = { ...prev };
+            chunk.forEach((id) => {
+              delete next[id];
+            });
+            Object.entries(counts).forEach(([id, count]) => {
+              next[id] = count;
+            });
+            return next;
+          });
+        },
+        (err) => {
+          console.error('Event signups subscription error', err);
+        }
+      )
+    );
+
+    return () => {
+      unsubscribers.forEach((unsub) => unsub());
+    };
+  }, [events]);
+
+  useEffect(() => {
+    if (!showFilterMenu) {
+      setHoveringOrganizations(false);
+    }
+  }, [showFilterMenu]);
+
+  useEffect(() => {
+    return () => {
+      if (orgHoverTimeoutRef.current) {
+        window.clearTimeout(orgHoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const openOrgMenu = () => {
+    if (orgHoverTimeoutRef.current) {
+      window.clearTimeout(orgHoverTimeoutRef.current);
+      orgHoverTimeoutRef.current = null;
+    }
+    setHoveringOrganizations(true);
+  };
+
+  const closeOrgMenu = () => {
+    if (orgHoverTimeoutRef.current) {
+      window.clearTimeout(orgHoverTimeoutRef.current);
+    }
+    orgHoverTimeoutRef.current = window.setTimeout(() => {
+      setHoveringOrganizations(false);
+    }, 150);
+  };
+
+  const handleReserve = async (selection?: { selectedDates: string[]; selectedShifts: Array<{ id?: string; startTime?: string; endTime?: string }> }) => {
     if (!selectedEvent) return;
     setIsReserving(true);
     try {
@@ -161,17 +295,50 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
       const lastName = userProfile?.lastName || userProfile?.last_name || '';
       const fullName = [firstName, lastName].filter(Boolean).join(' ') || user.displayName || 'Volunteer';
 
+      const resolvedDates = selection?.selectedDates?.length ? selection.selectedDates : (selectedEvent.startDate ? [selectedEvent.startDate] : []);
+      const resolvedShifts = selection?.selectedShifts || [];
+      const slotLabel = (() => {
+        const dateLabel = resolvedDates.length === 0
+          ? ''
+          : resolvedDates.length === 1
+            ? new Date(`${resolvedDates[0]}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : `${resolvedDates.length} days`;
+        const timeLabel = resolvedShifts.length === 0
+          ? ''
+          : resolvedShifts.length === 1
+            ? formatTimeRange(resolvedShifts[0]?.startTime, resolvedShifts[0]?.endTime)
+            : `${resolvedShifts.length} shifts`;
+        const combined = [dateLabel, timeLabel].filter(Boolean).join(' • ');
+        return combined || 'Volunteer';
+      })();
+
+      const capacity = resolveEventCapacity(selectedEvent);
+      const currentSignups = signupCounts[selectedEvent.id] || 0;
+      if (capacity > 0 && currentSignups >= capacity) {
+        window.alert('This event is full.');
+        setIsReserving(false);
+        return;
+      }
+
+      const resolvedOrgId = selectedEvent.orgId || selectedEvent.organizationId || selectedEvent.org_id;
+      const resolvedOrgCode = selectedEvent.orgCode || selectedEvent.organizationCode || selectedEvent.org_code;
+
       await addDoc(collection(db, 'event_signups'), {
         eventId: selectedEvent.id,
         volunteerId: user.uid,
         volunteerName: fullName,
         volunteerEmail: user.email,
         status: 'confirmed',
-        role: 'Volunteer',
+        role: slotLabel,
+        slotLabel,
+        selectedDates: resolvedDates,
+        selectedShifts: resolvedShifts,
+        orgId: resolvedOrgId || null,
+        orgCode: resolvedOrgCode || null,
         createdAt: serverTimestamp(),
         // Add minimal event details for easy querying if needed
         eventTitle: selectedEvent.title,
-        eventDate: selectedEvent.startDate
+        eventDate: resolvedDates[0] || selectedEvent.startDate
       });
       
       setIsReserving(false);
@@ -198,9 +365,14 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
 
   const filteredEvents = events.filter(ev => {
     // 1. Search Filter
-    const matchesSearch = ev.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (ev.city || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (ev.description || '').toLowerCase().includes(searchQuery.toLowerCase());
+    const searchText = searchQuery.toLowerCase();
+    const matchesSearch =
+      ev.title.toLowerCase().includes(searchText) ||
+      (ev.city || '').toLowerCase().includes(searchText) ||
+      (ev.location || '').toLowerCase().includes(searchText) ||
+      (ev.venue || '').toLowerCase().includes(searchText) ||
+      (ev.addressLine1 || '').toLowerCase().includes(searchText) ||
+      (ev.description || '').toLowerCase().includes(searchText);
     
     if (!matchesSearch) return false;
 
@@ -222,10 +394,57 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     };
   };
 
-  const formatTime = (start?: string, end?: string) => {
-      if (!start) return 'Time TBA';
-      const toTime = (t: string) => new Date(`2000-01-01T${t}`).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      return end ? `${toTime(start)} - ${toTime(end)}` : toTime(start);
+  const formatTimeRange = (start?: string, end?: string) => {
+    if (!start && !end) return 'Time TBA';
+    const toTime = (t?: string) => {
+      if (!t) return '';
+      const [h, m] = t.split(':');
+      const hours = Number(h);
+      if (Number.isNaN(hours)) return t;
+      const date = new Date();
+      date.setHours(hours, Number(m || 0), 0, 0);
+      return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    };
+    if (!end) return toTime(start);
+    return `${toTime(start)} - ${toTime(end)}`;
+  };
+
+  const formatEventTime = (event: Event) => {
+    if (event.startTime || event.endTime) {
+      return formatTimeRange(event.startTime, event.endTime);
+    }
+    const shifts = Array.isArray(event.shifts) ? event.shifts : [];
+    if (shifts.length === 0) return 'Time TBA';
+    if (shifts.length === 1) {
+      return formatTimeRange(shifts[0]?.startTime, shifts[0]?.endTime);
+    }
+    const toMinutes = (value?: string) => {
+      if (!value) return null;
+      const [h, m] = value.split(':');
+      const hours = Number(h);
+      if (Number.isNaN(hours)) return null;
+      const minutes = Number(m || 0);
+      return hours * 60 + minutes;
+    };
+    const minutesToTime = (minutes: number) => {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+    const starts = shifts.map((s) => toMinutes(s?.startTime)).filter((v): v is number => v !== null);
+    const ends = shifts.map((s) => toMinutes(s?.endTime ?? s?.startTime)).filter((v): v is number => v !== null);
+    if (starts.length === 0 && ends.length === 0) return 'Time TBA';
+    const earliest = starts.length ? Math.min(...starts) : null;
+    const latest = ends.length ? Math.max(...ends) : null;
+    if (earliest == null && latest == null) return 'Time TBA';
+    if (earliest == null) return formatTimeRange(undefined, minutesToTime(latest!));
+    if (latest == null) return formatTimeRange(minutesToTime(earliest), undefined);
+    return formatTimeRange(minutesToTime(earliest), minutesToTime(latest));
+  };
+
+  const formatEventLocation = (event: Event) => {
+    if (event.location) return event.location;
+    return [event.venue, event.addressLine1, [event.city, event.state].filter(Boolean).join(', ')].filter(Boolean).join(' • ');
   };
 
   return (
@@ -296,19 +515,25 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                           {/* Organizations Nested Menu */}
                           {organizations.length > 0 && (
                             <div 
-                              className="relative group/orgs"
-                              onMouseEnter={() => setHoveringOrganizations(true)}
-                              onMouseLeave={() => setHoveringOrganizations(false)}
+                              className="relative"
+                              onMouseEnter={openOrgMenu}
+                              onMouseLeave={closeOrgMenu}
                             >
                               <button
-                                className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center justify-between text-gray-600 hover:bg-gray-50 hover:text-gray-900`}
+                                type="button"
+                                onClick={() => setHoveringOrganizations((prev) => !prev)}
+                                className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center justify-between text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                               >
                                 <span>Organizations</span>
                                 <ChevronRight className="w-4 h-4 text-gray-400" />
                               </button>
 
                               {/* Sub-menu */}
-                              <div className="absolute left-full top-0 ml-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 hidden group-hover/orgs:block">
+                              <div
+                                onMouseEnter={openOrgMenu}
+                                onMouseLeave={closeOrgMenu}
+                                className={`absolute left-full top-0 ml-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 ${hoveringOrganizations ? 'block' : 'hidden'}`}
+                              >
                                 <div className="px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider">Select Organization</div>
                                 <div className="max-h-[300px] overflow-y-auto">
                                   {organizations.map((org) => (
@@ -361,6 +586,9 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
              filteredEvents.map(event => {
                 const dateBadge = formatDate(event.startDate);
                 const isSignedUp = !!signups[event.id];
+                const totalSignups = signupCounts[event.id] || 0;
+                const capacity = resolveEventCapacity(event);
+                const isFull = capacity > 0 && totalSignups >= capacity;
                 
                 return (
                   <motion.div 
@@ -371,7 +599,7 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                     className="bg-white rounded-[2.5rem] p-6 md:p-8 shadow-sm border border-gray-100 flex flex-col md:flex-row gap-8 group"
                   >
                       {/* Date / Image */}
-                      <div className="relative w-full md:w-48 h-48 md:h-auto shrink-0 bg-gray-100 rounded-3xl overflow-hidden self-stretch">
+                      <div className="relative w-full sm:w-64 md:w-52 aspect-square shrink-0 bg-gray-100 rounded-3xl overflow-hidden self-start">
                           {event.coverImageUrl ? (
                              <img src={event.coverImageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                           ) : (
@@ -392,12 +620,14 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                                 <span className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wide border ${
                                     isSignedUp 
                                     ? 'bg-lime-100 text-lime-700 border-lime-200' 
-                                    : 'bg-gray-100 text-gray-600 border-gray-200'
+                                    : isFull
+                                      ? 'bg-red-100 text-red-600 border-red-200'
+                                      : 'bg-gray-100 text-gray-600 border-gray-200'
                                 }`}>
-                                   {isSignedUp ? 'Registered' : (event.status || 'Open')}
+                                   {isSignedUp ? 'Registered' : (isFull ? 'Full' : (event.status || 'Open'))}
                                 </span>
                                 {event.shifts && event.shifts.length > 0 && (
-                                   <span className="px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wide bg-blue-50 text-blue-600 border border-blue-100">
+                                   <span className="px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wide bg-lime-50 text-lime-700 border border-lime-200">
                                       {event.shifts.length} Shifts
                                    </span>
                                 )}
@@ -408,11 +638,11 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                              <div className="flex flex-wrap gap-4 text-sm font-medium text-gray-500">
                                 <div className="flex items-center gap-1.5">
                                    <Clock className="w-4 h-4" />
-                                   {formatTime(event.startTime, event.endTime)}
+                                   {formatEventTime(event)}
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                    <MapPin className="w-4 h-4" />
-                                   {[event.venue, event.city].filter(Boolean).join(', ') || 'TBA'}
+                                   {formatEventLocation(event) || 'TBA'}
                                 </div>
                              </div>
                           </div>
@@ -436,6 +666,12 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                                       Cancel Registration
                                   </button>
                                 </>
+                             ) : isFull ? (
+                                <button 
+                                    className="px-6 py-3 rounded-xl bg-red-50 text-red-600 font-bold text-sm cursor-not-allowed"
+                                >
+                                    Event Full
+                                </button>
                              ) : (
                                 <button 
                                     onClick={() => setSelectedEvent(event)}

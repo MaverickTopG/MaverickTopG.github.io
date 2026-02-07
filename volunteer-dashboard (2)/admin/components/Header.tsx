@@ -16,10 +16,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { resolveOrgContext, subscribeToOrgCollection, fetchOrgCollectionDocs } from '../lib/orgContext';
 import { KioskModal } from './KioskModal';
-
+import { Toast } from './Toast';
 
 interface HeaderProps {
   isKioskOpen: boolean;
@@ -32,10 +33,18 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string }>>([]);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [autoProcessing, setAutoProcessing] = useState(false);
+  const [toast, setToast] = useState<{ isVisible: boolean; message: string; type: 'success' | 'error' }>({
+    isVisible: false,
+    message: '',
+    type: 'success',
+  });
 
   const orgCode = orgContext.code;
   const orgId = orgContext.id;
   const accessCode = orgCode || '—';
+  const auth = getFirebaseAuth();
+  const userId = auth.currentUser?.uid || null;
 
   useEffect(() => {
     if (!orgCode && !orgId) return;
@@ -76,6 +85,85 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
 
     return () => unsubscribe();
   }, [orgCode, orgId]);
+
+  // Initial fetch for Auto-Processing state
+  useEffect(() => {
+    if (!orgId && !userId) return;
+    const db = getFirestoreDb();
+    const fetchSettings = async () => {
+      try {
+        const collections = ['volunteer_organizations', 'organizations', 'orgs'];
+        let resolved = false;
+        if (orgId) {
+          for (const coll of collections) {
+            const docRef = doc(db, coll, orgId);
+            const snap = await getDoc(docRef);
+            if (snap.exists()) {
+              const data = snap.data();
+              setAutoProcessing(!!data.auto_process_logs);
+              resolved = true;
+              break;
+            }
+          }
+        }
+        if (!resolved && userId) {
+          const userRef = doc(db, 'users', userId);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            const data = userSnap.data();
+            setAutoProcessing(!!data.auto_process_logs);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch auto-log settings', err);
+      }
+    };
+    fetchSettings();
+  }, [orgId, userId]);
+
+  const toggleAutoProcessing = async () => {
+    if (!orgId && !userId) return;
+    const newState = !autoProcessing;
+    const db = getFirestoreDb();
+    
+    try {
+      setAutoProcessing(newState);
+      
+      const collections = ['volunteer_organizations', 'organizations', 'orgs'];
+      let updated = false;
+      if (orgId) {
+        for (const coll of collections) {
+          const docRef = doc(db, coll, orgId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            await setDoc(docRef, { auto_process_logs: newState }, { merge: true });
+            updated = true;
+            break;
+          }
+        }
+      }
+      if (!updated && userId) {
+        const userRef = doc(db, 'users', userId);
+        await setDoc(userRef, { auto_process_logs: newState }, { merge: true });
+      }
+
+      setToast({
+        isVisible: true,
+        message: newState 
+          ? 'Auto Volunteer Log Processing Activated' 
+          : 'Auto Volunteer Log Processing Deactivated',
+        type: 'success'
+      });
+    } catch (err) {
+      console.error('Toggle failed', err);
+      setAutoProcessing(!newState); // revert
+      setToast({
+        isVisible: true,
+        message: 'Failed to update AI settings',
+        type: 'error'
+      });
+    }
+  };
 
   const handleCopy = () => {
     if (!accessCode || accessCode === '—') return;
@@ -218,6 +306,19 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
           aria-label="Kiosk"
         >
           <Monitor className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
+        </button>
+
+        {/* AI Toggle Button */}
+        <button 
+          onClick={toggleAutoProcessing}
+          className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm border group
+            ${autoProcessing 
+              ? 'bg-lime-300 border-lime-400 shadow-[0_0_20px_rgba(190,242,100,0.3)]' 
+              : 'bg-white border-gray-100 hover:bg-gray-50'
+            }`}
+          title={autoProcessing ? "Auto-Log Processing Active" : "Activate Auto-Log Processing"}
+        >
+          <Sparkles className={`w-5 h-5 transition-colors ${autoProcessing ? 'text-gray-900' : 'text-gray-400 group-hover:text-gray-900'}`} />
         </button>
 
 
@@ -405,8 +506,14 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
 
       </div>
 
-      <KioskModal isOpen={isKioskOpen} onClose={() => setIsKioskOpen(false)} />
+      <KioskModal isOpen={isKioskOpen} onClose={() => setIsKioskOpen(false)} orgContext={orgContext} />
+      
+      <Toast 
+        isVisible={toast.isVisible}
+        message={toast.message}
+        type={toast.type}
+        onClose={() => setToast(prev => ({ ...prev, isVisible: false }))}
+      />
     </header>
-
   );
 };

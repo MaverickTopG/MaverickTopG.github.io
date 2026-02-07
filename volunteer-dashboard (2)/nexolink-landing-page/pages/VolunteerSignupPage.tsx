@@ -283,7 +283,7 @@ const VolunteerSignupPage: React.FC<VolunteerSignupPageProps> = ({ onNavigate })
 
                   <div className="signup-input text-center pt-8">
                       <p className="text-[10px] font-black uppercase tracking-widest text-charcoal/30">
-                          Already synchronized? <button onClick={() => onNavigate?.('volunteer-login')} className="text-charcoal hover:text-neon underline decoration-neon decoration-2 underline-offset-4">Log in to Nexus</button>
+                          Already synchronized? <button onClick={() => onNavigate?.('volunteer-login')} className="text-charcoal hover:text-neon underline decoration-neon decoration-2 underline-offset-4">Log in to NexoLink</button>
                       </p>
                   </div>
               </form>

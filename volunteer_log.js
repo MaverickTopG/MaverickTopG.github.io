@@ -20,6 +20,13 @@ import {
   Building,
   ShieldCheck,
   ClockCounterClockwise,
+  Medal,
+  Fire,
+  Trophy,
+  Star,
+  Crown,
+  UserCircle,
+  CheckCircle,
 } from 'phosphor-react-native';
 import BottomSheet, { BottomSheetScrollView, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -58,6 +65,7 @@ import Reanimated, {
   withRepeat,
   withTiming,
   withDelay,
+  withSequence,
   Easing as ReanimatedEasing,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -73,100 +81,70 @@ const hp = (p) => (height * p) / 100;
 const CHART_HEIGHT = hp(22);
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const COLUMN_WIDTH = 5;
-const COLORS = ['#CBC3E3', '#FFB6C1', '#BBF1F1', '#FFFFED'];
-const SENTENCES = [
-  'Every hour counts.',
-  'Small acts, big impact.',
-  'Volunteer. Inspire.',
-  'Serve your community.',
-  'Kindness is contagious.',
-  'Give time, gain purpose.',
-  'Show up. Give back.',
-  'Hands that help.',
-  'Make a difference.',
-  'Impact starts with you.',
-  'Lead with heart.',
-  'Community first.',
-  'Moments that matter.',
-  'Together we thrive.',
-  'Help where you can.',
-  'Service in action.',
-  'Lift others up.',
-  'Your time matters.',
-  'Build a better day.',
-  'Neighbors helping neighbors.',
-  'Share your skills.',
-  'Compassion in motion.',
-  'Every step forward.',
-  'Be the change today.',
-];
-const SCHEDULE_ACCENTS = ['#4C3BCF', '#D946A0', '#1890A8', '#F59E0B'];
-const ORG_CARD_COLORS = ['#4C3BCF', '#D946A0', '#1890A8', '#F59E0B', '#EC4899', '#8B5CF6'];
-// Source: AmeriCorps, "Volunteering in America" (2023) — U.S. volunteers average 52 hours annually.
-const AVERAGE_YEARLY_VOLUNTEER_HOURS = 52;
-const AVERAGE_MONTHLY_VOLUNTEER_HOURS = AVERAGE_YEARLY_VOLUNTEER_HOURS / 12;
-const AVERAGE_WEEKLY_VOLUNTEER_HOURS = AVERAGE_YEARLY_VOLUNTEER_HOURS / 52;
-const DONATION_RATE = 28.27; // Independent Sector, 2024
-const SCANNER_FRAME_SIZE = Math.min(wp(76), hp(48));
-const HERO_HEADER_SIDE_WIDTH = wp(9) * 2 + wp(2);
-// Default open index (50% based on current snapPoints array)
-const SHEET_DEFAULT_INDEX = 0;
-const SHEET_MEDIUM_INDEX = 0;
-const SHEET_FULL_INDEX = 0;
-const SHEET_AUTO_CLOSE_THRESHOLD = 0;
-
-const RainColumn = memo(({ x, screenHeight, columnIndex, active }) => {
-  const translateY = useSharedValue(-500);
-  const sentenceIndex = columnIndex % SENTENCES.length;
-  const sentence = SENTENCES[sentenceIndex];
-  const columnColor = useMemo(
-    () => COLORS[sentenceIndex % COLORS.length],
-    [sentenceIndex]
-  );
-
-  const columnText = useMemo(() => {
-    let fullText = '';
-    for (let i = 0; i < 80; i += 1) {
-      fullText += sentence[i % sentence.length] || ' ';
-      fullText += '\n';
-    }
-    return fullText;
-  }, [sentence]);
-
-  const duration = useMemo(() => (4000 + Math.random() * 4000) * 1.5, []);
-  const delay = useMemo(() => Math.random() * 5000, []);
+const GridBackground = memo(() => {
+  const glowAlpha = useSharedValue(0.15);
 
   useEffect(() => {
-    if (!active) {
-      cancelAnimation(translateY);
-      translateY.value = -500;
-      return;
-    }
-    translateY.value = withDelay(
-      delay,
-      withRepeat(
-        withTiming(screenHeight + 200, {
-          duration,
-          easing: ReanimatedEasing.linear,
-        }),
-        -1,
-        false
-      )
+    glowAlpha.value = withRepeat(
+      withSequence(
+        withTiming(0.25, { duration: 2500, easing: ReanimatedEasing.inOut(ReanimatedEasing.sin) }),
+        withTiming(0.15, { duration: 2500, easing: ReanimatedEasing.inOut(ReanimatedEasing.sin) })
+      ),
+      -1,
+      true
     );
-    return () => cancelAnimation(translateY);
-  }, [active, delay, duration, screenHeight, translateY]);
+  }, [glowAlpha]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glowAlpha.value,
   }));
 
   return (
-    <Reanimated.View style={[styles.rainColumn, { left: x }, animatedStyle]}>
-      <Text allowFontScaling={false} style={[styles.rainText, { color: columnColor }]}>
-        {columnText}
-      </Text>
-    </Reanimated.View>
+    <View style={StyleSheet.absoluteFill}>
+      {/* Background Neon Pools */}
+      <Reanimated.View style={[styles.glowPool, { top: '15%', left: '10%' }, glowStyle]} />
+      <Reanimated.View style={[styles.glowPool, { bottom: '20%', right: '5%' }, glowStyle]} />
+      
+      <View 
+        style={[
+          styles.gridContainer,
+          {
+            transform: [{ rotateX: '60deg' }, { rotateZ: '-15deg' }, { scale: 1.5 }]
+          }
+        ]}
+      >
+        {Array.from({ length: 20 }).map((_, i) => (
+          <View 
+            key={`v-line-${i}`} 
+            style={[
+              styles.gridLine, 
+              { left: i * 50, height: height * 2, width: 1, backgroundColor: 'rgba(15,23,42,0.03)' }
+            ]} 
+          >
+            {/* Intersection Dots */}
+            {Array.from({ length: 15 }).map((__, j) => (
+               <View 
+                 key={`dot-${i}-${j}`}
+                 style={[
+                   styles.gridDot,
+                   { top: j * 150 }
+                 ]}
+               />
+            ))}
+          </View>
+        ))}
+        {Array.from({ length: 40 }).map((_, i) => (
+          <View 
+            key={`h-line-${i}`} 
+            style={[
+              styles.gridLine, 
+              { top: i * 50, width: width * 2, height: 1, backgroundColor: 'rgba(15,23,42,0.03)' }
+            ]} 
+          />
+        ))}
+      </View>
+      <View style={styles.backgroundGradient} />
+    </View>
   );
 });
 const BAR_ANIM_DURATION = 420;
@@ -191,6 +169,70 @@ function parseSnapPointPercent(point) {
   }
   return null;
 }
+
+const SHEET_AUTO_CLOSE_THRESHOLD = 0;
+
+const BADGES = [
+  { id: '1', icon: Medal, color: '#FFD700', label: 'First 5 Hours', attained: true },
+  { id: '2', icon: Fire, color: '#FF4500', label: '3 Week Streak', attained: true },
+  { id: '3', icon: Trophy, color: '#60A5FA', label: 'Top 10%', attained: false },
+  { id: '4', icon: Star, color: '#32FF7E', label: 'Super Helper', attained: false },
+  { id: '5', icon: Crown, color: '#A855F7', label: 'Champion', attained: false },
+];
+
+const ImpactHeader = memo(({ totalHours, sessionCount }) => {
+  const progress = useSharedValue(0);
+  
+  useEffect(() => {
+    progress.value = withTiming(0.7, { duration: 1500, easing: ReanimatedEasing.out(ReanimatedEasing.exp) });
+  }, []);
+
+  const progressStyle = useAnimatedStyle(() => ({
+    width: `${progress.value * 100}%`,
+  }));
+
+  return (
+    <View style={styles.impactHeaderContainer}>
+      <View style={styles.impactHeaderTop}>
+        <View>
+          <Text style={styles.impactHeaderTitle}>IMPACT DASHBOARD</Text>
+          <View style={styles.impactLevelRow}>
+            <Text style={styles.impactLevelText}>Level 3 Volunteer</Text>
+            <View style={styles.impactLevelBadge}>
+              <Text style={styles.impactLevelBadgeText}>PRO</Text>
+            </View>
+          </View>
+        </View>
+        <TouchableOpacity style={styles.impactProfileButton}>
+           <UserCircle size={wp(8)} color="#111827" weight="duotone" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Badges Scroll */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgeScroll} contentContainerStyle={styles.badgeScrollContent}>
+        {BADGES.map((badge, index) => (
+          <View key={badge.id} style={[styles.badgeCard, !badge.attained && styles.badgeCardLocked]}>
+            <View style={[styles.badgeIconBubble, { backgroundColor: withAlpha(badge.color, 0.15) }]}>
+              <badge.icon size={wp(5)} color={badge.attained ? badge.color : '#9CA3AF'} weight="fill" />
+            </View>
+            <Text style={[styles.badgeLabel, !badge.attained && styles.badgeLabelLocked]}>{badge.label}</Text>
+          </View>
+        ))}
+      </ScrollView>
+
+      {/* Progress Bar */}
+      <View style={styles.impactProgressContainer}>
+        <View style={styles.impactProgressLabelRow}>
+          <Text style={styles.impactProgressLabel}>Next Reward: 50 Hours</Text>
+          <Text style={styles.impactProgressValue}>{totalHours} / 50h</Text>
+        </View>
+        <View style={styles.impactProgressBarBg}>
+          <Reanimated.View style={[styles.impactProgressBarFill, progressStyle]} />
+        </View>
+      </View>
+    </View>
+  );
+});
 
 function shouldAutoCloseSheet(snapPoints, index, threshold = SHEET_AUTO_CLOSE_THRESHOLD) {
   if (!Array.isArray(snapPoints)) return false;
@@ -2989,10 +3031,10 @@ export default function VolunteerDashboard() {
     ? `You're ahead by ${comparisonStats.delta}h this week.`
     : `You're ${Math.abs(comparisonStats.delta)}h behind the average—schedule a session to catch up.`;
   const organizationCards = useMemo(() => organizations.map((org) => ({ ...org })), [organizations]);
-  const BASE_WEEKLY_WIDTH = 0.72;
-  const BASE_MONTHLY_WIDTH = 0.62;
-  const WEEKLY_BAR_WIDTH = Math.min(1, BASE_WEEKLY_WIDTH * 1.35);
-  const MONTHLY_BAR_WIDTH = Math.min(1, BASE_MONTHLY_WIDTH * 1.2);
+  const BASE_WEEKLY_WIDTH = 0.85; // Fatter bars
+  const BASE_MONTHLY_WIDTH = 0.70;
+  const WEEKLY_BAR_WIDTH = Math.min(1, BASE_WEEKLY_WIDTH * 1.5);
+  const MONTHLY_BAR_WIDTH = Math.min(1, BASE_MONTHLY_WIDTH * 1.3);
   const lifetimeDonation = useMemo(() => Number(totalHours || 0) * DONATION_RATE, [totalHours]);
   const handleBarPress = useCallback((index) => {
     setHighlightIndex(index);
@@ -3194,42 +3236,47 @@ export default function VolunteerDashboard() {
     const strongAccent = withAlpha(accent, 0.9);
 
     return (
-      <View style={[styles.logCard, { backgroundColor: softAccent, borderColor: borderAccent }]}
+      <View style={[styles.logCard, styles.glassCard]}
         accessibilityLabel={`Volunteer task ${item.site}, logged ${hours} hours`}
       >
-        <View style={styles.logHeaderRow}>
-          <View style={styles.logTitleGroup}>
-            <Text style={styles.logTitle} numberOfLines={1}>{item.site}</Text>
+        <View style={styles.logIconColumn}>
+          <View style={[styles.logIconBubble, { backgroundColor: withAlpha(accent, 0.1) }]}>
+             <CheckCircle size={wp(5)} color={accent} weight="fill" />
           </View>
-          <View style={[styles.logHoursChip, { backgroundColor: withAlpha(accent, 0.2) }]}>
-            <Text style={[styles.logHoursText, { color: strongAccent }]}>{`${formatHours(hours)}h`}</Text>
-          </View>
+          <View style={[styles.logLineConnect, { backgroundColor: withAlpha(accent, 0.1) }]} />
         </View>
 
-        <View style={styles.logMetaRow}>
-          <Text style={styles.logMeta}>{item.date}</Text>
-          <View style={styles.logMetaDot} />
-          <Text style={styles.logMeta}>{item.time}</Text>
-          {!isPersonalLog && orgLabel ? (
-            <>
-              <View style={styles.logMetaDot} />
-              <Text style={[styles.logOrg, { color: strongAccent }]} numberOfLines={1}>
-                {orgLabel}
-              </Text>
-            </>
-          ) : null}
-          <View style={styles.logMetaDot} />
-          <Text
-            style={[
-              styles.logMeta,
-              approvalStatus === 'Approved' || approvalStatus === 'Self Logged'
-                ? { color: strongAccent }
-                : { color: '#6B7280' },
-            ]}
-            numberOfLines={1}
-          >
-            {approvalStatus}
-          </Text>
+        <View style={styles.logContentColumn}>
+          <View style={styles.logHeaderRow}>
+            <Text style={styles.logTitle} numberOfLines={1}>{item.site}</Text>
+            <View style={[styles.logHoursChip, { backgroundColor: accent }]}>
+              <Text style={styles.logHoursText}>{`${formatHours(hours)}h`}</Text>
+            </View>
+          </View>
+
+          <View style={styles.logMetaRow}>
+            <Text style={styles.logMeta}>{item.date}</Text>
+            <View style={styles.logMetaDot} />
+            <Text style={styles.logMeta}>{item.time}</Text>
+          </View>
+          
+          <View style={styles.logFooterRow}>
+             {!isPersonalLog && orgLabel ? (
+              <View style={styles.logOrgTag}>
+                <Building size={wp(3)} color="#6B7280" />
+                <Text style={styles.logOrgText} numberOfLines={1}>{orgLabel}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.logStatusTag, 
+              approvalStatus === 'Approved' ? styles.statusApproved : 
+              approvalStatus === 'Denied' ? styles.statusDenied : styles.statusPending
+            ]}>
+              <Text style={[styles.logStatusText,
+                 approvalStatus === 'Approved' ? styles.statusTextApproved : 
+                 approvalStatus === 'Denied' ? styles.statusTextDenied : styles.statusTextPending
+              ]}>{approvalStatus}</Text>
+            </View>
+          </View>
         </View>
       </View>
     );
@@ -3266,55 +3313,13 @@ export default function VolunteerDashboard() {
   /* ─── UI ─────────────────────────────────────────────────────── */
   return (
     <View style={styles.container}>
-      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-        {columns.map((_, i) => (
-          <RainColumn
-            key={`volunteer-rain-${i}`}
-            x={i * COLUMN_WIDTH}
-            screenHeight={height}
-            columnIndex={i}
-            active={isFocused}
-          />
-        ))}
-      </View>
+      <GridBackground />
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ImpactHeader totalHours={periodSummary.totalHours || 0} sessionCount={periodSummary.sessionCount || 0} />
+          
         <View style={styles.heroCard}>
-          <View style={styles.heroHeader}>
-          <View style={styles.heroHeaderSide}>
-            <TouchableOpacity
-              onPress={withHaptics(openAddModal, 'medium')}
-              style={styles.heroIconButton}
-              activeOpacity={0.85}
-            >
-              <Plus size={wp(4.8)} color="#000000" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={withHaptics(handleExport, 'medium')}
-              style={[styles.heroIconButton, { marginLeft: wp(1.6) }]}
-              activeOpacity={0.85}
-            >
-              <DownloadSimple size={wp(4.8)} color="#000000" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.heroHeaderActions}>
-            {/* New Scan Button (left of Sign Out) */}
-            <TouchableOpacity onPress={withHaptics(openScanner, 'medium')} style={styles.heroIconButton} activeOpacity={0.85}>
-              <QrCode size={wp(4.6)} color="#000000" />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={withHaptics(signOut, 'heavy')} style={styles.heroIconButton} activeOpacity={0.85}>
-              <SignOut size={wp(4.6)} color="#000000" />
-            </TouchableOpacity>
-          </View>
-
-          <View pointerEvents="none" style={styles.heroHeaderTitleOverlay}>
-            <Text style={styles.heroHeaderTitle} numberOfLines={1}>Volunteer Log</Text>
-          </View>
-        </View>
-
           <Animated.View
             style={[
               styles.heroSummary,
@@ -3327,6 +3332,21 @@ export default function VolunteerDashboard() {
               },
             ]}
           >
+            <View style={styles.heroHeaderActions}>
+                <TouchableOpacity onPress={withHaptics(openAddModal, 'medium')} style={styles.quickActionButton} activeOpacity={0.85}>
+                  <Plus size={wp(5)} color="#FFF" weight="bold" />
+                  <Text style={styles.quickActionText}>Log</Text>
+                </TouchableOpacity>
+                 <TouchableOpacity onPress={withHaptics(openScanner, 'medium')} style={styles.quickActionButton} activeOpacity={0.85}>
+                  <QrCode size={wp(5)} color="#FFF" weight="bold" />
+                  <Text style={styles.quickActionText}>Scan</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={withHaptics(handleExport, 'medium')} style={styles.quickActionButton} activeOpacity={0.85}>
+                  <DownloadSimple size={wp(5)} color="#FFF" weight="bold" />
+                   <Text style={styles.quickActionText}>Export</Text>
+                </TouchableOpacity>
+            </View>
+            
             <View style={styles.heroTitleRow}>
               <Text style={styles.heroTitle} numberOfLines={1}>{periodSummary.title || 'Volunteer Impact'}</Text>
             </View>
@@ -5857,4 +5877,202 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(17,24,39,0.12)',
     backgroundColor: '#FFFFFF',
   },
+
+  // Impact Header Styles
+  impactHeaderContainer: {
+    paddingHorizontal: wp(6),
+    marginTop: hp(2),
+    marginBottom: hp(3),
+  },
+  impactHeaderTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: hp(2.5),
+  },
+  impactHeaderTitle: {
+    fontSize: wp(3.2),
+    fontWeight: '800',
+    color: '#9CA3AF',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginBottom: hp(0.5),
+  },
+  impactLevelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  impactLevelText: {
+    fontSize: wp(6.5),
+    fontWeight: '900',
+    color: '#111827',
+    marginRight: wp(2),
+  },
+  impactLevelBadge: {
+    backgroundColor: '#32FF7E',
+    paddingHorizontal: wp(2),
+    paddingVertical: hp(0.3),
+    borderRadius: wp(1),
+  },
+  impactLevelBadgeText: {
+    fontSize: wp(2.8),
+    fontWeight: '800',
+    color: '#000',
+  },
+  impactProfileButton: {
+    padding: wp(1),
+  },
+  badgeScroll: {
+    marginBottom: hp(3),
+  },
+  badgeScrollContent: {
+    paddingRight: wp(6),
+  },
+  badgeCard: {
+    alignItems: 'center',
+    marginRight: wp(4),
+    width: wp(22),
+  },
+  badgeCardLocked: {
+    opacity: 0.5,
+  },
+  badgeIconBubble: {
+    width: wp(14),
+    height: wp(14),
+    borderRadius: wp(7),
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: hp(1),
+  },
+  badgeLabel: {
+    fontSize: wp(2.8),
+    fontWeight: '700',
+    color: '#374151',
+    textAlign: 'center',
+  },
+  badgeLabelLocked: {
+    color: '#9CA3AF',
+  },
+  impactProgressContainer: {
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    borderRadius: wp(4),
+    padding: wp(4),
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+  },
+  impactProgressLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: hp(1),
+  },
+  impactProgressLabel: {
+    fontSize: wp(3.2),
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  impactProgressValue: {
+    fontSize: wp(3.2),
+    fontWeight: '700',
+    color: '#111827',
+  },
+  impactProgressBarBg: {
+    height: hp(1.2),
+    backgroundColor: '#E5E7EB',
+    borderRadius: hp(0.6),
+    overflow: 'hidden',
+  },
+  impactProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#32FF7E',
+    borderRadius: hp(0.6),
+  },
+  
+  // Quick Actions Styles
+  quickActionButton: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: wp(3),
+    paddingVertical: hp(1.5),
+    alignItems: 'center',
+    marginHorizontal: wp(1),
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  quickActionText: {
+    fontSize: wp(3.2),
+    fontWeight: '700',
+    color: '#FFF',
+    marginTop: hp(0.5),
+  },
+
+  // Glassmorphism Log Card
+  glassCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.6)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    padding: 0,
+    overflow: 'hidden',
+  },
+  logIconColumn: {
+    width: wp(14),
+    alignItems: 'center',
+    paddingTop: hp(2.5),
+  },
+  logIconBubble: {
+    width: wp(8),
+    height: wp(8),
+    borderRadius: wp(4),
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  logLineConnect: {
+    width: 2,
+    flex: 1,
+    marginTop: -hp(1),
+    marginBottom: -hp(2.5),
+  },
+  logContentColumn: {
+    flex: 1,
+    paddingVertical: hp(2.5),
+    paddingRight: wp(5),
+  },
+  logFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: hp(1.5),
+  },
+  logOrgTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: wp(2),
+    paddingVertical: hp(0.4),
+    borderRadius: wp(1),
+  },
+  logOrgText: {
+    fontSize: wp(3),
+    color: '#4B5563',
+    marginLeft: wp(1),
+    maxWidth: wp(30),
+  },
+  logStatusTag: {
+    paddingHorizontal: wp(2.5),
+    paddingVertical: hp(0.4),
+    borderRadius: wp(4),
+  },
+  statusApproved: { backgroundColor: '#DCFCE7' },
+  statusDenied: { backgroundColor: '#FEE2E2' },
+  statusPending: { backgroundColor: '#FEF3C7' },
+  statusTextApproved: { color: '#166534', fontSize: wp(3), fontWeight: '700' },
+  statusTextDenied: { color: '#991B1B', fontSize: wp(3), fontWeight: '700' },
+  statusTextPending: { color: '#92400E', fontSize: wp(3), fontWeight: '700' },
 });

@@ -13,6 +13,8 @@
     "preview": "npm --prefix \"volunteer-dashboard (2)/nexolink-landing-page\" run preview",
     "build:admin": "npm --prefix \"volunteer-dashboard (2)/admin\" run build"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "react-markdown": "^10.1.0"
+  }
 }
