@@ -1,6 +1,8 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
+import { getAuth, type Auth, setPersistence, browserSessionPersistence } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getFunctions, type Functions } from 'firebase/functions';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 type FirebaseConfig = {
   apiKey: string;
@@ -54,6 +56,9 @@ const getConfig = (): FirebaseConfig => {
 };
 
 let firebaseApp: FirebaseApp | null = null;
+let firebaseAuth: Auth | null = null;
+let firebaseFunctions: Functions | null = null;
+let authPersistenceConfigured = false;
 
 export const getFirebaseApp = (): FirebaseApp => {
   if (!firebaseApp) {
@@ -62,9 +67,28 @@ export const getFirebaseApp = (): FirebaseApp => {
   return firebaseApp;
 };
 
-export const getFirebaseAuth = (): Auth => getAuth(getFirebaseApp());
+const configureAuthPersistence = (auth: Auth) => {
+  if (authPersistenceConfigured) return;
+  authPersistenceConfigured = true;
+  setPersistence(auth, browserSessionPersistence).catch((error) => {
+    console.warn('Failed to set session-only auth persistence', error);
+  });
+};
+
+export const getFirebaseAuth = (): Auth => {
+  if (!firebaseAuth) {
+    firebaseAuth = getAuth(getFirebaseApp());
+    configureAuthPersistence(firebaseAuth);
+  }
+  return firebaseAuth;
+};
 
 export const getFirestoreDb = (): Firestore => getFirestore(getFirebaseApp());
-import { getStorage, type FirebaseStorage } from 'firebase/storage';
-
 export const getFirebaseStorage = (): FirebaseStorage => getStorage(getFirebaseApp());
+
+export const getFirebaseFunctions = (): Functions => {
+  if (!firebaseFunctions) {
+    firebaseFunctions = getFunctions(getFirebaseApp());
+  }
+  return firebaseFunctions;
+};

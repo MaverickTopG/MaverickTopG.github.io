@@ -13,7 +13,8 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
+import { getFirebaseAuth, getFirebaseFunctions, getFirestoreDb } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { 
   EmailAuthProvider,
   reauthenticateWithCredential
@@ -52,6 +53,10 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
+  const [groupOptions, setGroupOptions] = useState<Array<{ id: string; name: string; isSuperAdmin: boolean }>>([
+    { id: 'super-admin', name: 'Super Admin', isSuperAdmin: true },
+  ]);
+  const [selectedGroupId, setSelectedGroupId] = useState('super-admin');
 
   // Toast State
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
@@ -66,7 +71,38 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
       setEmail('');
       setTask('');
       setError('');
+      setSelectedGroupId('super-admin');
     }
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    const loadGroups = async () => {
+      try {
+        const call = httpsCallable(getFirebaseFunctions(), 'listSubAdminDirectory');
+        const result = await call();
+        const data = (result.data || {}) as any;
+        const groups = Array.isArray(data.groups) ? data.groups : [];
+        const normalized = [
+          { id: 'super-admin', name: 'Super Admin', isSuperAdmin: true },
+          ...groups.map((group: any) => ({
+            id: String(group.id || ''),
+            name: String(group.name || 'Subadmin Group'),
+            isSuperAdmin: false,
+          })).filter((group: { id: string }) => group.id),
+        ];
+        if (!active) return;
+        setGroupOptions(normalized);
+      } catch (fetchError) {
+        if (!active) return;
+        setGroupOptions([{ id: 'super-admin', name: 'Super Admin', isSuperAdmin: true }]);
+      }
+    };
+    loadGroups();
+    return () => {
+      active = false;
+    };
   }, [isOpen]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -111,6 +147,10 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
 
       if (mode === 'signin') {
         const sessionsRef = collection(db, 'kiosk_sessions');
+        const selectedGroup = groupOptions.find((group) => group.id === selectedGroupId) || groupOptions[0];
+        const isSuperGroup = selectedGroup?.isSuperAdmin || selectedGroup?.id === 'super-admin';
+        const scopedGroupId = isSuperGroup ? null : selectedGroup?.id || null;
+        const scopedGroupName = isSuperGroup ? 'Super Admin' : (selectedGroup?.name || 'Subadmin Group');
         const sessQ = query(
           sessionsRef,
           where('email', '==', cleanEmail),
@@ -132,6 +172,14 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
           org_code: orgContext.code,
           org_name: orgContext.name,
           task: task.trim(),
+          target_group_id: scopedGroupId,
+          targetGroupId: scopedGroupId,
+          target_group_name: scopedGroupName,
+          targetGroupName: scopedGroupName,
+          sub_admin_group_id: scopedGroupId,
+          subAdminGroupId: scopedGroupId,
+          sub_admin_group_name: scopedGroupName,
+          subAdminGroupName: scopedGroupName,
           sign_in_time: serverTimestamp(),
           created_at: serverTimestamp()
         });
@@ -177,6 +225,14 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
           time: logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           organization_id: orgContext.id,
           organization_name: orgContext.name,
+          target_group_id: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
+          targetGroupId: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
+          target_group_name: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
+          targetGroupName: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
+          sub_admin_group_id: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
+          subAdminGroupId: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
+          sub_admin_group_name: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
+          subAdminGroupName: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
           approve: 'accepted',
           source: 'kiosk',
           created_at: serverTimestamp(),
@@ -413,6 +469,27 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
                         className="w-full h-[100px] pl-24 pr-10 bg-white border-2 border-transparent rounded-[3rem] text-gray-900 font-[900] placeholder:text-gray-200 outline-none focus:ring-[12px] focus:ring-lime-300/10 focus:border-lime-300 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.08)] transition-all text-3xl"
                       />
                     </div>
+                    {groupOptions.length > 1 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-8">
+                          <label className="text-[11px] font-black text-gray-900 uppercase tracking-[0.4em]">Select Group</label>
+                          <Monitor className="w-4 h-4 text-gray-400" />
+                        </div>
+                        <div className="bg-white border-2 border-transparent rounded-[2.2rem] px-8 py-5 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.08)]">
+                          <select
+                            value={selectedGroupId}
+                            onChange={(event) => setSelectedGroupId(event.target.value)}
+                            className="w-full bg-transparent text-gray-900 font-bold text-2xl outline-none"
+                          >
+                            {groupOptions.map((group) => (
+                              <option key={group.id} value={group.id}>
+                                {group.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>

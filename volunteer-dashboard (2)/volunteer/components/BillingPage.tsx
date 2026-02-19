@@ -76,31 +76,60 @@ export const BillingPage: React.FC = () => {
   }, []);
 
   const planDetails = useMemo(() => {
-    const price = subscription?.items?.data?.[0]?.price;
-    const priceId = price?.id || subscription?.plan?.id || subscription?.plan || null;
-    const planKey = subscription?.metadata?.plan_key || subscription?.metadata?.planKey || null;
-    const amount = price?.unit_amount ? price.unit_amount / 100 : null;
-    const interval = price?.recurring?.interval || 'month';
+    // Helper to extract nested price info regardless of snake_case or camelCase
+    const getNestedPrice = () => {
+      // 1. Raw Stripe format
+      const stripePrice = subscription?.items?.data?.[0]?.price;
+      if (stripePrice) return stripePrice;
+
+      // 2. Local Firestore normalized format
+      const localItem = subscription?.items?.[0];
+      if (localItem) {
+        return {
+          id: localItem.priceId,
+          unit_amount: localItem.amount,
+          recurring: { interval: localItem.interval }
+        };
+      }
+
+      // 3. Fallback for legacy plans
+      return subscription?.plan || null;
+    };
+
+    const price = getNestedPrice();
+    const priceId = typeof price === 'string' ? price : (price?.id || subscription?.plan?.id || subscription?.plan || null);
+    const amount = typeof price === 'object' ? (price?.unit_amount ? price.unit_amount / 100 : null) : null;
+    const interval = typeof price === 'object' ? (price?.recurring?.interval || price?.interval || 'month') : 'month';
     const intervalLabel = interval === 'year' ? 'yr' : 'mo';
     const intervalLabelFull = interval === 'year' ? 'year' : 'month';
+
     const resolvedPlanType =
       priceId && (priceId === stripePriceIds.schoolMonthly || priceId === stripePriceIds.schoolYearly)
         ? 'school'
         : 'org';
+
     const planName = `${resolvedPlanType === 'school' ? 'School' : 'Organization'} ${interval === 'year' ? 'Yearly' : 'Monthly'} Plan`;
-    const status = subscription?.status || 'inactive';
-    const cancelAtPeriodEnd = Boolean(subscription?.cancel_at_period_end);
-    const rawPeriodEnd = subscription?.current_period_end || subscription?.currentPeriodEnd || null;
-    const normalizedPeriodEnd = rawPeriodEnd
-      ? (rawPeriodEnd > 1_000_000_000_000 ? rawPeriodEnd : rawPeriodEnd * 1000)
-      : null;
-    const rawInvoiceCreated = lastInvoice?.created || null;
-    const normalizedInvoiceCreated = rawInvoiceCreated
-      ? (rawInvoiceCreated > 1_000_000_000_000 ? rawInvoiceCreated : rawInvoiceCreated * 1000)
-      : null;
-    let nextInvoiceDate = normalizedPeriodEnd ? new Date(normalizedPeriodEnd) : null;
-    if (!nextInvoiceDate && normalizedInvoiceCreated) {
-      const baseDate = new Date(normalizedInvoiceCreated);
+    const status = (subscription?.status || '').toLowerCase() || 'inactive';
+    const cancelAtPeriodEnd = Boolean(subscription?.cancel_at_period_end || subscription?.cancelAtPeriodEnd);
+
+    // Date parsing helper
+    const parseDate = (val: any) => {
+      if (!val) return null;
+      // Firestore Timestamp
+      if (typeof val?.toMillis === 'function') return new Date(val.toMillis());
+      // Milliseconds or Seconds
+      const num = Number(val);
+      if (isNaN(num)) return null;
+      return new Date(num > 1_000_000_000_000 ? num : num * 1000);
+    };
+
+    const trialEndDate = parseDate(subscription?.trial_end || subscription?.trialEnd);
+    const periodEndDate = parseDate(subscription?.current_period_end || subscription?.currentPeriodEnd);
+    const invoiceCreatedDate = parseDate(lastInvoice?.created);
+
+    let nextInvoiceDate = periodEndDate;
+    if (!nextInvoiceDate && invoiceCreatedDate) {
+      const baseDate = new Date(invoiceCreatedDate);
       if (interval === 'year') {
         baseDate.setFullYear(baseDate.getFullYear() + 1);
       } else {
@@ -108,10 +137,12 @@ export const BillingPage: React.FC = () => {
       }
       nextInvoiceDate = baseDate;
     }
+
     let effectiveAmount = amount;
     if (effectiveAmount == null) {
       effectiveAmount = interval === 'year' ? 50 : 5;
     }
+
     return {
       planName,
       amount: effectiveAmount,
@@ -120,6 +151,7 @@ export const BillingPage: React.FC = () => {
       status,
       cancelAtPeriodEnd,
       nextInvoiceDate,
+      trialEndDate,
       planType: resolvedPlanType,
     };
   }, [lastInvoice, stripePriceIds, subscription]);
@@ -140,24 +172,31 @@ export const BillingPage: React.FC = () => {
       setBillingError('Yearly pricing is not configured yet.');
       return;
     }
-    const token = await user.getIdToken();
-    const response = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        priceId: targetPriceId,
-        trial: false,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error('Unable to start upgrade checkout.');
-    }
-    const data = await response.json();
-    if (data?.url) {
-      window.location.href = data.url;
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          priceId: targetPriceId,
+          trial: false,
+        }),
+      });
+      if (!response.ok) {
+        setBillingError('Unable to start upgrade checkout.');
+        window.location.assign('/pricing');
+        return;
+      }
+      const data = await response.json();
+      if (data?.url) {
+        window.location.href = data.url;
+      }
+    } catch (error: any) {
+      setBillingError(error?.message || 'Unable to start upgrade checkout.');
+      window.location.assign('/pricing');
     }
   };
 

@@ -3,7 +3,9 @@ import { showMessage, setTextContent } from './ui.js';
 import { auth } from './firebase.js';
 import { isDemoAccount, getDemoAccountDescription } from './accessControl.js';
 
-const STRIPE_PUBLISHABLE_KEY = 'REDACTED_STRIPE_LIVE_PUBLISHABLE_KEY';
+const STRIPE_PUBLISHABLE_KEY = (typeof window !== 'undefined' ? window.STRIPE_PUBLISHABLE_KEY : '')
+  || import.meta?.env?.VITE_STRIPE_PUBLISHABLE_KEY
+  || '';
 const FALLBACK_PRICE_MONTHLY = 'price_1SFQAcH9sPZuClpwOuGwGOR6';
 const FALLBACK_PRICE_YEARLY = 'price_1SFQB7H9sPZuClpwapwNiIuD';
 const FALLBACK_PRICE_SCHOOL_MONTHLY = 'price_1SZIdTHbGg7F5Ky7gJUAu10c';
@@ -444,6 +446,9 @@ async function createCheckoutSession(button) {
     button.classList.remove('is-loading');
     button.disabled = false;
     hideBillingLoader();
+    if (typeof window !== 'undefined') {
+      window.location.assign('/#pricing');
+    }
     return;
   }
 

@@ -18,6 +18,7 @@ import {
   FileCode,
   File as FileIcon,
   Download,
+  X,
 } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
@@ -33,7 +34,7 @@ import {
   uploadBytes,
 } from 'firebase/storage';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
-import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { getActiveSubAdminSession, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 
 type Attachment = {
   url: string;
@@ -65,9 +66,21 @@ type ThreadMeta = {
   recipientId?: string;
 };
 
-const ALL_VOLUNTEERS_THREAD = (orgCode: string) => `org-${orgCode}-all`;
+const normalizeScopeToken = (value?: string) => {
+  const raw = String(value || '').trim();
+  if (!raw) return 'super-admin';
+  return raw.replace(/[^a-zA-Z0-9_-]/g, '_');
+};
+const ALL_VOLUNTEERS_THREAD = (orgCode: string, scopeToken: string) => `org-${orgCode}-scope-${scopeToken}-all`;
+const DIRECT_VOLUNTEER_THREAD = (orgCode: string, scopeToken: string, volunteerId: string) =>
+  `org-${orgCode}-scope-${scopeToken}-user-${volunteerId}`;
+const MESSAGE_TARGET_KEY = 'nexolink:message-target';
 
-export const MessagingPage: React.FC = () => {
+interface MessagingPageProps {
+  isActive?: boolean;
+}
+
+export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true }) => {
   const [orgCode, setOrgCode] = useState('');
   const [orgId, setOrgId] = useState('');
   const [senderName, setSenderName] = useState('Coordinator');
@@ -86,6 +99,7 @@ export const MessagingPage: React.FC = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const emojiPickerRef = useRef<HTMLDivElement | null>(null);
@@ -123,7 +137,7 @@ export const MessagingPage: React.FC = () => {
       }
       setAdminUid(user.uid);
       setAdminEmail(user.email || '');
-      const context = await resolveOrgContext(db, user.uid);
+      const context = await resolveOrgContext(db, user.uid, user.email || null);
       setOrgCode(context.orgCode || '');
       setOrgId(context.orgId || '');
       
@@ -148,7 +162,18 @@ export const MessagingPage: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
+    window.addEventListener('nexolink:subadmin-session', syncScope);
+    window.addEventListener('storage', syncScope);
+    return () => {
+      window.removeEventListener('nexolink:subadmin-session', syncScope);
+      window.removeEventListener('storage', syncScope);
+    };
+  }, []);
+
   const [emojiSearch, setEmojiSearch] = useState('');
+  const threadScopeToken = useMemo(() => normalizeScopeToken(subAdminScopeKey), [subAdminScopeKey]);
 
   // Helper to map emojis to searchable tags
   const getEmojiTags = (emoji: string) => {
@@ -223,6 +248,34 @@ export const MessagingPage: React.FC = () => {
     const keyByUserId = new Map<string, string>();
     const keyByEmail = new Map<string, string>();
     const keyByName = new Map<string, string>();
+    const scopedJoinRequests = joinRequests.filter((row) => {
+      if (!subAdminScopeKey) return true;
+      const data = row.data || {};
+      const scope = String(
+        data.target_group_id
+        || data.targetGroupId
+        || data.sub_admin_group_id
+        || data.subAdminGroupId
+        || data.groupId
+        || data.group_id
+        || '',
+      ).trim();
+      return scope === subAdminScopeKey;
+    });
+    const allowedUserIds = new Set<string>();
+    const allowedEmails = new Set<string>();
+    const allowedNames = new Set<string>();
+    scopedJoinRequests.forEach((row) => {
+      const data = row.data || {};
+      const status = String(data.status || '').toLowerCase();
+      if (status !== 'accepted') return;
+      const userId = String(data.user_id || data.userId || '').trim();
+      const email = String(data.user_email || data.email || '').trim().toLowerCase();
+      const name = String(data.user_name || data.name || '').trim().toLowerCase();
+      if (userId) allowedUserIds.add(userId);
+      if (email) allowedEmails.add(email);
+      if (name) allowedNames.add(name);
+    });
 
     // First pass: Users collection (Primary source)
     users.forEach((row) => {
@@ -238,6 +291,12 @@ export const MessagingPage: React.FC = () => {
       if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
       if (orgAdminIds.includes(row.id)) return;
       if (orgAdminEmails.includes(email.toLowerCase())) return;
+      if (subAdminScopeKey) {
+        const userEmail = email.toLowerCase();
+        const userName = name.toLowerCase();
+        const isAllowed = allowedUserIds.has(row.id) || (userEmail ? allowedEmails.has(userEmail) : false) || (userName ? allowedNames.has(userName) : false);
+        if (!isAllowed) return;
+      }
 
       const key = buildVolunteerKey(email, name, row.id);
       keyByUserId.set(row.id, key);
@@ -253,7 +312,7 @@ export const MessagingPage: React.FC = () => {
     });
 
     // Second pass: Join Requests (Fallback source for pairing)
-    joinRequests.forEach((row) => {
+    scopedJoinRequests.forEach((row) => {
       const data = row.data || {};
       const status = String(data.status || '').toLowerCase();
       if (status !== 'accepted') return;
@@ -283,7 +342,7 @@ export const MessagingPage: React.FC = () => {
     });
 
     return Array.from(volunteerMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, joinRequests, orgId, adminUid, adminEmail, orgAdminIds, orgAdminEmails]);
+  }, [users, joinRequests, orgId, adminUid, adminEmail, orgAdminIds, orgAdminEmails, subAdminScopeKey]);
 
   useEffect(() => {
     if (!orgCode && !orgId) return;
@@ -302,6 +361,15 @@ export const MessagingPage: React.FC = () => {
           processedIds.add(docSnap.id);
 
           const data = docSnap.data || {};
+          const messageScope = String(
+            data.target_group_id
+            || data.targetGroupId
+            || data.sub_admin_group_id
+            || data.subAdminGroupId
+            || data.groupId
+            || data.group_id
+            || '',
+          ).trim();
           const rawCreated = data.createdAt || data.created_at || null;
           let createdAt = new Date();
           
@@ -318,6 +386,11 @@ export const MessagingPage: React.FC = () => {
 
           const threadId = String(data.threadId || '');
           if (!threadId) return;
+          if (subAdminScopeKey) {
+            const matchesScopeField = messageScope === subAdminScopeKey;
+            const matchesScopedThread = threadId.includes(`scope-${threadScopeToken}-`);
+            if (!matchesScopeField && !matchesScopedThread) return;
+          }
           const entry: Message = {
             id: docSnap.id,
             threadId,
@@ -335,17 +408,17 @@ export const MessagingPage: React.FC = () => {
       },
     });
     return () => unsubscribe();
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, subAdminScopeKey, threadScopeToken]);
 
   useEffect(() => {
     if (!orgCode) return;
     const allThread: ThreadMeta = {
-      id: ALL_VOLUNTEERS_THREAD(orgCode),
+      id: ALL_VOLUNTEERS_THREAD(orgCode, threadScopeToken),
       name: 'All Volunteers',
       type: 'group',
     };
     const directThreads = volunteers.map((v) => ({
-      id: `org-${orgCode}-user-${v.id}`,
+      id: DIRECT_VOLUNTEER_THREAD(orgCode, threadScopeToken, v.id),
       name: v.name,
       type: 'direct' as const,
       recipientId: v.id,
@@ -354,7 +427,7 @@ export const MessagingPage: React.FC = () => {
     if (!activeThreadId) {
       setActiveThreadId(allThread.id);
     }
-  }, [orgCode, volunteers, activeThreadId]);
+  }, [orgCode, volunteers, activeThreadId, threadScopeToken]);
 
   const filteredThreads = useMemo(() => {
     if (!search.trim()) return threads;
@@ -363,6 +436,54 @@ export const MessagingPage: React.FC = () => {
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const activeMessages = messagesByThread[activeThreadId] || [];
+
+  useEffect(() => {
+    setActiveThreadId('');
+    setShowNewChat(false);
+  }, [threadScopeToken, orgCode]);
+
+  useEffect(() => {
+    if (!isActive || !orgCode || !threads.length || !volunteers.length) return;
+    const raw = sessionStorage.getItem(MESSAGE_TARGET_KEY);
+    if (!raw) return;
+
+    let target: { id?: string; email?: string; name?: string } | null = null;
+    try {
+      target = JSON.parse(raw);
+    } catch (err) {
+      console.warn('Invalid message target payload', err);
+      sessionStorage.removeItem(MESSAGE_TARGET_KEY);
+      return;
+    }
+
+    const targetId = (target?.id || '').trim();
+    let resolvedId = targetId;
+
+    if (!resolvedId && target?.email) {
+      const match = volunteers.find(
+        (vol) => vol.email && vol.email.toLowerCase() === target?.email?.toLowerCase(),
+      );
+      if (match) resolvedId = match.id;
+    }
+
+    if (!resolvedId && target?.name) {
+      const match = volunteers.find(
+        (vol) => vol.name && vol.name.toLowerCase() === target?.name?.toLowerCase(),
+      );
+      if (match) resolvedId = match.id;
+    }
+
+    if (!resolvedId) return;
+
+    const threadId = DIRECT_VOLUNTEER_THREAD(orgCode, threadScopeToken, resolvedId);
+    if (!threads.some((thread) => thread.id === threadId)) return;
+
+    setActiveThreadId(threadId);
+    setShowNewChat(false);
+    setSearch('');
+    sessionStorage.removeItem(MESSAGE_TARGET_KEY);
+    window.setTimeout(() => messageInputRef.current?.focus(), 0);
+  }, [isActive, orgCode, threads, volunteers, threadScopeToken]);
 
   const getFileIcon = (type: string) => {
     if (type.includes('pdf')) return <FileText className="w-4 h-4" />;
@@ -375,14 +496,35 @@ export const MessagingPage: React.FC = () => {
   const MessageAttachment = ({ attachment }: { attachment: { url: string; name: string; type: string } }) => {
   const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const downloadAttachment = async () => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const response = await fetch(attachment.url);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = attachment.name || 'download';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download attachment', error);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   if (!attachment.type.startsWith('image/')) {
     return (
-      <a 
-        href={attachment.url} 
-        target="_blank" 
-        rel="noopener noreferrer"
-        className="flex items-center gap-3 p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all group"
+      <button 
+        type="button"
+        onClick={downloadAttachment}
+        className="flex items-center gap-3 p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all group text-left w-full"
       >
         <div className={`p-2 rounded-xl ${
           attachment.type.includes('pdf') ? 'bg-red-50 text-red-500' :
@@ -402,8 +544,12 @@ export const MessagingPage: React.FC = () => {
             {attachment.type.split('/')[1]?.toUpperCase() || 'FILE'}
           </span>
         </div>
-        <Download className="w-4 h-4 ml-auto text-gray-300 group-hover:text-gray-900 transition-colors" />
-      </a>
+        {isDownloading ? (
+          <span className="w-4 h-4 ml-auto border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <Download className="w-4 h-4 ml-auto text-gray-300 group-hover:text-gray-900 transition-colors" />
+        )}
+      </button>
     );
   }
 
@@ -442,16 +588,19 @@ export const MessagingPage: React.FC = () => {
       )}
       
       {!loadError && !loading && (
-        <a 
-          href={attachment.url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button 
+          type="button"
+          onClick={downloadAttachment}
           className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"
         >
           <div className="p-3 bg-white rounded-full shadow-lg scale-90 group-hover:scale-100 transition-transform">
-            <Download className="w-5 h-5 text-gray-900" />
+            {isDownloading ? (
+              <span className="w-5 h-5 border-2 border-gray-300 border-t-transparent rounded-full animate-spin block" />
+            ) : (
+              <Download className="w-5 h-5 text-gray-900" />
+            )}
           </div>
-        </a>
+        </button>
       )}
     </div>
   );
@@ -510,6 +659,20 @@ export const MessagingPage: React.FC = () => {
         text: inputValue.trim(),
         createdAt: serverTimestamp(),
       };
+      if (subAdminScopeKey) {
+        const activeScope = getActiveSubAdminSession();
+        const scopeName = String(activeScope?.groupName || '').trim();
+        messageData.target_group_id = subAdminScopeKey;
+        messageData.targetGroupId = subAdminScopeKey;
+        messageData.sub_admin_group_id = subAdminScopeKey;
+        messageData.subAdminGroupId = subAdminScopeKey;
+        if (scopeName) {
+          messageData.target_group_name = scopeName;
+          messageData.targetGroupName = scopeName;
+          messageData.sub_admin_group_name = scopeName;
+          messageData.subAdminGroupName = scopeName;
+        }
+      }
 
       if (uploadedAttachments.length > 0) {
         // Just take the first one for this specific message document
@@ -774,25 +937,52 @@ export const MessagingPage: React.FC = () => {
                 setAttachedImages(prev => [...prev, ...imgs]);
                 setAttachedFiles(prev => [...prev, ...others]);
               }
+              event.target.value = '';
             }}
           />
           {(attachedImages.length > 0 || attachedFiles.length > 0) && (
             <div className="mt-3 flex flex-wrap gap-2">
               {attachedImages.map((file) => (
                 <span
-                  key={file.name}
-                  className="px-3 py-1.5 bg-purple-50 text-[10px] font-bold text-purple-600 rounded-full flex items-center gap-2 border border-purple-100"
+                  key={`${file.name}-${file.lastModified}`}
+                  className="px-3 py-1.5 bg-lime-50 text-[10px] font-bold text-lime-700 rounded-full flex items-center gap-2 border border-lime-200"
                 >
                   {file.name}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachedImages((prev) => prev.filter((f) => f !== file));
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="text-lime-500 hover:text-lime-700 transition-colors"
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </span>
               ))}
               {attachedFiles.map((file) => (
                 <span
-                  key={file.name}
-                  className="px-3 py-1.5 bg-blue-50 text-[10px] font-bold text-blue-600 rounded-full flex items-center gap-2 border border-blue-100"
+                  key={`${file.name}-${file.lastModified}`}
+                  className="px-3 py-1.5 bg-lime-50 text-[10px] font-bold text-lime-700 rounded-full flex items-center gap-2 border border-lime-200"
                 >
                   {getFileIcon(file.type)}
                   {file.name}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachedFiles((prev) => prev.filter((f) => f !== file));
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="text-lime-500 hover:text-lime-700 transition-colors"
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </span>
               ))}
             </div>
@@ -820,7 +1010,7 @@ export const MessagingPage: React.FC = () => {
               <p className="text-sm text-gray-500 mb-6">Message the entire group or a specific volunteer.</p>
               <div className="flex flex-col gap-3">
                 <button
-                  onClick={() => openThread(ALL_VOLUNTEERS_THREAD(orgCode))}
+                  onClick={() => openThread(ALL_VOLUNTEERS_THREAD(orgCode, threadScopeToken))}
                   className="w-full flex items-center gap-3 p-4 rounded-2xl bg-gray-900 text-white hover:bg-black"
                 >
                   <Users className="w-5 h-5" />
@@ -830,7 +1020,7 @@ export const MessagingPage: React.FC = () => {
                   {volunteers.map((volunteer) => (
                     <button
                       key={volunteer.id}
-                      onClick={() => openThread(`org-${orgCode}-user-${volunteer.id}`)}
+                      onClick={() => openThread(DIRECT_VOLUNTEER_THREAD(orgCode, threadScopeToken, volunteer.id))}
                       className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-gray-50 text-left"
                     >
                       <div>

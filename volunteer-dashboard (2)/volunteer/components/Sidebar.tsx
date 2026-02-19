@@ -24,9 +24,16 @@ import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 interface SidebarProps {
   currentView: string;
   onNavigate: (view: string) => void;
+  hasPremiumOrgAccess?: boolean;
+  hasMessagingAccess?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  currentView,
+  onNavigate,
+  hasPremiumOrgAccess = false,
+  hasMessagingAccess = false,
+}) => {
   const [isHovered, setIsHovered] = useState(false);
   const [orgName, setOrgName] = useState('Organization');
   const [userName, setUserName] = useState('Volunteer');
@@ -64,11 +71,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
 
   const menuItems = [
     { id: 'impact', label: 'Impact', icon: <BarChart2 className="w-5 h-5" /> },
-    { id: 'activity', label: 'Activity', icon: <Activity className="w-5 h-5" /> },
     { id: 'events', label: 'Calendar', icon: <Calendar className="w-5 h-5" /> },
-    { id: 'browse-events', label: 'Events', icon: <MapPin className="w-5 h-5" /> },
+    { id: 'activity', label: 'Activity', icon: <Activity className="w-5 h-5" /> },
     { id: 'messaging', label: 'Messages', icon: <MessageSquare className="w-5 h-5" /> },
-  ];
+    { id: 'browse-events', label: 'Events', icon: <MapPin className="w-5 h-5" /> },
+    { id: 'cluster-ai', label: 'Cluster AI', icon: <Sparkles className="w-5 h-5" /> },
+  ].filter((item) => {
+    if (!hasMessagingAccess && item.id === 'messaging') return false;
+    return true;
+  });
 
 
   return (

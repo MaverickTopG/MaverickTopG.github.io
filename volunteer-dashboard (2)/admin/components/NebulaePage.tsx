@@ -1,16 +1,13 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Sparkles, 
   Send, 
-  Search, 
   ExternalLink, 
   Zap, 
   Cpu, 
   Layers, 
   Globe, 
-  Info,
   TrendingUp,
   Clock,
   CheckCircle2,
@@ -20,8 +17,7 @@ import {
   Compass,
   Plus,
   FileText,
-  X,
-  History as HistoryIcon
+  X
 } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
@@ -29,15 +25,11 @@ import {
   addDoc, 
   updateDoc, 
   doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
-  Timestamp,
-  onSnapshot 
+  Timestamp
 } from 'firebase/firestore';
 import { getFirestoreDb, getFirebaseAuth } from '../lib/firebase';
+import { NebulaeOpsCenter } from './NebulaeOpsCenter';
+import type { NebulaeAction, NebulaeOpsActionKey, NebulaePriority, NebulaeRecommendation } from '../hooks/useNebulaeOpsCenter';
 
 interface Message {
   id: string;
@@ -46,49 +38,290 @@ interface Message {
   grounding?: any[];
 }
 
+interface NebulaeOpsPanel {
+  loading: boolean;
+  priorities: NebulaePriority[];
+  actions: NebulaeAction[];
+  recommendations: NebulaeRecommendation[];
+  primaryRecommendation: NebulaeRecommendation | null;
+  autopilot: {
+    autoInvite: boolean;
+    autoReminders: boolean;
+    autoRecognition: boolean;
+  };
+  toggleAutopilot: (key: 'autoInvite' | 'autoReminders' | 'autoRecognition', value: boolean) => void;
+  runAction: (actionKey: NebulaeOpsActionKey, options?: { automatic?: boolean }) => Promise<{ ok: boolean; message: string }>;
+  lastSignal: { timestamp: number; text: string; auto: boolean } | null;
+  learningSummary: {
+    acceptedActions: number;
+    autoRuns: number;
+    invitePrecision: number;
+    messageLift: number;
+  };
+  opsMetrics: {
+    upcomingEvents: number;
+    totalCapacity: number;
+    filledSlots: number;
+    staffingShortage: number;
+    pendingLogs: number;
+    pendingLogsAged: number;
+    monthHoursCurrent: number;
+    monthHoursPrevious: number;
+    monthHoursDelta: number;
+    reliableVolunteers: number;
+    recommendationsCount: number;
+  };
+}
+
+interface NebulaePageProps {
+  planTier?: string;
+  aiEnabled?: boolean;
+  opsCenter?: NebulaeOpsPanel | null;
+}
+
 const INTELLIGENCE_MODULES = [
   {
-    id: 'grants',
-    title: 'Grant Discovery',
-    description: 'Find eligible funds',
-    icon: Award,
-    color: 'indigo',
-    prompt: 'Find grants I am eligible for this quarter'
-  },
-  {
-    id: 'outreach',
-    title: 'Volunteer Reach',
-    description: 'Fill critical roles',
+    id: 'staffing-risk',
+    title: 'Staffing Risk',
+    description: 'Surface coverage gaps',
     icon: Users2,
-    color: 'emerald',
-    prompt: 'How can I fill my current volunteer roles faster?'
+    color: 'indigo',
+    prompt: 'Run a staffing risk scan and identify the top volunteer coverage gaps for this week.'
   },
   {
-    id: 'guidance',
-    title: 'Decision Support',
-    description: 'Optimize my portal',
+    id: 'retention-radar',
+    title: 'Retention Radar',
+    description: 'Spot volunteer drop-off risk',
     icon: Compass,
+    color: 'sky',
+    prompt: 'Review recent volunteer activity and identify who is at risk of disengaging. Provide an outreach plan for the next 7 days.'
+  },
+  {
+    id: 'reliability-watch',
+    title: 'Reliability Watch',
+    description: 'Detect no-show risk',
+    icon: TrendingUp,
+    color: 'emerald',
+    prompt: 'Analyze volunteer reliability patterns and list the highest no-show risk areas with mitigation actions.'
+  },
+  {
+    id: 'recognition-moments',
+    title: 'Recognition Moments',
+    description: 'Highlight top contributors',
+    icon: Award,
+    color: 'violet',
+    prompt: 'Identify volunteers with strong recent impact and draft short recognition messages with specific accomplishments.'
+  },
+  {
+    id: 'backlog-clear',
+    title: 'Backlog Clear',
+    description: 'Prioritize approvals queue',
+    icon: CheckCircle2,
     color: 'amber',
-    prompt: 'What are my next best actions for this week?'
+    prompt: 'Review approval and request backlogs and provide a prioritized clear-the-backlog execution plan.'
+  },
+  {
+    id: 'engagement-pulse',
+    title: 'Engagement Pulse',
+    description: 'Improve weekly participation',
+    icon: Clock,
+    color: 'rose',
+    prompt: 'Analyze this week’s participation trend and suggest 5 actions to increase volunteer engagement before next week.'
   }
 ];
 
-export const NebulaePage: React.FC = () => {
+const ADVANCED_VOLUNTEER_PLAYBOOKS = [
+  {
+    id: 'burnout-shield',
+    title: 'Burnout Shield',
+    description: 'Prevent attrition in your top performers',
+    prompt: 'Create a 30-day burnout prevention plan for high-contributing volunteers. Include workload balancing, check-ins, and backup staffing recommendations with measurable thresholds.'
+  },
+  {
+    id: 'matching-engine',
+    title: 'Role Matching',
+    description: 'Match volunteers to the right shifts',
+    prompt: 'Build an AI-assisted volunteer matching plan that assigns people to shifts by reliability, skills, and availability. Include fallback assignments and tie-breaker rules.'
+  },
+  {
+    id: 'recovery-protocol',
+    title: 'No-Show Recovery',
+    description: 'Handle surprise staffing gaps',
+    prompt: 'Draft an operational incident protocol for no-show spikes. Include first 15-minute actions, escalation tree, replacement messages, and post-incident learning loop.'
+  },
+  {
+    id: 'retention-ladder',
+    title: '90-Day Retention',
+    description: 'Increase repeat volunteer rate',
+    prompt: 'Design a 90-day retention ladder for new volunteers with milestones, nudges, recognition moments, and decision gates for high-potential volunteers.'
+  }
+];
+
+const STRATEGY_GOALS = [
+  { id: 'coverage', label: 'Coverage Stability' },
+  { id: 'retention', label: 'Retention Growth' },
+  { id: 'compliance', label: 'Log Compliance' },
+  { id: 'recognition', label: 'Recognition Program' },
+];
+
+const STRATEGY_HORIZONS = [
+  { id: '7', label: '7 days' },
+  { id: '30', label: '30 days' },
+  { id: '90', label: '90 days' },
+];
+
+const STRATEGY_STYLES = [
+  { id: 'balanced', label: 'Balanced' },
+  { id: 'aggressive', label: 'Aggressive' },
+  { id: 'conservative', label: 'Conservative' },
+];
+
+const LIME_ACCENT = '#D2F677';
+const LIME_GLOW = 'rgba(210,246,119,0.35)';
+
+type NebulaeModeKey =
+  | 'grants'
+  | 'opportunity-distribution'
+  | 'portal-guidance'
+  | 'decision-support';
+
+interface NebulaeModeConfig {
+  key: NebulaeModeKey;
+  label: string;
+  buttonLabel: string;
+  icon: React.ComponentType<{ className?: string }>;
+  accent: string;
+  glow: string;
+  focus: string;
+  inputPlaceholder: string;
+  sidebarEyebrow: string;
+  sidebarTitle: string;
+  sidebarEmpty: string;
+  insightLine: string;
+  refreshLabel: string;
+}
+
+const NEBULAE_MODE_CONFIG: Record<NebulaeModeKey, NebulaeModeConfig> = {
+  grants: {
+    key: 'grants',
+    label: 'Grant Discovery',
+    buttonLabel: 'Grants',
+    icon: Layers,
+    accent: LIME_ACCENT,
+    glow: LIME_GLOW,
+    focus: 'Eligibility + deadlines + geography',
+    inputPlaceholder: "Ask Anything: 'Find 2024 environmental grants in Seattle'...",
+    sidebarEyebrow: 'Grant Intelligence',
+    sidebarTitle: 'Live Discoveries',
+    sidebarEmpty: 'Perform a grant search to populate intelligence feed.',
+    insightLine: 'Real-time grant metadata is aligned with your volunteer initiatives.',
+    refreshLabel: 'Refresh Grant Search',
+  },
+  'opportunity-distribution': {
+    key: 'opportunity-distribution',
+    label: 'Opportunity Distribution',
+    buttonLabel: 'Distribution',
+    icon: Users2,
+    accent: LIME_ACCENT,
+    glow: LIME_GLOW,
+    focus: 'Right volunteers to right opportunities',
+    inputPlaceholder: "Ask Anything: 'Distribute Saturday tutoring shifts across available volunteers'...",
+    sidebarEyebrow: 'Distribution Metrics',
+    sidebarTitle: 'Live Allocation Signals',
+    sidebarEmpty: 'Run a distribution query to surface allocation guidance.',
+    insightLine: 'Signal stream highlights allocation balance, staffing pressure, and fill opportunities.',
+    refreshLabel: 'Refresh Distribution Feed',
+  },
+  'portal-guidance': {
+    key: 'portal-guidance',
+    label: 'Portal Guidance',
+    buttonLabel: 'Guidance',
+    icon: Globe,
+    accent: LIME_ACCENT,
+    glow: LIME_GLOW,
+    focus: 'Workflows, setup steps, and navigation',
+    inputPlaceholder: "Ask Anything: 'Guide me through configuring volunteer approvals in the portal'...",
+    sidebarEyebrow: 'Portal Guidance',
+    sidebarTitle: 'Workflow Clarity',
+    sidebarEmpty: 'Ask a portal workflow question to populate guidance telemetry.',
+    insightLine: 'Guidance telemetry tracks setup progress, blockers, and recommended next actions.',
+    refreshLabel: 'Refresh Guidance Feed',
+  },
+  'decision-support': {
+    key: 'decision-support',
+    label: 'Decision Support',
+    buttonLabel: 'Decisions',
+    icon: Cpu,
+    accent: LIME_ACCENT,
+    glow: LIME_GLOW,
+    focus: 'Tradeoffs, risk, and execution choices',
+    inputPlaceholder: "Ask Anything: 'What decision should we make to reduce no-shows next week?'...",
+    sidebarEyebrow: 'Decision Metrics',
+    sidebarTitle: 'Decision Signals',
+    sidebarEmpty: 'Run a decision-support query to populate recommendations.',
+    insightLine: 'Decision stream surfaces risks, confidence, and execution recommendations.',
+    refreshLabel: 'Refresh Decision Feed',
+  },
+};
+
+const NEBULAE_MODE_ORDER: NebulaeModeKey[] = [
+  'grants',
+  'opportunity-distribution',
+  'portal-guidance',
+  'decision-support',
+];
+
+const getModeSelectionKey = (modes: NebulaeModeKey[]) =>
+  [...modes].sort((a, b) => NEBULAE_MODE_ORDER.indexOf(a) - NEBULAE_MODE_ORDER.indexOf(b)).join('|');
+
+// Temporarily hidden sections (kept for later re-enable).
+const SHOW_EMBEDDED_OPS_CENTER = false;
+const SHOW_VOLUNTEER_AI_TOOLS = false;
+
+export const NebulaePage: React.FC<NebulaePageProps> = ({
+  planTier = 'orbit',
+  aiEnabled = false,
+  opsCenter = null,
+}) => {
   const [input, setInput] = useState('');
   const [chatId, setChatId] = useState<string | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [sessions, setSessions] = useState<any[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [groundingResults, setGroundingResults] = useState<any[]>([]);
   const [attachments, setAttachments] = useState<{file: File, type: string, preview?: string}[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [grantMode, setGrantMode] = useState(false);
+  const [selectedModes, setSelectedModes] = useState<NebulaeModeKey[]>([]);
+  const [strategyGoal, setStrategyGoal] = useState(STRATEGY_GOALS[0].id);
+  const [strategyHorizon, setStrategyHorizon] = useState(STRATEGY_HORIZONS[1].id);
+  const [strategyStyle, setStrategyStyle] = useState(STRATEGY_STYLES[0].id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const grantSearchTimerRef = useRef<number | null>(null);
-  const lastGrantQueryRef = useRef<string>('');
+  const modeSearchTimerRef = useRef<number | null>(null);
+  const lastModeQueryRef = useRef<Record<string, string>>({});
+  const selectedModesKey = useMemo(() => getModeSelectionKey(selectedModes), [selectedModes]);
+  const hasModeSelection = selectedModes.length > 0;
+  const isDeepMode = selectedModes.length >= 2;
+  const primaryMode = selectedModes[0] || null;
+  const activeModeConfig = primaryMode ? NEBULAE_MODE_CONFIG[primaryMode] : null;
+  const ActiveModeIcon = activeModeConfig?.icon || Layers;
+  const intelligenceModules = useMemo(() => {
+    const base = [...INTELLIGENCE_MODULES];
+    if (planTier === 'cosmos') {
+      return [
+        ...base,
+        {
+          id: 'predictive-orchestration',
+          title: 'Predictive Orchestration',
+          description: 'Simulate staffing outcomes',
+          icon: Cpu,
+          color: 'gray',
+          prompt: 'Simulate next week volunteer operations and provide three staffing scenarios (safe, expected, stretch) with action triggers.'
+        },
+      ];
+    }
+    return base;
+  }, [planTier]);
 
   // Persistence Logic
   const saveToFirestore = async (newMessages: Message[], results: any[]) => {
@@ -121,84 +354,229 @@ export const NebulaePage: React.FC = () => {
     }
   };
 
-  const loadSession = async (id: string) => {
-    const db = getFirestoreDb();
-    try {
-      const snap = await getDoc(doc(db, 'nebulae_chats', id));
-      if (snap.exists()) {
-        const data = snap.data();
-        setMessages(data.messages || []);
-        setGroundingResults(data.groundingResults || []);
-        setChatId(id);
-        setHistoryOpen(false);
-      }
-    } catch (err) {
-      console.error('Load session failed', err);
-    }
-  };
-
-  useEffect(() => {
-    const auth = getFirebaseAuth();
-    const db = getFirestoreDb();
-    const user = auth.currentUser;
-    if (!user) return;
-
-    const q = query(
-      collection(db, 'nebulae_chats'),
-      where('userId', '==', user.uid),
-      orderBy('updatedAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setSessions(list);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isThinking]);
 
-  useEffect(() => {
-    if (!grantMode) return;
-    const queryText = input.trim();
-    if (isThinking || queryText.length < 3 || queryText === lastGrantQueryRef.current) return;
+  const buildModePrompt = (mode: NebulaeModeKey, queryText: string) => {
+    const normalizedQuery = queryText || 'Provide mode-specific analysis for volunteer operations.';
+    if (mode === 'grants') {
+      return `Context: You are in Grant Discovery mode. Focus on eligibility, geography, and deadlines. Prioritize grants that fund volunteer engagement, training, and coordination.
+Query: ${normalizedQuery}
+Output: Provide a concise shortlist with clickable links and a one-line eligibility note each.`;
+    }
+    if (mode === 'opportunity-distribution') {
+      return `Context: You are in Opportunity Distribution mode. Focus on assigning volunteers to opportunities with fairness, skill fit, and schedule reliability.
+Query: ${normalizedQuery}
+Output: Provide assignment recommendations, allocation tradeoffs, and a short execution checklist.`;
+    }
+    if (mode === 'portal-guidance') {
+      return `Context: You are in Portal Guidance mode. Focus on step-by-step setup, navigation, and admin workflow clarity in NexoLink.
+Query: ${normalizedQuery}
+Output: Provide clear steps, where to click, and quick validation checks after each step.`;
+    }
+    return `Context: You are in Decision Support mode. Focus on operational tradeoffs, risks, confidence levels, and actionable recommendations for volunteer programs.
+Query: ${normalizedQuery}
+Output: Provide top options, expected impact, risks, and a recommended path with reasons.`;
+  };
 
-    if (grantSearchTimerRef.current) {
-      window.clearTimeout(grantSearchTimerRef.current);
+  const buildDeepModePrompt = (modes: NebulaeModeKey[], queryText: string) => {
+    const normalizedQuery = queryText || 'Run cross-functional volunteer intelligence analysis.';
+    const modeContext = modes
+      .map((mode) => `- ${NEBULAE_MODE_CONFIG[mode].label}: ${NEBULAE_MODE_CONFIG[mode].focus}`)
+      .join('\n');
+    return `Context: You are in DEEP MODE for volunteer management intelligence.
+Selected modes:
+${modeContext}
+
+Task: Crunch the full picture and calculate interactions across staffing, grants, portal workflow, and decision risk where applicable.
+Query: ${normalizedQuery}
+
+Output format:
+1) Cross-factor diagnosis with hard constraints.
+2) Quantified impact table (coverage, pending logs, staffing gaps, trend implications).
+3) Coordinated execution plan across all selected modes.
+4) Risk and dependency map with mitigation triggers.
+5) Final recommended path with explicit tradeoff justification.`;
+  };
+
+  const buildActivePrompt = (modes: NebulaeModeKey[], queryText: string) => {
+    if (!modes.length) return queryText || 'Provide volunteer operations guidance.';
+    if (modes.length === 1) return buildModePrompt(modes[0], queryText);
+    return buildDeepModePrompt(modes, queryText);
+  };
+
+  useEffect(() => {
+    if (!hasModeSelection) return;
+    const queryText = input.trim();
+    if (isThinking || queryText.length < 3 || queryText === lastModeQueryRef.current[selectedModesKey]) return;
+
+    if (modeSearchTimerRef.current) {
+      window.clearTimeout(modeSearchTimerRef.current);
     }
 
-    grantSearchTimerRef.current = window.setTimeout(() => {
-      lastGrantQueryRef.current = queryText;
-      handleSendMessage(undefined, buildGrantPrompt(queryText), queryText);
+    modeSearchTimerRef.current = window.setTimeout(() => {
+      lastModeQueryRef.current[selectedModesKey] = queryText;
+      handleSendMessage(undefined, buildActivePrompt(selectedModes, queryText), queryText);
     }, 600);
 
     return () => {
-      if (grantSearchTimerRef.current) {
-        window.clearTimeout(grantSearchTimerRef.current);
+      if (modeSearchTimerRef.current) {
+        window.clearTimeout(modeSearchTimerRef.current);
       }
     };
-  }, [input, grantMode, isThinking]);
+  }, [hasModeSelection, input, isThinking, selectedModes, selectedModesKey]);
 
-  const buildGrantPrompt = (queryText: string) => {
-    return `Context: You are in Grant Discovery mode. Focus on eligibility, geography, and deadlines. Prioritize grants that fund volunteer engagement, training, and coordination.
-Query: ${queryText}
-Output: Provide a concise shortlist with clickable links and a one-line eligibility note each.`;
+  const buildOpsSnapshot = () => {
+    if (!opsCenter) return 'Ops snapshot unavailable.';
+    const topPriorities = (opsCenter.priorities || [])
+      .slice(0, 3)
+      .map((priority) => `- ${priority.label}`)
+      .join('\n');
+    const recommendation = opsCenter.primaryRecommendation
+      ? `${opsCenter.primaryRecommendation.volunteerName} (${opsCenter.primaryRecommendation.confidence}% confidence)`
+      : 'No primary recommendation yet';
+    return `Ops context:
+Top priorities:
+${topPriorities || '- None'}
+Primary recommendation: ${recommendation}
+Autopilot: reminders=${opsCenter.autopilot.autoReminders}, invites=${opsCenter.autopilot.autoInvite}, recognition=${opsCenter.autopilot.autoRecognition}
+Learning: accepted=${opsCenter.learningSummary.acceptedActions}, auto_runs=${opsCenter.learningSummary.autoRuns}, invite_precision=${opsCenter.learningSummary.invitePrecision}%`;
+  };
+
+  const buildStrategyPrompt = () => {
+    const goalLabel = STRATEGY_GOALS.find((goal) => goal.id === strategyGoal)?.label || strategyGoal;
+    const horizonLabel = STRATEGY_HORIZONS.find((horizon) => horizon.id === strategyHorizon)?.label || `${strategyHorizon} days`;
+    const styleLabel = STRATEGY_STYLES.find((style) => style.id === strategyStyle)?.label || strategyStyle;
+    return `You are Nebulae AI, a volunteer operations strategist.
+Objective: Build a ${horizonLabel} volunteer-management plan for "${goalLabel}" in ${styleLabel} mode.
+
+${buildOpsSnapshot()}
+
+Output format:
+1) Executive diagnosis (3 bullets).
+2) Week-by-week operational plan.
+3) Message templates for volunteers/admins.
+4) Risk register with early warning triggers.
+5) KPI dashboard (daily + weekly).
+6) First 48-hour action checklist.`;
+  };
+
+  const doesResultMatchCurrentSelection = (result: any) => {
+    if (!hasModeSelection) return false;
+    if (isDeepMode) {
+      return result?.__deep === true && result?.__selectionKey === selectedModesKey;
+    }
+    return result?.__mode === primaryMode;
+  };
+
+  const activeGroundingResults = useMemo(
+    () => groundingResults.filter((result: any) => doesResultMatchCurrentSelection(result)),
+    [groundingResults, hasModeSelection, isDeepMode, primaryMode, selectedModesKey],
+  );
+
+  const opsMetrics = opsCenter?.opsMetrics || null;
+
+  const modeMetrics = useMemo(() => {
+    const sourceCount = activeGroundingResults.length;
+    const uniqueDomains = new Set(
+      activeGroundingResults
+        .map((result: any) => {
+          const uri = String(result?.web?.uri || '').trim();
+          if (!uri) return null;
+          try {
+            return new URL(uri).hostname;
+          } catch (_error) {
+            return null;
+          }
+        })
+        .filter(Boolean),
+    ).size;
+    const hasCapacity = Boolean(opsMetrics && opsMetrics.totalCapacity > 0);
+    const coverageRate = hasCapacity
+      ? `${Math.round((opsMetrics!.filledSlots / opsMetrics!.totalCapacity) * 100)}%`
+      : 'N/A';
+    if (!hasModeSelection) {
+      return [
+        { label: 'Modes selected', value: '0' },
+        { label: 'Deep mode', value: 'Off' },
+        { label: 'Coverage', value: 'N/A' },
+      ];
+    }
+    if (isDeepMode) {
+      const coverageFilled = opsMetrics?.filledSlots ?? 0;
+      const coverageTotal = opsMetrics?.totalCapacity ?? 0;
+      const coverageValue = coverageTotal > 0 ? `${coverageFilled}/${coverageTotal}` : 'N/A';
+      return [
+        { label: 'Deep mode', value: `On (${selectedModes.length})` },
+        { label: 'Coverage', value: coverageValue },
+        { label: 'Aged >3d', value: `${opsMetrics?.pendingLogsAged ?? 0}` },
+      ];
+    }
+    if (primaryMode === 'grants') {
+      return [
+        { label: 'Discoveries', value: `${sourceCount}` },
+        { label: 'Sources', value: `${uniqueDomains}` },
+        { label: 'Coverage gap', value: `${opsMetrics?.staffingShortage ?? 0}` },
+      ];
+    }
+    if (primaryMode === 'opportunity-distribution') {
+      return [
+        { label: 'Upcoming events', value: `${opsMetrics?.upcomingEvents ?? 0}` },
+        { label: 'Coverage', value: coverageRate },
+        { label: 'Open slots', value: `${opsMetrics?.staffingShortage ?? 0}` },
+      ];
+    }
+    if (primaryMode === 'portal-guidance') {
+      return [
+        { label: 'Pending logs', value: `${opsMetrics?.pendingLogs ?? 0}` },
+        { label: 'Aged >3d', value: `${opsMetrics?.pendingLogsAged ?? 0}` },
+        { label: 'Reliable pool', value: `${opsMetrics?.reliableVolunteers ?? 0}` },
+      ];
+    }
+    const delta = opsMetrics?.monthHoursDelta ?? 0;
+    return [
+      {
+        label: 'Month trend',
+        value: `${delta > 0 ? '+' : ''}${delta}%`,
+      },
+      { label: 'Recommendations', value: `${opsMetrics?.recommendationsCount ?? 0}` },
+      { label: 'Coverage gap', value: `${opsMetrics?.staffingShortage ?? 0}` },
+    ];
+  }, [activeGroundingResults, hasModeSelection, isDeepMode, opsMetrics, primaryMode, selectedModes.length]);
+
+  const handleModeSelect = (mode: NebulaeModeKey) => {
+    setSelectedModes((prev) => {
+      const exists = prev.includes(mode);
+      const next = exists
+        ? prev.filter((entry) => entry !== mode)
+        : [...prev, mode];
+      const sorted = [...next].sort(
+        (a, b) => NEBULAE_MODE_ORDER.indexOf(a) - NEBULAE_MODE_ORDER.indexOf(b),
+      );
+      setSidebarOpen(sorted.length > 0);
+      if (sorted.length > 0) {
+        inputRef.current?.focus();
+      }
+      return sorted;
+    });
   };
 
   const handleSendMessage = async (e?: React.FormEvent, overrideInput?: string, displayInput?: string) => {
     if (e) e.preventDefault();
     const finalInput = overrideInput ?? input;
+    const modesAtSend = [...selectedModes];
+    const modeSelectionKeyAtSend = getModeSelectionKey(modesAtSend);
+    const deepModeAtSend = modesAtSend.length >= 2;
+    const primaryModeAtSend = modesAtSend[0] || null;
     if ((!finalInput.trim() && attachments.length === 0) || isThinking) return;
-    if (grantSearchTimerRef.current) {
-      window.clearTimeout(grantSearchTimerRef.current);
+    if (modeSearchTimerRef.current) {
+      window.clearTimeout(modeSearchTimerRef.current);
     }
-    if (grantMode) {
-      lastGrantQueryRef.current = (displayInput ?? finalInput).trim();
+    if (modeSelectionKeyAtSend) {
+      lastModeQueryRef.current[modeSelectionKeyAtSend] = (displayInput ?? finalInput).trim();
     }
 
     // Helper to convert File to Gemini part
@@ -224,7 +602,7 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
     
-    const currentInput = finalInput;
+    const currentInput = overrideInput ?? buildActivePrompt(modesAtSend, finalInput.trim());
     const currentAttachments = [...attachments];
     
     setInput('');
@@ -293,17 +671,24 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
       const text = response.response.text();
       const groundingMetadata = response.response.candidates?.[0]?.groundingMetadata;
       const chunks = groundingMetadata?.groundingChunks || [];
+      const taggedChunks = chunks.map((chunk: any) => ({
+        ...chunk,
+        __mode: primaryModeAtSend,
+        __modes: modesAtSend,
+        __deep: deepModeAtSend,
+        __selectionKey: modeSelectionKeyAtSend || null,
+      }));
 
       setMessages(prev => {
         const assistantMessage: Message = { 
           id: (Date.now() + 1).toString(), 
           role: 'assistant', 
           content: text,
-          grounding: chunks
+          grounding: taggedChunks
         };
         const updated = [...prev, assistantMessage];
         
-        const newResults = [...groundingResults, ...chunks];
+        const newResults = [...groundingResults, ...taggedChunks];
         setGroundingResults(newResults);
         saveToFirestore(updated, newResults);
         return updated;
@@ -378,31 +763,58 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
         {/* Floating Header */}
         <div className="px-12 py-8 flex items-center justify-between bg-white/60 backdrop-blur-3xl sticky top-0 z-20 border-b border-gray-100">
            <div className="flex items-center gap-6">
-              <div className="w-16 h-16 bg-black rounded-[1.5rem] flex items-center justify-center shadow-[0_20px_40px_rgba(0,0,0,0.1)] group">
-                 <Sparkles className="w-8 h-8 text-white group-hover:scale-110 transition-transform" />
-              </div>
               <div>
                  <h2 className="text-4xl font-[1000] text-gray-900 tracking-tighter italic uppercase leading-none">Nebulae AI</h2>
               </div>
            </div>
            
            <div className="flex items-center gap-4">
-              <button 
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-full border transition-all shadow-sm
-                  ${sidebarOpen ? 'bg-[#D2F677] text-black border-[#D2F677]' : 'bg-white text-gray-600 border-gray-100 hover:bg-gray-50'}`}
-              >
-                 <Layers className={`w-4 h-4 ${sidebarOpen ? 'text-black' : 'text-gray-400'}`} />
-                 <span className="text-[10px] font-bold uppercase tracking-widest">Grants</span>
-              </button>
-              <button 
-                onClick={() => setHistoryOpen(!historyOpen)}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-full border transition-all shadow-sm
-                  ${historyOpen ? 'bg-black text-white border-black' : 'bg-white text-gray-600 border-gray-100 hover:bg-gray-50'}`}
-              >
-                 <Clock className="w-4 h-4" />
-                 <span className="text-[10px] font-bold uppercase tracking-widest">History</span>
-              </button>
+              {SHOW_EMBEDDED_OPS_CENTER && aiEnabled && opsCenter && (
+                <button
+                  onClick={() => {
+                    inputRef.current?.focus();
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full border transition-all shadow-sm bg-black text-white border-black"
+                >
+                  <Cpu className="w-4 h-4 text-white" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest">Ops Center</span>
+                </button>
+              )}
+              {Object.values(NEBULAE_MODE_CONFIG).map((mode) => {
+                const isActive = selectedModes.includes(mode.key);
+                const ModeIcon = mode.icon;
+                return (
+                  <button
+                    key={mode.key}
+                    onClick={() => handleModeSelect(mode.key)}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-full border transition-all shadow-sm ${
+                      isActive ? '' : 'bg-white text-gray-600 border-gray-100 hover:bg-gray-50'
+                    }`}
+                    style={
+                      isActive
+                        ? {
+                            backgroundColor: mode.accent,
+                            borderColor: mode.accent,
+                            color: '#111111',
+                          }
+                        : undefined
+                    }
+                  >
+                    <ModeIcon
+                      className={`w-4 h-4 ${isActive ? 'text-black' : 'text-gray-400'}`}
+                    />
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${isActive ? 'text-black' : 'text-gray-600'}`}>
+                      {mode.buttonLabel}
+                    </span>
+                  </button>
+                );
+              })}
+              {isDeepMode && (
+                <div className="flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm bg-[#D2F677] border-[#D2F677]">
+                  <Zap className="w-4 h-4 text-black" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-black">Deep Mode</span>
+                </div>
+              )}
            </div>
         </div>
 
@@ -411,6 +823,32 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
           ref={scrollRef}
           className="flex-1 overflow-y-auto no-scrollbar px-12 py-10 space-y-12"
         >
+           {SHOW_EMBEDDED_OPS_CENTER && aiEnabled && opsCenter && (
+             <motion.div
+               initial={{ opacity: 0, y: 16 }}
+               animate={{ opacity: 1, y: 0 }}
+               transition={{ duration: 0.35 }}
+               className="mb-8"
+             >
+               <NebulaeOpsCenter
+                 loading={opsCenter.loading}
+                 priorities={opsCenter.priorities}
+                 actions={opsCenter.actions}
+                 recommendations={opsCenter.recommendations}
+                 primaryRecommendation={opsCenter.primaryRecommendation}
+                 autopilot={opsCenter.autopilot}
+                 toggleAutopilot={opsCenter.toggleAutopilot}
+                 runAction={opsCenter.runAction}
+                 lastSignal={opsCenter.lastSignal}
+                 learningSummary={opsCenter.learningSummary}
+                 onOpenNebulae={() => {
+                   inputRef.current?.focus();
+                 }}
+                 ctaLabel="Focus Chat"
+               />
+             </motion.div>
+           )}
+
            {/* Welcome Dashboard - Premium Center Layout */}
            {messages.length === 0 && (
              <motion.div 
@@ -418,7 +856,7 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
                animate={{ opacity: 1 }}
                className="flex-1 flex flex-col items-center justify-center min-h-[60vh] text-center"
              >
-                <div className="max-w-3xl px-6">
+                <div className="w-full max-w-6xl px-6">
                    <motion.div
                      initial={{ opacity: 0, scale: 0.9, filter: 'blur(10px)' }}
                      animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
@@ -436,28 +874,21 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
                         transition={{ delay: 0.5, duration: 0.8 }}
                         className="mt-8 text-sm font-bold text-gray-400 uppercase tracking-[0.4em]"
                       >
-                         Volunteer Impact Intelligence Synchronized and Ready
+                         Operations + Volunteer Management Intelligence Ready
                       </motion.p>
                    </motion.div>
 
-                   <div className="flex flex-wrap justify-center gap-4 mt-8">
-                      {INTELLIGENCE_MODULES.map((module, idx) => (
+                   <div className="grid w-full grid-cols-1 gap-4 mt-8 sm:grid-cols-2 lg:grid-cols-3">
+                      {intelligenceModules.map((module, idx) => (
                         <motion.button
                           key={module.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.6 + idx * 0.1 }}
                 onClick={() => {
-                            if (module.id === 'grants') {
-                              setGrantMode(true);
-                              setSidebarOpen(true);
-                              window.setTimeout(() => inputRef.current?.focus(), 0);
-                            } else {
-                              setGrantMode(false);
-                              handleSendMessage(undefined, module.prompt);
-                            }
+                            handleSendMessage(undefined, module.prompt);
                           }}
-                          className="px-6 py-3.5 bg-white border border-gray-100 rounded-full hover:border-[#D2F677] hover:shadow-xl hover:shadow-[#D2F677]/10 transition-all flex items-center gap-3 group relative overflow-hidden"
+                          className="w-full px-6 py-3.5 bg-white border border-gray-100 rounded-full hover:border-[#D2F677] hover:shadow-xl hover:shadow-[#D2F677]/10 transition-all flex items-center justify-between gap-3 group relative overflow-hidden"
                         >
                            <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-[#D2F677] group-hover:text-black transition-all">
                               <module.icon className="w-4 h-4" />
@@ -469,6 +900,88 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
                         </motion.button>
                       ))}
                    </div>
+
+                   {SHOW_VOLUNTEER_AI_TOOLS && (
+                     <div className="mt-10 grid grid-cols-1 xl:grid-cols-[1.1fr_1fr] gap-6 text-left">
+                       <div className="p-6 bg-white rounded-[2rem] border border-gray-100 shadow-sm">
+                         <div className="flex items-center gap-3 mb-5">
+                           <div className="w-10 h-10 rounded-2xl bg-black text-white flex items-center justify-center">
+                             <TrendingUp className="w-5 h-5" />
+                           </div>
+                           <div>
+                             <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Volunteer AI Playbooks</h3>
+                             <p className="text-xs text-gray-500 font-semibold uppercase tracking-[0.2em]">One-click strategic workflows</p>
+                           </div>
+                         </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                           {ADVANCED_VOLUNTEER_PLAYBOOKS.map((playbook) => (
+                             <button
+                               key={playbook.id}
+                               onClick={() => {
+                                 handleSendMessage(undefined, playbook.prompt, playbook.title);
+                               }}
+                               className="p-4 rounded-2xl border border-gray-100 bg-gray-50 hover:bg-white hover:border-[#D2F677] hover:shadow-lg transition-all text-left"
+                             >
+                               <p className="text-sm font-black text-gray-900">{playbook.title}</p>
+                               <p className="mt-1 text-xs text-gray-500">{playbook.description}</p>
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+
+                       <div className="p-6 bg-white rounded-[2rem] border border-gray-100 shadow-sm">
+                         <div className="flex items-center justify-between gap-3 mb-5">
+                           <div>
+                             <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Strategy Composer</h3>
+                             <p className="text-xs text-gray-500 font-semibold uppercase tracking-[0.2em]">AI plan generator</p>
+                           </div>
+                           <span className="px-3 py-1 rounded-full bg-[#D2F677]/30 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">
+                             Tier: {planTier}
+                           </span>
+                         </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                           <select
+                             value={strategyGoal}
+                             onChange={(event) => setStrategyGoal(event.target.value)}
+                             className="h-11 px-3 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-700"
+                           >
+                             {STRATEGY_GOALS.map((goal) => (
+                               <option key={goal.id} value={goal.id}>{goal.label}</option>
+                             ))}
+                           </select>
+                           <select
+                             value={strategyHorizon}
+                             onChange={(event) => setStrategyHorizon(event.target.value)}
+                             className="h-11 px-3 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-700"
+                           >
+                             {STRATEGY_HORIZONS.map((horizon) => (
+                               <option key={horizon.id} value={horizon.id}>{horizon.label}</option>
+                             ))}
+                           </select>
+                           <select
+                             value={strategyStyle}
+                             onChange={(event) => setStrategyStyle(event.target.value)}
+                             className="h-11 px-3 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-700"
+                           >
+                             {STRATEGY_STYLES.map((style) => (
+                               <option key={style.id} value={style.id}>{style.label}</option>
+                             ))}
+                           </select>
+                         </div>
+                         <button
+                           onClick={() => {
+                             handleSendMessage(undefined, buildStrategyPrompt(), 'Build volunteer strategy');
+                           }}
+                           className="mt-4 w-full h-12 rounded-xl bg-black text-white text-sm font-black uppercase tracking-[0.18em] hover:bg-gray-800 transition-colors"
+                         >
+                           Generate Strategy
+                         </button>
+                         <p className="mt-3 text-xs text-gray-500">
+                           Generates an execution plan with KPIs, escalation triggers, message templates, and first 48-hour actions.
+                         </p>
+                       </div>
+                     </div>
+                   )}
                 </div>
              </motion.div>
            )}
@@ -549,21 +1062,38 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
              onDragLeave={handleDrag}
              onDragOver={handleDrag}
              onDrop={handleDrop}
-             className={`max-w-4xl mx-auto flex items-center gap-4 bg-white border rounded-[3rem] p-3 transition-all duration-300 relative
+             className={`max-w-4xl mx-auto flex items-center gap-4 bg-white rounded-[3rem] p-3 transition-all duration-300 relative
                ${isDragging 
-                 ? 'border-[#D2F677] bg-[#D2F677]/5 shadow-[0_0_40px_rgba(210,246,119,0.2)] scale-[1.02]' 
-                 : grantMode
-                    ? 'border-[#D2F677] shadow-[0_0_35px_rgba(120,255,120,0.35)] ring-2 ring-[#7CFF7A]/40'
-                    : 'border-gray-200 focus-within:border-[#D2F677] focus-within:shadow-[0_0_30px_rgba(210,246,119,0.1)] shadow-xl shadow-gray-200/50'
+                 ? 'border border-[#D2F677] shadow-[0_0_40px_rgba(210,246,119,0.2)] scale-[1.02]' 
+                 : 'border border-gray-200 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-[#D2F677] focus-within:shadow-[0_0_30px_rgba(210,246,119,0.1)]'
                }`}
+             style={
+               !isDragging && hasModeSelection
+                 ? {
+                     borderColor: LIME_ACCENT,
+                     boxShadow: `0 0 35px ${LIME_GLOW}`,
+                   }
+                 : undefined
+             }
            >
-              {grantMode && !isDragging && (
+              {!isDragging && hasModeSelection && (
                 <div className="absolute -top-7 left-8 flex items-center gap-2">
-                  <span className="px-3 py-1 rounded-full bg-[#7CFF7A]/20 text-[10px] font-black uppercase tracking-[0.3em] text-[#1B3A1B]">
-                    Grant Context Active
+                  <span
+                    className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-[0.3em]"
+                    style={{
+                      backgroundColor: `${LIME_ACCENT}66`,
+                      color: '#0F172A',
+                    }}
+                  >
+                    {isDeepMode ? 'Deep Mode Active' : `${activeModeConfig?.label || 'Mode'} Active`}
                   </span>
-                  <span className="px-3 py-1 rounded-full bg-white border border-[#7CFF7A]/40 text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">
-                    Focus: Volunteer Engagement + Training
+                  <span
+                    className="px-3 py-1 rounded-full bg-white text-[10px] font-black uppercase tracking-[0.2em] text-gray-500"
+                    style={{ border: `1px solid ${LIME_ACCENT}` }}
+                  >
+                    {isDeepMode
+                      ? `Modes: ${selectedModes.map((mode) => NEBULAE_MODE_CONFIG[mode].buttonLabel).join(' + ')}`
+                      : `Focus: ${activeModeConfig?.focus || ''}`}
                   </span>
                 </div>
               )}
@@ -629,7 +1159,11 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 ref={inputRef}
-                placeholder="Ask Anything: 'Find 2024 environmental grants in Seattle'..."
+                placeholder={
+                  isDeepMode
+                    ? 'Deep Mode active: ask for full cross-factor analysis across selected features...'
+                    : activeModeConfig?.inputPlaceholder || 'Select one or more mode buttons above, then ask your question...'
+                }
                 className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 placeholder:text-gray-400 font-bold text-lg"
               />
               <button 
@@ -653,34 +1187,67 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
             className="w-[420px] h-full bg-white flex flex-col p-10 relative z-20 border-l border-gray-100 shadow-2xl"
           >
              <div className="mb-12">
-                <h3 className="text-xs font-[1000] text-gray-400 uppercase tracking-[0.5em] mb-4">Grant Intelligence</h3>
+                <h3 className="text-xs font-[1000] text-gray-400 uppercase tracking-[0.5em] mb-4">
+                  {isDeepMode ? 'Deep Mode Intelligence' : activeModeConfig?.sidebarEyebrow}
+                </h3>
                  <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-black text-gray-900 italic uppercase tracking-tighter">Live Discoveries</h2>
+                    <h2 className="text-2xl font-black text-gray-900 italic uppercase tracking-tighter">
+                      {isDeepMode ? 'Cross-Factor Command Center' : activeModeConfig?.sidebarTitle}
+                    </h2>
                  </div>
+             </div>
+
+             <div className="grid grid-cols-3 gap-3 mb-8">
+               {modeMetrics.map((metric) => (
+                 <div
+                   key={metric.label}
+                   className="rounded-2xl p-3"
+                   style={{
+                     backgroundColor: `${LIME_ACCENT}55`,
+                     border: `1px solid ${LIME_ACCENT}`,
+                   }}
+                 >
+                   <p className="text-[9px] font-black uppercase tracking-[0.18em] text-gray-400">
+                     {metric.label}
+                   </p>
+                   <p className="mt-2 text-sm font-black text-gray-900">
+                     {metric.value}
+                   </p>
+                 </div>
+               ))}
              </div>
 
              {/* Discovery Stream */}
              <div className="flex-1 space-y-6 overflow-y-auto no-scrollbar">
-                {groundingResults.length > 0 ? (
-                  groundingResults.map((res, j) => (
+                {activeGroundingResults.length > 0 ? (
+                  activeGroundingResults.map((res, j) => (
                     <motion.div 
                       key={j}
                       initial={{ x: 20, opacity: 0 }}
                       animate={{ x: 0, opacity: 1 }}
                       transition={{ delay: j * 0.1 }}
-                      className="p-6 bg-gray-50 border border-gray-100 rounded-[2rem] hover:border-[#D2F677] hover:bg-white transition-all group cursor-pointer shadow-sm"
+                      className="p-6 rounded-[2rem] transition-all group cursor-pointer shadow-sm"
+                      style={{
+                        backgroundColor: `${LIME_ACCENT}22`,
+                        border: `1px solid ${LIME_ACCENT}`,
+                      }}
                     >
                        <div className="flex justify-between items-start mb-4">
-                          <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 group-hover:bg-[#D2F677] group-hover:text-black transition-all">
-                             <Layers className="w-5 h-5" />
+                          <div
+                            className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 transition-all"
+                            style={{ backgroundColor: `${LIME_ACCENT}66` }}
+                          >
+                             <ActiveModeIcon className="w-5 h-5" />
                           </div>
-                          <ExternalLink className="w-4 h-4 text-gray-300 group-hover:text-[#D2F677] transition-colors" />
+                          <ExternalLink className="w-4 h-4 text-gray-300 transition-colors" />
                        </div>
-                       <h4 className="font-bold text-gray-900 text-base leading-snug mb-2 group-hover:text-[#D2F677] transition-colors">
+                       <h4 className="font-bold text-gray-900 text-base leading-snug mb-2 transition-colors">
                           {res.web?.title || "Verification Pending"}
                        </h4>
                        <p className="text-xs text-gray-400 font-medium line-clamp-2">
-                          Real-time metadata suggests high alignment with current volunteer initiatives.
+                          {isDeepMode
+                            ? 'Deep Mode combines selected features to compute cross-factor operational guidance.'
+                            : activeModeConfig?.insightLine}
                        </p>
                     </motion.div>
                   ))
@@ -690,7 +1257,11 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
                       <AlertCircle className="w-8 h-8 text-gray-300" />
                      </div>
                      <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Awaiting Queries</h4>
-                     <p className="text-[10px] font-bold text-gray-400 max-w-[200px] mt-2">Perform a grant search to populate intelligence feed.</p>
+                     <p className="text-[10px] font-bold text-gray-400 max-w-[200px] mt-2">
+                       {isDeepMode
+                         ? 'Ask a Deep Mode question to compute combined insights across your selected features.'
+                         : activeModeConfig?.sidebarEmpty}
+                     </p>
                   </div>
                 )}
              </div>
@@ -699,104 +1270,23 @@ Output: Provide a concise shortlist with clickable links and a one-line eligibil
              <div className="mt-10 pt-10 border-t border-gray-100 space-y-6">
                 <button 
                   onClick={() => {
-                     setGroundingResults([]);
+                     const filtered = groundingResults.filter((result: any) => !doesResultMatchCurrentSelection(result));
+                     setGroundingResults(filtered);
                      if (chatId) {
                        const db = getFirestoreDb();
-                       updateDoc(doc(db, 'nebulae_chats', chatId), { groundingResults: [] });
+                       updateDoc(doc(db, 'nebulae_chats', chatId), { groundingResults: filtered });
                      }
                   }}
-                  className="w-full py-5 bg-[#D2F677] rounded-2xl text-black font-[1000] text-xs uppercase tracking-[0.2em] italic hover:bg-black hover:text-white transition-all shadow-xl shadow-black/5"
+                  className="w-full py-5 rounded-2xl text-black font-[1000] text-xs uppercase tracking-[0.2em] italic hover:bg-black hover:text-white transition-all shadow-xl shadow-black/5"
+                  style={{ backgroundColor: LIME_ACCENT }}
                 >
-                   REFRESH GRANT SEARCH
+                   {isDeepMode ? 'Refresh Deep Mode' : activeModeConfig?.refreshLabel}
                 </button>
              </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* History Overlay Panel */}
-      <AnimatePresence>
-         {historyOpen && (
-           <>
-             <motion.div 
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               onClick={() => setHistoryOpen(false)}
-               className="fixed inset-0 bg-black/40 backdrop-blur-md z-[100]"
-             />
-             <motion.div 
-               initial={{ x: '100%' }}
-               animate={{ x: 0 }}
-               exit={{ x: '100%' }}
-               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-               className="fixed top-0 right-0 w-[450px] h-full bg-white z-[101] shadow-2xl flex flex-col p-10 font-sans border-l border-gray-100"
-             >
-                <div className="flex items-center justify-between mb-12">
-                   <h2 className="text-3xl font-black text-gray-900 italic uppercase tracking-tighter">History Context</h2>
-                   <button 
-                     onClick={() => setHistoryOpen(false)}
-                     className="w-12 h-12 rounded-full border border-gray-100 text-gray-900 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                   >
-                      <X className="w-6 h-6" />
-                   </button>
-                </div>
-
-                <div className="mb-10">
-                   <button 
-                     onClick={() => {
-                       setChatId(null);
-                       setMessages([]);
-                       setGroundingResults([]);
-                       setHistoryOpen(false);
-                     }}
-                     className="w-full py-4 bg-[#D2F677] hover:bg-black hover:text-white text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl transition-all shadow-lg active:scale-95"
-                   >
-                      + Start New Session
-                   </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto no-scrollbar space-y-4">
-                   <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-4 px-2">Recent Intelligence</h3>
-                   {sessions.length > 0 ? (
-                     sessions.map((session) => (
-                       <button
-                         key={session.id}
-                         onClick={() => loadSession(session.id)}
-                         className={`w-full p-6 rounded-[2rem] text-left transition-all group border ${
-                           chatId === session.id 
-                             ? 'bg-[#D2F677] border-[#D2F677] text-black' 
-                             : 'bg-gray-50 border-gray-100 text-gray-500 hover:border-[#D2F677]/50 hover:bg-gray-100'
-                         }`}
-                       >
-                          <div className="flex items-center gap-3 mb-2">
-                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${chatId === session.id ? 'bg-black/10' : 'bg-gray-200'}`}>
-                                <Clock className="w-4 h-4" />
-                             </div>
-                             <span className="text-[10px] font-[1000] uppercase tracking-widest opacity-60">
-                                {session.updatedAt?.toDate
-                                  ? session.updatedAt.toDate().toLocaleDateString()
-                                  : session.createdAt?.toDate
-                                    ? session.createdAt.toDate().toLocaleDateString()
-                                    : 'Recent'}
-                             </span>
-                          </div>
-                          <p className="font-bold text-sm leading-relaxed line-clamp-2 text-gray-900">
-                             {session.title || session.messages?.[0]?.content || "Empty intelligence session"}
-                          </p>
-                       </button>
-                     ))
-                   ) : (
-                     <div className="flex flex-col items-center justify-center h-full text-center opacity-40 py-20">
-                        <HistoryIcon className="w-12 h-12 text-gray-300 mb-4" />
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">No history yet</p>
-                     </div>
-                   )}
-                </div>
-             </motion.div>
-           </>
-         )}
-      </AnimatePresence>
     </div>
   );
 };

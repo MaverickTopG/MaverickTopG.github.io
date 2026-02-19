@@ -4001,6 +4001,9 @@
               } catch (err) {
                 console.error('Checkout failed', err);
                 button.removeAttribute('disabled');
+                if (typeof window !== 'undefined') {
+                  window.location.assign('/#pricing');
+                }
               }
             });
           });

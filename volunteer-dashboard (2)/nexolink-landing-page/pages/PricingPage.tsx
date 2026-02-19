@@ -51,14 +51,15 @@ const FAQItem: React.FC<{ question: string; answer: string; index: number }> = (
 };
 
 interface PricingPageProps {
-  onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'story' | 'opinion' | 'login' | 'create' | 'privacy' | 'terms') => void;
+  onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'story' | 'opinion' | 'login' | 'create' | 'privacy' | 'terms' | 'contact') => void;
 }
 
 const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const horizontalSectionRef = useRef<HTMLDivElement>(null);
   const horizontalTrackRef = useRef<HTMLDivElement>(null);
-  const [isAnnual, setIsAnnual] = useState(false);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [audience, setAudience] = useState<'org' | 'school'>('org');
   const [toast, setToast] = useState<{ visible: boolean; message: string; isError?: boolean }>({
     visible: false,
     message: '',
@@ -147,21 +148,58 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
 
   const tiers = [
     {
-      name: "Organization",
-      price: "5",
-      annualPrice: "50",
-      desc: "For nonprofits and community groups.",
-      features: ["Admin dashboard", "Messaging", "Create events", "CSV/Excel exports"],
+      name: "Orbit",
+      monthlyPrice: 5,
+      yearlyPrice: 50,
+      desc: "Everything you need to get started.",
+      features: [
+        "Up to 50 volunteers",
+        "Volunteer directory",
+        "Manual hour logging & approvals",
+        "Core dashboard (total hours, volunteers)",
+        "CSV export",
+        "Email support"
+      ],
       theme: "white"
     },
     {
-      name: "School",
-      price: "5",
-      annualPrice: "50",
-      desc: "For schools and student programs.",
-      features: ["Admin dashboard", "Messaging", "Create events", "CSV/Excel exports"],
+      name: "Nebula",
+      monthlyPrice: 10,
+      yearlyPrice: 100,
+      desc: "Automated volunteer operations.",
+      features: [
+        "Up to 500 volunteers",
+        "50 Nebulae AI prompts / day",
+        "Everything in Orbit",
+        "Kiosk mode + QR check-in",
+        "Nebulae AI auto-log review",
+        "Messaging",
+        "Events, shifts, capacity",
+        "Advanced analytics (retention, trends)",
+        "Priority support"
+      ],
       theme: "neon",
       popular: true
+    },
+    {
+      name: "Cosmos",
+      monthlyPrice: 15,
+      yearlyPrice: 150,
+      desc: "Unlimited scale. Total control.",
+      features: [
+        "Unlimited volunteers",
+        "Unlimited Nebulae AI prompts",
+        "Everything in Nebula",
+        "Unlimited kiosks & QR sessions",
+        "Advanced AI log intelligence",
+        "Unlimited messaging",
+        "Custom analytics & exports",
+        "Organization-wide automation controls",
+        "Dedicated support",
+        "SLA & uptime guarantees",
+        "Early access to new features"
+      ],
+      theme: "black"
     }
   ];
 
@@ -176,7 +214,7 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
     },
     {
       question: "Is there a free trial?",
-      answer: "Yes, you have a 14 day free trial when you purchase a plan."
+      answer: "Yes. Every plan includes a 365-day free trial when you purchase."
     },
     {
       question: "How secure is my biometric data?",
@@ -193,39 +231,26 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
     return w[key] || env[key] || '';
   };
 
-  const resolveCheckoutPrice = (planKey: 'organization' | 'school', intervalKey: 'monthly' | 'yearly') => {
-    if (planKey === 'school' && intervalKey === 'yearly') {
-      return resolveEnvValue('STRIPE_PRICE_SCHOOL_YEARLY');
-    }
-    if (planKey === 'school') {
-      return resolveEnvValue('STRIPE_PRICE_SCHOOL');
-    }
-    if (intervalKey === 'yearly') {
-      return resolveEnvValue('STRIPE_PRICE_YEARLY');
-    }
-    return resolveEnvValue('STRIPE_PRICE_MONTHLY');
+  const resolveCheckoutPrice = (
+    tierKey: 'orbit' | 'nebula' | 'cosmos',
+    planKey: 'organization' | 'school',
+    intervalKey: 'monthly' | 'yearly'
+  ) => {
+    const tierPrefix = tierKey.toUpperCase();
+    const orgPrefix = planKey === 'school' ? 'SCHOOL' : 'ORG';
+    const intervalSuffix = intervalKey === 'yearly' ? 'YEARLY' : 'MONTHLY';
+    return resolveEnvValue(`${tierPrefix}_PRICE_${orgPrefix}_${intervalSuffix}`);
   };
 
-  const handleCheckout = async (planKey: 'organization' | 'school') => {
+  const handleCheckout = async (planKey: 'organization' | 'school', tierKey: 'orbit' | 'nebula' | 'cosmos') => {
     const existingSessionId = localStorage.getItem(CHECKOUT_SESSION_KEY);
     if (existingSessionId) {
-      setToast({ visible: true, message: 'Connecting to Stripe', isError: false });
-      try {
-        const lookup = await fetch(`/api/checkoutSession?id=${encodeURIComponent(existingSessionId)}`);
-        const lookupData = await lookup.json();
-        if (lookup.ok && lookupData?.email) {
-          localStorage.setItem(CHECKOUT_EMAIL_KEY, lookupData.email);
-          onNavigate?.('create');
-          return;
-        }
-      } catch {
-        // fall through to new checkout
-      }
+      localStorage.removeItem(CHECKOUT_SESSION_KEY);
     }
 
-    const intervalKey = isAnnual ? 'yearly' : 'monthly';
-    const priceId = resolveCheckoutPrice(planKey, intervalKey);
-    const plan = planKey === 'school' ? 'school' : intervalKey;
+    const intervalKey = billingCycle;
+    const priceId = resolveCheckoutPrice(tierKey, planKey, intervalKey);
+    const plan = tierKey;
 
     setToast({ visible: true, message: 'Connecting to Stripe', isError: false });
 
@@ -260,6 +285,11 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
     }
   };
 
+  const resolvePrice = (tier: { monthlyPrice: number; yearlyPrice: number }) => {
+    if (billingCycle === 'monthly') return tier.monthlyPrice;
+    return Math.round(tier.yearlyPrice / 12);
+  };
+
   return (
     <div ref={containerRef} className="bg-white min-h-screen text-charcoal selection:bg-neon selection:text-charcoal overflow-x-hidden">
       <AnimatePresence>
@@ -268,7 +298,7 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
             initial={{ opacity: 0, y: 20, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.98 }}
-            className={`fixed bottom-8 right-8 z-[2000] rounded-2xl px-6 py-4 shadow-2xl border backdrop-blur-xl ${
+            className={`fixed bottom-8 right-8 z-[2147483647] rounded-2xl px-6 py-4 shadow-2xl border backdrop-blur-xl ${
               toast.isError ? 'bg-white text-charcoal border-charcoal/10' : 'bg-charcoal text-white border-white/10'
             }`}
           >
@@ -299,33 +329,63 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
                  </h1>
             </div>
             <p className="pricing-subtitle mt-8 text-xl md:text-2xl font-medium text-charcoal/40 max-w-2xl mx-auto italic uppercase tracking-[0.2em]">
-                Transparent plans for organizations of all sizes.
+                Transparent plans for organizations of all sizes. Every plan includes a 365-day free trial.
             </p>
           </div>
         </div>
       </section>
 
       {/* SECTION 2: PRICING GRID */}
-      <section id="plans" className="relative py-48 bg-white overflow-hidden">
+      <section id="plans" className="relative min-h-screen bg-white overflow-hidden flex items-center">
         <div className="container mx-auto px-6 relative z-10">
-          <div className="text-center mb-24">
-            <div className="pricing-toggle inline-flex items-center bg-softGray p-1.5 rounded-full border border-charcoal/5 shadow-inner">
-              <button 
-                onClick={() => setIsAnnual(false)}
-                className={`px-10 py-4 rounded-full text-xs font-black uppercase tracking-widest transition-all duration-300 ${!isAnnual ? 'bg-white shadow-premium text-charcoal scale-105' : 'opacity-40 hover:opacity-100'}`}
+          <div className="text-center mb-24" />
+
+          <div className="pricing-toggle flex flex-col items-center gap-5 mb-14">
+            <div className="inline-flex items-center rounded-full border border-charcoal/10 bg-white/70 p-2 shadow-sm">
+              <button
+                onClick={() => setAudience('org')}
+                className={`px-7 py-3 text-sm font-black uppercase tracking-[0.25em] rounded-full transition ${
+                  audience === 'org' ? 'bg-charcoal text-white' : 'text-charcoal/50'
+                }`}
+              >
+                Organizations
+              </button>
+              <button
+                onClick={() => setAudience('school')}
+                className={`px-7 py-3 text-sm font-black uppercase tracking-[0.25em] rounded-full transition ${
+                  audience === 'school' ? 'bg-charcoal text-white' : 'text-charcoal/50'
+                }`}
+              >
+                School
+              </button>
+            </div>
+            <div className="inline-flex items-center rounded-full border border-charcoal/10 bg-white/70 p-2 shadow-sm">
+              <button
+                onClick={() => setBillingCycle('monthly')}
+                className={`px-7 py-3 text-sm font-black uppercase tracking-[0.25em] rounded-full transition ${
+                  billingCycle === 'monthly' ? 'bg-charcoal text-white' : 'text-charcoal/50'
+                }`}
               >
                 Monthly
               </button>
-              <button 
-                onClick={() => setIsAnnual(true)}
-                className={`px-10 py-4 rounded-full text-xs font-black uppercase tracking-widest transition-all duration-300 flex items-center gap-2 ${isAnnual ? 'bg-charcoal text-white shadow-xl scale-105' : 'opacity-40 hover:opacity-100'}`}
+              <button
+                onClick={() => setBillingCycle('yearly')}
+                className={`px-7 py-3 text-sm font-black uppercase tracking-[0.25em] rounded-full transition ${
+                  billingCycle === 'yearly' ? 'bg-charcoal text-white' : 'text-charcoal/50'
+                }`}
               >
-                Annual
+                Yearly
               </button>
             </div>
+            <span className="text-xs font-black uppercase tracking-[0.25em] text-charcoal/40">
+              Yearly saves 17% compared to monthly
+            </span>
+            <span className="text-xs font-black uppercase tracking-[0.25em] text-charcoal/60">
+              Every plan includes a 365-day free trial
+            </span>
           </div>
 
-          <div className="pricing-grid grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto min-h-[600px] justify-center">
+          <div className="pricing-grid grid grid-cols-1 md:grid-cols-3 gap-8 max-w-7xl mx-auto min-h-[600px] justify-center">
             {tiers.map((tier, i) => (
               <div 
                 key={i} 
@@ -342,14 +402,11 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
                 <div className="mb-12">
                   <div className="flex items-baseline gap-1">
                     <span className="text-7xl font-display font-black tracking-tighter">
-                      ${isAnnual ? tier.annualPrice : tier.price}
+                      ${resolvePrice(tier)}
                     </span>
-                    <span className={`text-sm font-bold opacity-40`}>{isAnnual ? '/yr' : '/mo'}</span>
-                    {isAnnual && (
-                      <span className={`ml-3 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${tier.theme === 'neon' ? 'bg-charcoal text-neon' : 'bg-neon text-charcoal'}`}>
-                        17% off
-                      </span>
-                    )}
+                    <span className={`text-sm font-bold opacity-40`}>
+                      {billingCycle === 'monthly' ? '/mo' : '/mo billed yearly'}
+                    </span>
                   </div>
                 </div>
 
@@ -365,14 +422,17 @@ const PricingPage: React.FC<PricingPageProps> = ({ onNavigate }) => {
                 </div>
 
                 <button
-                  onClick={() => handleCheckout(tier.name.toLowerCase() === 'school' ? 'school' : 'organization')}
+                  onClick={() => {
+                    if (tier.name.toLowerCase() === 'cosmos') {
+                      onNavigate?.('contact');
+                      return;
+                    }
+                    handleCheckout(audience === 'school' ? 'school' : 'organization', tier.name.toLowerCase() as 'orbit' | 'nebula' | 'cosmos');
+                  }}
                   className={`w-full py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all hover:scale-105 active:scale-95 ${tier.theme === 'white' ? 'bg-charcoal text-white hover:bg-neon hover:text-charcoal shadow-xl' : tier.theme === 'neon' ? 'bg-charcoal text-white shadow-2xl' : 'bg-white text-charcoal hover:bg-neon shadow-xl'}`}
                 >
-                  Select {tier.name}
+                  {tier.name.toLowerCase() === 'cosmos' ? 'Contact sales' : `Select ${tier.name}`}
                 </button>
-                <div className={`mt-4 text-[10px] font-black uppercase tracking-[0.3em] ${tier.theme === 'neon' ? 'text-charcoal/60' : 'text-charcoal/40'}`}>
-                  14 day free trial
-                </div>
               </div>
             ))}
           </div>

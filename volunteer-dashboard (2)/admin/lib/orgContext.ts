@@ -15,6 +15,7 @@ export type OrgContext = {
   orgId: string | null;
   orgCode: string | null;
   orgName: string | null;
+  planTier: string | null;
 };
 
 export type OrgAdmins = {
@@ -26,6 +27,7 @@ type OrgRecord = {
   orgId: string | null;
   orgCode: string | null;
   orgName: string | null;
+  planTier: string | null;
 };
 
 const ORG_CODE_FIELDS = [
@@ -57,19 +59,76 @@ const ORG_NAME_FIELDS = [
   'school_name',
 ];
 
+const PLAN_TIER_FIELDS = ['plan_tier', 'planTier', 'tier', 'plan_key', 'planKey'];
+const SUBADMIN_SESSION_STORAGE_KEY = 'nexolink_active_sub_admin_session';
+const GROUP_SCOPE_FIELDS = ['target_group_id', 'targetGroupId', 'sub_admin_group_id', 'subAdminGroupId', 'groupId', 'group_id'];
+const GROUP_SCOPED_COLLECTIONS = new Set([
+  'organization_join_requests',
+  'user_organizations',
+  'volunteer_logs',
+  'kiosk_sessions',
+]);
+
+export type ActiveSubAdminSession = {
+  subAdminId: string;
+  email?: string;
+  displayName?: string;
+  groupId: string;
+  groupName?: string;
+  startedAt?: unknown;
+};
+
 const normalizeOrgRecord = (data: Record<string, unknown>, docId?: string): OrgRecord => {
   const orgId = (ORG_ID_FIELDS.map((field) => data[field] as string | undefined).find(Boolean) || docId || null);
   const orgCode = (ORG_CODE_FIELDS.map((field) => data[field] as string | undefined).find(Boolean) || null);
   const orgName = (ORG_NAME_FIELDS.map((field) => data[field] as string | undefined).find(Boolean) || null);
+  const planTier = (PLAN_TIER_FIELDS.map((field) => data[field] as string | undefined).find(Boolean) || null);
   return {
     orgId: orgId ? String(orgId) : null,
     orgCode: orgCode ? String(orgCode) : null,
     orgName: orgName ? String(orgName) : null,
+    planTier: planTier ? String(planTier).toLowerCase() : null,
   };
 };
 
 const normalizeOrgCode = (value: string | null) => (value ? String(value).trim().toUpperCase() : null);
 const normalizeEmail = (value: unknown) => String(value || '').trim().toLowerCase();
+const normalizeGroupScope = (value: unknown) => String(value || '').trim();
+
+export const getActiveSubAdminSession = (): ActiveSubAdminSession | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SUBADMIN_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ActiveSubAdminSession;
+    if (!parsed?.groupId) return null;
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+};
+
+const resolveRecordGroupScope = (data: Record<string, unknown>) => {
+  for (const field of GROUP_SCOPE_FIELDS) {
+    const value = normalizeGroupScope(data[field]);
+    if (value) return value;
+  }
+  return '';
+};
+
+const shouldApplyGroupScope = (collectionName: string) => GROUP_SCOPED_COLLECTIONS.has(collectionName);
+
+const filterRowsBySubAdminScope = (
+  collectionName: string,
+  rows: Array<{ id: string; data: Record<string, unknown> }>,
+) => {
+  const session = getActiveSubAdminSession();
+  if (!session?.groupId) return rows;
+  if (!shouldApplyGroupScope(collectionName)) return rows;
+  const targetGroupId = normalizeGroupScope(session.groupId);
+  if (!targetGroupId) return rows;
+  return rows.filter((row) => resolveRecordGroupScope(row.data) === targetGroupId);
+};
 
 const resolveOrgRecordById = async (db: Firestore, collectionName: string, orgId: string) => {
   try {
@@ -100,15 +159,20 @@ const resolveOrgRecordByCode = async (db: Firestore, collectionName: string, org
 const pickBestOrgRecord = (records: OrgRecord[]) => {
   if (!records.length) return null;
   return records.sort((a, b) => {
-    const score = (record: OrgRecord) => (record.orgId ? 2 : 0) + (record.orgCode ? 2 : 0) + (record.orgName ? 1 : 0);
+    const score = (record: OrgRecord) => 
+      (record.orgId ? 4 : 0) + 
+      (record.orgCode ? 4 : 0) + 
+      (record.orgName ? 2 : 0) + 
+      (record.planTier ? 10 : 0); // Heavily weight records with plan tier info
     return score(b) - score(a);
   })[0];
 };
 
-export const resolveOrgContext = async (db: Firestore, userId: string): Promise<OrgContext> => {
+export const resolveOrgContext = async (db: Firestore, userId: string, userEmail?: string | null): Promise<OrgContext> => {
   let orgId: string | null = null;
   let orgCode: string | null = null;
   let orgName: string | null = null;
+  let planTier: string | null = null;
 
   try {
     const userSnap = await getDoc(doc(db, 'users', userId));
@@ -117,6 +181,7 @@ export const resolveOrgContext = async (db: Firestore, userId: string): Promise<
     orgId = record.orgId || orgId;
     orgCode = record.orgCode || orgCode;
     orgName = record.orgName || orgName;
+    planTier = record.planTier || planTier;
   } catch (error) {
     console.warn('Unable to resolve org from users doc', error);
   }
@@ -129,6 +194,7 @@ export const resolveOrgContext = async (db: Firestore, userId: string): Promise<
       orgId = best?.orgId || orgId;
       orgCode = best?.orgCode || orgCode;
       orgName = best?.orgName || orgName;
+      planTier = best?.planTier || planTier;
     }
   } catch (error) {
     console.warn('Unable to resolve org from user_organizations', error);
@@ -147,6 +213,7 @@ export const resolveOrgContext = async (db: Firestore, userId: string): Promise<
               orgId = record.orgId || orgId;
               orgCode = record.orgCode || orgCode;
               orgName = record.orgName || orgName;
+              planTier = record.planTier || planTier;
               break;
             }
           }
@@ -160,6 +227,7 @@ export const resolveOrgContext = async (db: Firestore, userId: string): Promise<
           orgId = record.orgId || orgId;
           orgCode = record.orgCode || orgCode;
           orgName = record.orgName || orgName;
+          planTier = record.planTier || planTier;
         }
       }
       if (orgId) {
@@ -168,6 +236,7 @@ export const resolveOrgContext = async (db: Firestore, userId: string): Promise<
           orgId = record.orgId || orgId;
           orgCode = record.orgCode || orgCode;
           orgName = record.orgName || orgName;
+          planTier = record.planTier || planTier;
         }
       }
       if (orgId || orgCode) break;
@@ -180,6 +249,7 @@ export const resolveOrgContext = async (db: Firestore, userId: string): Promise<
     orgId,
     orgCode,
     orgName,
+    planTier,
   };
 };
 
@@ -270,7 +340,7 @@ export const subscribeToOrgCollection = (options: OrgSubscriptionOptions) => {
       });
     });
     const rows = Array.from(combined.entries()).map(([id, data]) => ({ id, data }));
-    onData(rows);
+    onData(filterRowsBySubAdminScope(collectionName, rows));
   };
 
   const buildConstraints = () =>
@@ -357,7 +427,8 @@ export const fetchOrgCollectionDocs = async (
     }
   }
 
-  return Array.from(results.entries()).map(([id, data]) => ({ id, data }));
+  const rows = Array.from(results.entries()).map(([id, data]) => ({ id, data }));
+  return filterRowsBySubAdminScope(collectionName, rows);
 };
 
 export const getOrgCodeValue = (data: Record<string, unknown>) => {

@@ -16,24 +16,29 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgContext, subscribeToOrgCollection, fetchOrgCollectionDocs } from '../lib/orgContext';
-import { KioskModal } from './KioskModal';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { getFirebaseAuth, getFirestoreDb, getFirebaseFunctions } from '../lib/firebase';
+import { getActiveSubAdminSession, subscribeToOrgCollection, fetchOrgCollectionDocs } from '../lib/orgContext';
 import { Toast } from './Toast';
 
 interface HeaderProps {
   isKioskOpen: boolean;
   setIsKioskOpen: (open: boolean) => void;
   orgContext: { id: string; code: string; name: string };
+  planTier?: string;
+  isSubAdminPortal?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, orgContext }) => {
+export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, orgContext, planTier, isSubAdminPortal }) => {
   const [copied, setCopied] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string }>>([]);
+  const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string; groupName?: string }>>([]);
+  const [activeRequestAction, setActiveRequestAction] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [autoProcessing, setAutoProcessing] = useState(false);
+  const [fallbackAccessCode, setFallbackAccessCode] = useState<string | null>(null);
+  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
   const [toast, setToast] = useState<{ isVisible: boolean; message: string; type: 'success' | 'error' }>({
     isVisible: false,
     message: '',
@@ -42,9 +47,40 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
 
   const orgCode = orgContext.code;
   const orgId = orgContext.id;
-  const accessCode = orgCode || '—';
+  const accessCode = orgCode || fallbackAccessCode || '—';
   const auth = getFirebaseAuth();
   const userId = auth.currentUser?.uid || null;
+  const normalizedTier = (planTier || '').toLowerCase();
+  const canUseKiosk = !isSubAdminPortal && (normalizedTier === 'nebula' || normalizedTier === 'cosmos');
+  const canUseAutoLog = normalizedTier === 'nebula' || normalizedTier === 'cosmos';
+
+  useEffect(() => {
+    if (orgCode || !userId) return;
+    const db = getFirestoreDb();
+    const loadFallbackCode = async () => {
+      try {
+        const userRef = doc(db, 'users', userId);
+        const snap = await getDoc(userRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        const candidate = data.accessCode || data.access_code || data.org_access_code || null;
+        if (candidate) setFallbackAccessCode(String(candidate).trim().toUpperCase());
+      } catch (error) {
+        console.warn('Unable to load fallback access code', error);
+      }
+    };
+    loadFallbackCode();
+  }, [orgCode, userId]);
+
+  useEffect(() => {
+    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
+    window.addEventListener('nexolink:subadmin-session', syncScope);
+    window.addEventListener('storage', syncScope);
+    return () => {
+      window.removeEventListener('nexolink:subadmin-session', syncScope);
+      window.removeEventListener('storage', syncScope);
+    };
+  }, []);
 
   useEffect(() => {
     if (!orgCode && !orgId) return;
@@ -56,7 +92,7 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
       orgId,
       filters: [['status', '==', 'pending']],
       onData: (rows) => {
-        const pending: Array<{ id: string; name: string; role: string; time: string }> = [];
+        const pending: Array<{ id: string; name: string; role: string; time: string; groupName?: string }> = [];
         rows.forEach((row) => {
           const data = row.data as any || {};
           const createdAt = data.created_at || data.createdAt || null;
@@ -74,8 +110,15 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
           pending.push({
             id: row.id,
             name: data.user_name || data.userName || data.user_email || 'Volunteer',
-            role: data.requested_role || data.role || data.requestedRole || 'Event Helper',
+            role: 'Volunteer',
             time: `${minutesAgo}m ago`,
+            groupName: String(
+              data.target_group_name
+              || data.targetGroupName
+              || data.sub_admin_group_name
+              || data.subAdminGroupName
+              || 'Super Admin'
+            ),
           });
         });
         pending.sort((a, b) => (a.time > b.time ? -1 : 1));
@@ -84,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
     });
 
     return () => unsubscribe();
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, subAdminScopeKey]);
 
   // Initial fetch for Auto-Processing state
   useEffect(() => {
@@ -128,6 +171,11 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
     
     try {
       setAutoProcessing(newState);
+      setToast({
+        isVisible: true,
+        message: newState ? 'Activating auto log processing...' : 'Deactivating auto log processing...',
+        type: 'success',
+      });
       
       const collections = ['volunteer_organizations', 'organizations', 'orgs'];
       let updated = false;
@@ -177,6 +225,42 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
   };
 
   const closeDropdowns = () => setActiveDropdown(null);
+
+  const handleJoinRequestAction = async (requestId: string, action: 'accept' | 'deny') => {
+    setActiveRequestAction(requestId);
+    try {
+      if (action === 'accept') {
+        const functions = getFirebaseFunctions();
+        const acceptJoin = httpsCallable(functions, 'acceptJoinRequest');
+        await acceptJoin({ requestId });
+      } else {
+        const db = getFirestoreDb();
+        const admin = getFirebaseAuth().currentUser;
+        const requestRef = doc(db, 'organization_join_requests', requestId);
+        await updateDoc(requestRef, {
+          status: 'declined',
+          handled_at: serverTimestamp(),
+          handled_by: admin?.uid || null,
+          handled_by_email: admin?.email || null,
+        });
+      }
+      setRequests((prev) => prev.filter((req) => req.id !== requestId));
+      setToast({
+        isVisible: true,
+        message: action === 'accept' ? 'Volunteer request accepted.' : 'Volunteer request declined.',
+        type: 'success',
+      });
+    } catch (error) {
+      console.error('Join request action failed', error);
+      setToast({
+        isVisible: true,
+        message: action === 'accept' ? 'Unable to accept request.' : 'Unable to decline request.',
+        type: 'error',
+      });
+    } finally {
+      setActiveRequestAction(null);
+    }
+  };
 
   const dropdownVariants = {
     hidden: { opacity: 0, y: 10, scale: 0.95, filter: 'blur(10px)' },
@@ -273,7 +357,7 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
 
       <div className="max-w-2xl">
         <h1 className="text-5xl md:text-[3.5rem] leading-[1.1] font-medium tracking-tight text-gray-900">
-          Volunteer
+          Admin
           <span className="inline-flex items-center justify-center w-12 h-12 mx-3 bg-lime-300 rounded-2xl align-middle shadow-sm">
             <Sparkles className="w-6 h-6 text-gray-900" strokeWidth={1.5} />
           </span>
@@ -299,27 +383,29 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
           )}
         </button>
 
-        {/* Kiosk Button */}
-        <button 
-          onClick={() => setIsKioskOpen(true)}
-          className="w-12 h-12 bg-white rounded-full flex items-center justify-center hover:bg-gray-50 transition-all shadow-sm border border-gray-100 group"
-          aria-label="Kiosk"
-        >
-          <Monitor className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
-        </button>
+        {canUseKiosk && (
+          <button 
+            onClick={() => setIsKioskOpen(true)}
+            className="w-12 h-12 bg-white rounded-full flex items-center justify-center hover:bg-gray-50 transition-all shadow-sm border border-gray-100 group"
+            aria-label="Kiosk"
+          >
+            <Monitor className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
+          </button>
+        )}
 
-        {/* AI Toggle Button */}
-        <button 
-          onClick={toggleAutoProcessing}
-          className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm border group
-            ${autoProcessing 
-              ? 'bg-lime-300 border-lime-400 shadow-[0_0_20px_rgba(190,242,100,0.3)]' 
-              : 'bg-white border-gray-100 hover:bg-gray-50'
-            }`}
-          title={autoProcessing ? "Auto-Log Processing Active" : "Activate Auto-Log Processing"}
-        >
-          <Sparkles className={`w-5 h-5 transition-colors ${autoProcessing ? 'text-gray-900' : 'text-gray-400 group-hover:text-gray-900'}`} />
-        </button>
+        {canUseAutoLog && (
+          <button 
+            onClick={toggleAutoProcessing}
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm border group
+              ${autoProcessing 
+                ? 'bg-lime-300 border-lime-400 shadow-[0_0_20px_rgba(190,242,100,0.3)]' 
+                : 'bg-white border-gray-100 hover:bg-gray-50'
+              }`}
+            title={autoProcessing ? "Auto-Log Processing Active" : "Activate Auto-Log Processing"}
+          >
+            <Sparkles className={`w-5 h-5 transition-colors ${autoProcessing ? 'text-gray-900' : 'text-gray-400 group-hover:text-gray-900'}`} />
+          </button>
+        )}
 
 
         {/* QR Code Button & Dropdown */}
@@ -412,12 +498,22 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
                                         <h4 className="text-sm font-bold text-gray-900">{req.name}</h4>
                                         <span className="text-[10px] text-gray-400 font-medium">{req.time}</span>
                                     </div>
-                                    <p className="text-xs text-gray-500 mb-2 truncate">Requests to join as {req.role}</p>
+                                    <p className="text-xs text-gray-500 mb-2 truncate">
+                                      Wants to join as a Volunteer {req.groupName ? `· ${req.groupName}` : ''}
+                                    </p>
                                     <div className="flex gap-2">
-                                        <button className="flex-1 bg-lime-300 hover:bg-lime-400 text-gray-900 text-xs font-semibold py-1.5 rounded-lg flex items-center justify-center gap-1 transition-colors">
+                                        <button
+                                          onClick={() => handleJoinRequestAction(req.id, 'accept')}
+                                          disabled={activeRequestAction === req.id}
+                                          className="flex-1 bg-lime-300 hover:bg-lime-400 disabled:opacity-60 disabled:cursor-not-allowed text-gray-900 text-xs font-semibold py-1.5 rounded-lg flex items-center justify-center gap-1 transition-colors"
+                                        >
                                             <Check className="w-3 h-3" /> Accept
                                         </button>
-                                        <button className="px-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-500 rounded-lg flex items-center justify-center transition-colors">
+                                        <button
+                                          onClick={() => handleJoinRequestAction(req.id, 'deny')}
+                                          disabled={activeRequestAction === req.id}
+                                          className="px-3 bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed text-gray-500 rounded-lg flex items-center justify-center transition-colors"
+                                        >
                                             <X className="w-3 h-3" />
                                         </button>
                                     </div>
@@ -506,8 +602,6 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
 
       </div>
 
-      <KioskModal isOpen={isKioskOpen} onClose={() => setIsKioskOpen(false)} orgContext={orgContext} />
-      
       <Toast 
         isVisible={toast.isVisible}
         message={toast.message}

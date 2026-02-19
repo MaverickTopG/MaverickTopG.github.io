@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Calendar, Clock } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   doc,
+  getDoc,
+  onSnapshot,
   serverTimestamp,
-  setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { getActiveSubAdminSession, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 
 interface Request {
   id: string;
@@ -31,6 +32,87 @@ export const VolunteerRequestsPage: React.FC = () => {
   const [orgName, setOrgName] = useState('');
   const [loading, setLoading] = useState(true);
   const [userMap, setUserMap] = useState<Record<string, { name: string; role: string }>>({});
+  const [userId, setUserId] = useState('');
+  const [autoProcessingEnabled, setAutoProcessingEnabled] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
+  const autoProcessingIdsRef = useRef<Set<string>>(new Set());
+  const maxAutoApproveHours = 12;
+  const historyWindowMs = 35 * 24 * 60 * 60 * 1000;
+
+  const resolveLogUserId = (log: Record<string, unknown>) => {
+    return String(log.user_id || log.volunteer_id || log.userId || log.volunteerId || '').trim();
+  };
+
+  const resolveLogHours = (log: Record<string, unknown>) => {
+    return Number((log as { hours_contributed?: unknown; hours?: unknown }).hours_contributed ?? (log as { hours?: unknown }).hours ?? 0);
+  };
+
+  const resolveLogDateValue = (log: Record<string, unknown>) => {
+    return (
+      (log as { date?: unknown }).date
+      || (log as { created_at?: unknown }).created_at
+      || (log as { createdAt?: unknown }).createdAt
+    );
+  };
+
+  const isQuestionableLog = (log: Record<string, unknown>, historyByUser?: Map<string, number[]>) => {
+    const hours = resolveLogHours(log);
+    if (!Number.isFinite(hours) || hours <= 0) return true;
+    if (hours > maxAutoApproveHours) return true;
+
+    const flagKeys = [
+      'flagged',
+      'questionable',
+      'needs_review',
+      'requires_review',
+      'review_required',
+      'manual_review',
+      'review_status',
+      'approval_status',
+      'approvalStatus',
+    ];
+    const flagged = flagKeys.some((key) => {
+      const value = (log as Record<string, unknown>)[key];
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        const normalized = value.toLowerCase();
+        return normalized.includes('flag') || normalized.includes('review') || normalized.includes('question');
+      }
+      return false;
+    });
+    if (flagged) return true;
+
+    const dateMs = resolveTimestampMillis(resolveLogDateValue(log));
+    if (dateMs > Date.now() + 24 * 60 * 60 * 1000) return true;
+
+    const userId = resolveLogUserId(log);
+    if (userId && historyByUser && historyByUser.has(userId)) {
+      const history = historyByUser.get(userId) || [];
+      if (history.length >= 3) {
+        const avg = history.reduce((sum, value) => sum + value, 0) / history.length;
+        if (avg > 0 && avg <= 2.5 && hours >= avg * 3) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
+
+  const shouldAutoApproveLog = (log: Record<string, unknown>, historyByUser?: Map<string, number[]>) =>
+    !isQuestionableLog(log, historyByUser);
+
+  const autoApproveLog = async (logId: string) => {
+    const db = getFirestoreDb();
+    const logRef = doc(db, 'volunteer_logs', logId);
+    await updateDoc(logRef, {
+      approve: 'approved',
+      status: 'approved',
+      approved_at: serverTimestamp(),
+      auto_approved: true,
+    });
+  };
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -38,17 +120,82 @@ export const VolunteerRequestsPage: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setOrgCode('');
+        setUserId('');
         setRequests([]);
         setLoading(false);
         return;
       }
-      const context = await resolveOrgContext(db, user.uid);
+      setUserId(user.uid);
+      const context = await resolveOrgContext(db, user.uid, user.email || null);
       setOrgCode(context.orgCode || '');
       setOrgId(context.orgId || '');
       setOrgName(context.orgName || '');
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
+    window.addEventListener('nexolink:subadmin-session', syncScope);
+    window.addEventListener('storage', syncScope);
+    return () => {
+      window.removeEventListener('nexolink:subadmin-session', syncScope);
+      window.removeEventListener('storage', syncScope);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!orgId && !userId) return;
+    const db = getFirestoreDb();
+    let unsubscribe: (() => void) | null = null;
+    let active = true;
+
+    const attachListener = (ref: ReturnType<typeof doc>) => {
+      unsubscribe = onSnapshot(ref, (snap) => {
+        if (!active) return;
+        const data = snap.data() || {};
+        setAutoProcessingEnabled(!!(data as { auto_process_logs?: boolean }).auto_process_logs);
+      });
+    };
+
+    const resolveAutoProcessing = async () => {
+      try {
+        const collections = ['volunteer_organizations', 'organizations', 'orgs'];
+        if (orgId) {
+          for (const coll of collections) {
+            const ref = doc(db, coll, orgId);
+            const snap = await getDoc(ref);
+            if (snap.exists()) {
+              if (!active) return;
+              const data = snap.data() || {};
+              setAutoProcessingEnabled(!!(data as { auto_process_logs?: boolean }).auto_process_logs);
+              attachListener(ref);
+              return;
+            }
+          }
+        }
+        if (userId) {
+          const userRef = doc(db, 'users', userId);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            if (!active) return;
+            const data = userSnap.data() || {};
+            setAutoProcessingEnabled(!!(data as { auto_process_logs?: boolean }).auto_process_logs);
+            attachListener(userRef);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve auto-processing settings', err);
+      }
+    };
+
+    resolveAutoProcessing();
+
+    return () => {
+      active = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [orgId, userId]);
 
   useEffect(() => {
     if (!orgCode && !orgId) return;
@@ -79,11 +226,42 @@ export const VolunteerRequestsPage: React.FC = () => {
       orgCode,
       orgId,
       onData: (rows) => {
+        const historyByUser = new Map<string, number[]>();
+        const now = Date.now();
+        rows.forEach((row) => {
+          const log = row.data || {};
+          const status = resolveLogStatus(log);
+          if (status !== 'approved') return;
+          const userId = resolveLogUserId(log);
+          if (!userId) return;
+          const hours = resolveLogHours(log);
+          if (!Number.isFinite(hours) || hours <= 0) return;
+          const dateMs = resolveTimestampMillis(resolveLogDateValue(log));
+          if (!dateMs || now - dateMs > historyWindowMs) return;
+          const list = historyByUser.get(userId) || [];
+          list.push(hours);
+          historyByUser.set(userId, list);
+        });
+
         const pending: Request[] = [];
         rows.forEach((row) => {
           const log = row.data || {};
           const status = resolveLogStatus(log);
           if (status !== 'pending') return;
+          if (autoProcessingEnabled && shouldAutoApproveLog(log, historyByUser)) {
+            const logId = row.id;
+            if (!autoProcessingIdsRef.current.has(logId)) {
+              autoProcessingIdsRef.current.add(logId);
+              autoApproveLog(logId)
+                .catch((err) => {
+                  console.error('Auto-approve failed', err);
+                })
+                .finally(() => {
+                  autoProcessingIdsRef.current.delete(logId);
+                });
+            }
+            return;
+          }
           const hours = Number(log.hours_contributed ?? log.hours ?? 0);
           const dateLabel = formatDateLabel(log.date);
           const nameFallback = (log.volunteer_name || log.name || '').toString().trim();
@@ -129,14 +307,13 @@ export const VolunteerRequestsPage: React.FC = () => {
           const createdAt = data.created_at || data.createdAt || data.requested_at || data.requestedAt || null;
           const createdAtMs = resolveTimestampMillis(createdAt);
           const name = String(data.user_name || data.userName || data.user_email || 'Volunteer').trim();
-          const role = String(data.requested_role || data.role || data.requestedRole || 'Volunteer');
           pending.push({
             id: row.id,
             type: 'join',
             userId: (data.user_id || data.userId || '').toString(),
             name,
-            role,
-            task: 'Join request',
+            role: 'Volunteer',
+            task: 'Wants to join as a Volunteer',
             hours: 0,
             date: createdAt ? formatDateLabel(createdAt) : '—',
             description: String(data.message || data.note || '').trim(),
@@ -153,53 +330,18 @@ export const VolunteerRequestsPage: React.FC = () => {
       unsubLogs();
       unsubJoinRequests();
     };
-  }, [orgCode, orgId, userMap]);
+  }, [orgCode, orgId, userMap, autoProcessingEnabled, subAdminScopeKey]);
 
   const handleAction = async (id: string, action: 'accept' | 'deny', type: Request['type']) => {
     const db = getFirestoreDb();
-    if (type === 'hours') {
-      const logRef = doc(db, 'volunteer_logs', id);
-      await updateDoc(logRef, {
-        approve: action === 'accept' ? 'approved' : 'denied',
-        status: action === 'accept' ? 'approved' : 'denied',
-        approved_at: serverTimestamp(),
-      });
-      return;
-    }
-
-    const auth = getFirebaseAuth();
-    const admin = auth.currentUser;
-    const requestRef = doc(db, 'organization_join_requests', id);
-    const updatePayload: Record<string, unknown> = {
-      status: action === 'accept' ? 'accepted' : 'declined',
-      handled_at: serverTimestamp(),
-      handled_by: admin?.uid || null,
-      handled_by_email: admin?.email || null,
-    };
-
-    if (action === 'accept') {
-      const target = requests.find((req) => req.id === id);
-      if (target?.userId) {
-        const userRef = doc(db, 'users', target.userId);
-        const timestamp = serverTimestamp();
-        await setDoc(
-          userRef,
-          {
-            organizationCode: orgCode || null,
-            accessCode: orgCode || null,
-            organization_id: orgId || null,
-            organizationName: orgName || null,
-            role: 'volunteer',
-            status: 'active',
-            organizationJoinedAt: timestamp,
-            updatedAt: timestamp,
-          },
-          { merge: true },
-        );
-      }
-    }
-
-    await updateDoc(requestRef, updatePayload);
+    setActionError(null);
+    if (type !== 'hours') return;
+    const logRef = doc(db, 'volunteer_logs', id);
+    await updateDoc(logRef, {
+      approve: action === 'accept' ? 'approved' : 'denied',
+      status: action === 'accept' ? 'approved' : 'denied',
+      approved_at: serverTimestamp(),
+    });
   };
 
   const container = {
@@ -222,6 +364,11 @@ export const VolunteerRequestsPage: React.FC = () => {
       animate="show"
       className="w-full flex flex-col gap-8 mt-8 pb-10"
     >
+      {actionError && (
+        <div className="bg-yellow-50 border border-yellow-100 text-yellow-800 px-4 py-3 rounded-2xl text-sm font-medium">
+          {actionError}
+        </div>
+      )}
       
       {/* List */}
       <div className="flex flex-col gap-4">
@@ -269,31 +416,43 @@ export const VolunteerRequestsPage: React.FC = () => {
                              </div>
                         </div>
 
-                        {/* Hours */}
+                        {/* Hours / Join Badge */}
                         <div className="flex flex-col items-end px-4">
+                          {req.type === 'hours' ? (
                             <div className="flex items-baseline gap-1">
-                                <span className="text-4xl font-bold text-gray-900 tracking-tight">{req.hours}</span>
-                                <span className="text-sm font-bold text-gray-400">hrs</span>
+                              <span className="text-4xl font-bold text-gray-900 tracking-tight">{req.hours}</span>
+                              <span className="text-sm font-bold text-gray-400">hrs</span>
                             </div>
+                          ) : (
+                            <span className="text-[11px] font-bold uppercase tracking-[0.18em] px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">
+                              Join Request
+                            </span>
+                          )}
                         </div>
 
                         {/* Actions */}
-                        <div className="flex items-center gap-3 w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
-                             <button 
-                                onClick={() => handleAction(req.id, 'accept', req.type)}
-                                className="flex-1 md:flex-none h-12 px-6 bg-lime-300 hover:bg-lime-400 text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-lime-300/20 hover:-translate-y-0.5"
-                             >
-                                <Check className="w-5 h-5" />
-                                <span className="md:hidden lg:inline">Approve</span>
-                             </button>
-                             <button 
-                                onClick={() => handleAction(req.id, 'deny', req.type)}
-                                className="flex-1 md:flex-none h-12 px-4 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-100 hover:text-red-600 text-gray-500 rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
-                             >
-                                <X className="w-5 h-5" />
-                                <span className="md:hidden lg:inline">Deny</span>
-                             </button>
-                        </div>
+                        {req.type === 'hours' ? (
+                          <div className="flex items-center gap-3 w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
+                               <button 
+                                  onClick={() => handleAction(req.id, 'accept', req.type)}
+                                  className="flex-1 md:flex-none h-12 px-6 bg-lime-300 hover:bg-lime-400 text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-lime-300/20 hover:-translate-y-0.5"
+                               >
+                                  <Check className="w-5 h-5" />
+                                  <span className="md:hidden lg:inline">Approve</span>
+                               </button>
+                               <button 
+                                  onClick={() => handleAction(req.id, 'deny', req.type)}
+                                  className="flex-1 md:flex-none h-12 px-4 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-100 hover:text-red-600 text-gray-500 rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
+                               >
+                                  <X className="w-5 h-5" />
+                                  <span className="md:hidden lg:inline">Deny</span>
+                               </button>
+                          </div>
+                        ) : (
+                          <div className="w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
+                            <p className="text-xs font-semibold text-gray-500">Review in Notifications to accept or decline.</p>
+                          </div>
+                        )}
 
                     </motion.div>
                 ))

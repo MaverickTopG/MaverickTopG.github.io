@@ -6,7 +6,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import crypto from 'crypto';
 import Stripe from 'stripe';
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp, FieldPath } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, FieldPath, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
 const STRIPE_SECRET_KEY = defineSecret('STRIPE_SECRET_KEY');
@@ -23,9 +23,60 @@ const DEFAULT_PRICE_SCHOOL = 'price_1SXZMfH9sPZuClpwNAJK5Uj2';
 const DEFAULT_PRODUCT_MONTHLY = 'prod_TBnmDFIOr3zqnj';
 const DEFAULT_PRODUCT_YEARLY = 'prod_TBnmbia7RuTkkK';
 const DEFAULT_PRODUCT_SCHOOL = 'prod_TUYT6k3Xq3JUOJ';
-const DEFAULT_STRIPE_SECRET_KEY = 'REDACTED_STRIPE_LIVE_SECRET_KEY';
+const DEFAULT_ORBIT_PRICE_ORG_MONTHLY = 'price_1T0r32H9sPZuClpwTCH9zACb';
+const DEFAULT_ORBIT_PRICE_ORG_YEARLY = 'price_1T0r32H9sPZuClpw5S5tHVLf';
+const DEFAULT_ORBIT_PRICE_SCHOOL_MONTHLY = 'price_1T0r32H9sPZuClpwyIXrwxgo';
+const DEFAULT_ORBIT_PRICE_SCHOOL_YEARLY = 'price_1T0r32H9sPZuClpwp0wrydOg';
+const DEFAULT_NEBULA_PRICE_ORG_MONTHLY = 'price_1T0r31H9sPZuClpwgnehfez9';
+const DEFAULT_NEBULA_PRICE_ORG_YEARLY = 'price_1T0r31H9sPZuClpwfGyHaVcq';
+const DEFAULT_NEBULA_PRICE_SCHOOL_MONTHLY = 'price_1T0r31H9sPZuClpwNIUeJa7l';
+const DEFAULT_NEBULA_PRICE_SCHOOL_YEARLY = 'price_1T0r31H9sPZuClpw2ZnG20bj';
+const DEFAULT_COSMOS_PRICE_ORG_MONTHLY = 'price_1T0r2wH9sPZuClpwNW8Gkjey';
+const DEFAULT_COSMOS_PRICE_ORG_YEARLY = 'price_1T0r2wH9sPZuClpwLujOCPZK';
+const DEFAULT_COSMOS_PRICE_SCHOOL_MONTHLY = 'price_1T0r2wH9sPZuClpwNW8Gkjey';
+const DEFAULT_COSMOS_PRICE_SCHOOL_YEARLY = 'price_1T0r2wH9sPZuClpwE0KCMSrA';
+const DEFAULT_ORBIT_PRODUCT_ID = 'prod_TyogJG8NIqQ3j8';
+const DEFAULT_NEBULA_PRODUCT_ID = 'prod_TyogtonGwwzA0f';
+const DEFAULT_COSMOS_PRODUCT_ID = 'prod_Tyoga1QHoEUYSI';
+const DEFAULT_STRIPE_SECRET_KEY = '';
 const DEFAULT_QR_TTL_SECONDS = 3153600000; // 100 years
+const DEFAULT_SUBADMIN_PASSWORD_PEPPER = 'nexolink-subadmin-pepper';
+const SUBADMIN_PASSWORD_MIN_LENGTH = 6;
+const SUPER_ADMIN_GROUP_KEY = 'super-admin';
+const GROUP_SCOPE_FIELDS = ['target_group_id', 'targetGroupId', 'sub_admin_group_id', 'subAdminGroupId', 'groupId', 'group_id'];
 const DEMO_ACCOUNT_EMAILS = new Set(['x@gmail.com']);
+const AUTO_APPROVE_MAX_HOURS = 12;
+const AUTO_APPROVE_HISTORY_WINDOW_MS = 35 * 24 * 60 * 60 * 1000;
+const DEFAULT_PLAN_TIER = 'orbit';
+const SUPER_ADMIN_REAUTH_MAX_AGE_SECONDS = 5 * 60;
+const PLAN_TIERS = new Set(['orbit', 'nebula', 'cosmos']);
+const SUBADMIN_PASSWORD_INDEX_COLLECTION = 'sub_admin_password_index';
+const PLAN_LIMITS = {
+  orbit: {
+    aiPromptsPerDay: 0,
+    messaging: false,
+    kiosk: false,
+    events: false,
+    autoLogReview: false,
+    volunteerLimit: 50,
+  },
+  nebula: {
+    aiPromptsPerDay: 50,
+    messaging: true,
+    kiosk: true,
+    events: true,
+    autoLogReview: true,
+    volunteerLimit: 500,
+  },
+  cosmos: {
+    aiPromptsPerDay: null,
+    messaging: true,
+    kiosk: true,
+    events: true,
+    autoLogReview: true,
+    volunteerLimit: null,
+  },
+};
 
 initializeApp();
 const db = getFirestore();
@@ -203,6 +254,478 @@ function isSubscriptionActive(subscription, legacyPaid = false) {
   }
 }
 
+function normalizePlanTier(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return PLAN_TIERS.has(normalized) ? normalized : DEFAULT_PLAN_TIER;
+}
+
+function resolvePlanTierFromSubscriptionPayload(payload = {}) {
+  const priceId = payload.plan
+    || payload.planId
+    || payload.plan_id
+    || payload.items?.[0]?.price?.id
+    || payload.items?.data?.[0]?.price?.id
+    || null;
+  if (priceId) {
+    const priceTier = resolvePlanTierFromPriceId(priceId);
+    if (priceTier) return priceTier;
+  }
+
+  const key = String(
+    payload.planKey
+    || payload.plan_key
+    || payload.planNickname
+    || ''
+  ).toLowerCase();
+  if (key.includes('orbit') || key.includes('basic')) return 'orbit';
+  if (key.includes('cosmos') || key.includes('enterprise')) return 'cosmos';
+  if (key.includes('nebula') || key.includes('pro')) return 'nebula';
+  return DEFAULT_PLAN_TIER;
+}
+
+function resolvePlanTierFromPriceId(priceId) {
+  if (!priceId) return null;
+  const map = {
+    orbit: [
+      process.env.ORBIT_PRICE_ORG_MONTHLY,
+      process.env.ORBIT_PRICE_ORG_YEARLY,
+      process.env.ORBIT_PRICE_SCHOOL_MONTHLY,
+      process.env.ORBIT_PRICE_SCHOOL_YEARLY,
+    ],
+    nebula: [
+      process.env.NEBULA_PRICE_ORG_MONTHLY,
+      process.env.NEBULA_PRICE_ORG_YEARLY,
+      process.env.NEBULA_PRICE_SCHOOL_MONTHLY,
+      process.env.NEBULA_PRICE_SCHOOL_YEARLY,
+    ],
+    cosmos: [
+      process.env.COSMOS_PRICE_ORG_MONTHLY,
+      process.env.COSMOS_PRICE_ORG_YEARLY,
+      process.env.COSMOS_PRICE_SCHOOL_MONTHLY,
+      process.env.COSMOS_PRICE_SCHOOL_YEARLY,
+    ],
+  };
+  if (map.orbit.includes(priceId)) return 'orbit';
+  if (map.nebula.includes(priceId)) return 'nebula';
+  if (map.cosmos.includes(priceId)) return 'cosmos';
+  return null;
+}
+
+function getPlanLimits(planTier) {
+  const tier = normalizePlanTier(planTier);
+  return PLAN_LIMITS[tier] || PLAN_LIMITS[DEFAULT_PLAN_TIER];
+}
+
+async function resolveOrgDocById(orgId) {
+  if (!orgId) return null;
+  const collections = ['organizations', 'orgs', 'volunteer_organizations'];
+  for (const coll of collections) {
+    const snap = await db.collection(coll).doc(orgId).get();
+    if (snap.exists) {
+      return snap;
+    }
+  }
+  return null;
+}
+
+async function resolveOrgDocByCode(orgCode) {
+  if (!orgCode) return null;
+  const collections = ['organizations', 'orgs', 'volunteer_organizations'];
+  const fields = ['access_code', 'accessCode', 'orgCode', 'org_code', 'organizationCode', 'organization_code'];
+  for (const coll of collections) {
+    for (const field of fields) {
+      const snap = await db.collection(coll).where(field, '==', orgCode).limit(1).get();
+      if (!snap.empty) {
+        return snap.docs[0];
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveOrgContextForUser(uid) {
+  if (!uid) return { orgId: null, orgCode: null };
+  try {
+    const userSnap = await db.collection('users').doc(uid).get();
+    if (userSnap.exists) {
+      const data = userSnap.data() || {};
+      const orgId =
+        data.organizationId
+        || data.organization_id
+        || data.orgId
+        || data.org_id
+        || data.linked_org_id
+        || data.linkedOrgId
+        || null;
+      const orgCode =
+        data.accessCode
+        || data.access_code
+        || data.orgCode
+        || data.org_code
+        || data.organizationCode
+        || data.organization_code
+        || null;
+      if (orgId || orgCode) return { orgId, orgCode };
+    }
+  } catch (error) {
+    logger.warn('Unable to resolve org from user profile', error);
+  }
+
+  try {
+    const userOrgSnap = await db.collection('user_organizations').doc(uid).get();
+    if (userOrgSnap.exists) {
+      const data = userOrgSnap.data() || {};
+      const orgId =
+        data.organizationId
+        || data.organization_id
+        || data.orgId
+        || data.org_id
+        || data.linked_org_id
+        || data.linkedOrgId
+        || null;
+      const orgCode =
+        data.accessCode
+        || data.access_code
+        || data.orgCode
+        || data.org_code
+        || data.organizationCode
+        || data.organization_code
+        || null;
+      if (orgId || orgCode) return { orgId, orgCode };
+    }
+  } catch (error) {
+    logger.warn('Unable to resolve org from user_organizations', error);
+  }
+
+  const query = await db
+    .collection('user_organizations')
+    .where('user_id', '==', uid)
+    .limit(1)
+    .get();
+  if (!query.empty) {
+    const data = query.docs[0].data() || {};
+    return {
+      orgId:
+        data.organizationId
+        || data.organization_id
+        || data.orgId
+        || data.org_id
+        || data.linked_org_id
+        || data.linkedOrgId
+        || null,
+      orgCode:
+        data.accessCode
+        || data.access_code
+        || data.orgCode
+        || data.org_code
+        || data.organizationCode
+        || data.organization_code
+        || null,
+    };
+  }
+
+  return { orgId: null, orgCode: null };
+}
+
+async function collectOrgUserIdsByField(field, value) {
+  const snap = await db.collection('users').where(field, '==', value).get();
+  const ids = new Set();
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const archived = Boolean(data.archived === true || data.status === 'archived');
+    if (!archived) {
+      ids.add(docSnap.id);
+    }
+  });
+  return ids;
+}
+
+async function collectOrgUserIdsFromUserOrganizations(field, value) {
+  const snap = await db.collection('user_organizations').where(field, '==', value).get();
+  const ids = new Set();
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const uid = data.user_id || data.userId || data.uid || docSnap.id;
+    const archived = Boolean(data.archived === true || data.status === 'archived');
+    if (uid && !archived) {
+      ids.add(String(uid));
+    }
+  });
+  return ids;
+}
+
+async function countOrganizationMembers({ orgId, orgCode }) {
+  const ids = new Set();
+  if (orgId) {
+    const orgFields = ['organizationId', 'organization_id', 'orgId', 'org_id', 'linked_org_id', 'linkedOrgId'];
+    const orgQueries = await Promise.all(orgFields.map((field) => collectOrgUserIdsByField(field, orgId)));
+    orgQueries.forEach((set) => set.forEach((id) => ids.add(id)));
+
+    const orgUserQueries = await Promise.all(orgFields.map((field) => collectOrgUserIdsFromUserOrganizations(field, orgId)));
+    orgUserQueries.forEach((set) => set.forEach((id) => ids.add(id)));
+  }
+
+  if (orgCode) {
+    const codeFields = ['organizationCode', 'organization_code', 'accessCode', 'access_code', 'orgCode', 'org_code'];
+    const codeQueries = await Promise.all(codeFields.map((field) => collectOrgUserIdsByField(field, orgCode)));
+    codeQueries.forEach((set) => set.forEach((id) => ids.add(id)));
+
+    const codeUserQueries = await Promise.all(codeFields.map((field) => collectOrgUserIdsFromUserOrganizations(field, orgCode)));
+    codeUserQueries.forEach((set) => set.forEach((id) => ids.add(id)));
+  }
+
+  return ids.size;
+}
+
+async function resolveOrgPlanTier({ orgId, orgCode, userId } = {}) {
+  if (orgId) {
+    const snap = await resolveOrgDocById(orgId);
+    if (snap?.exists) {
+      const data = snap.data() || {};
+      return normalizePlanTier(data.plan_tier || data.planTier || data.plan || data.planKey || data.plan_key);
+    }
+  }
+
+  if (orgCode) {
+    const snap = await resolveOrgDocByCode(orgCode);
+    if (snap?.exists) {
+      const data = snap.data() || {};
+      return normalizePlanTier(data.plan_tier || data.planTier || data.plan || data.planKey || data.plan_key);
+    }
+  }
+
+  if (userId) {
+    try {
+      const userSnap = await db.collection('users').doc(userId).get();
+      if (userSnap.exists) {
+        const data = userSnap.data() || {};
+        return normalizePlanTier(data.plan_tier || data.planTier || data.plan || data.planKey || data.plan_key);
+      }
+    } catch (error) {
+      logger.warn('Unable to resolve plan tier from user', error);
+    }
+  }
+
+  return DEFAULT_PLAN_TIER;
+}
+
+function resolveEffectivePlanTierFromOrgData(data = {}) {
+  const pendingTier = normalizePlanTier(data.pending_plan_tier || data.pendingPlanTier || data.pending_plan || data.pendingPlan);
+  const pendingAtRaw = data.pending_plan_effective_at || data.pendingPlanEffectiveAt || null;
+  const pendingAt = resolveTimestampMillis(pendingAtRaw);
+  if (pendingTier && pendingAt && pendingAt <= Date.now()) {
+    return pendingTier;
+  }
+  const current = normalizePlanTier(data.plan_tier || data.planTier || data.plan || data.planKey || data.plan_key);
+  return current;
+}
+
+async function resolveEffectivePlanTier({ orgId, orgCode, userId } = {}) {
+  if (orgId) {
+    const snap = await resolveOrgDocById(orgId);
+    if (snap?.exists) {
+      return resolveEffectivePlanTierFromOrgData(snap.data() || {});
+    }
+  }
+  if (orgCode) {
+    const snap = await resolveOrgDocByCode(orgCode);
+    if (snap?.exists) {
+      return resolveEffectivePlanTierFromOrgData(snap.data() || {});
+    }
+  }
+  if (userId) {
+    const userSnap = await db.collection('users').doc(userId).get();
+    if (userSnap.exists) {
+      return resolveEffectivePlanTierFromOrgData(userSnap.data() || {});
+    }
+  }
+  return DEFAULT_PLAN_TIER;
+}
+
+function resolveLogUserId(log) {
+  return String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || log.uid || '').trim();
+}
+
+function resolveLogHours(log) {
+  const raw = log.hours_contributed ?? log.hours ?? log.totalHours ?? log.total_hours;
+  const hours = Number(raw ?? 0);
+  return Number.isFinite(hours) ? hours : 0;
+}
+
+function resolveLogDateValue(log) {
+  return log.date || log.createdAt || log.created_at || log.createdAtMs || log.created_at_ms;
+}
+
+function resolveTimestampMillis(value) {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value < 1e12 ? value * 1000 : value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.seconds === 'number') return value.seconds * 1000;
+  return 0;
+}
+
+function resolveLogStatus(log) {
+  const raw = (log.status || log.approve || log.approval_status || log.approvalStatus || '').toString().toLowerCase();
+  if (raw.includes('approve')) return 'approved';
+  if (raw.includes('reject') || raw.includes('decline')) return 'rejected';
+  if (raw.includes('pending')) return 'pending';
+  return raw || 'pending';
+}
+
+function resolveLogOrg(log) {
+  const orgId = String(
+    log.orgId
+    || log.org_id
+    || log.organizationId
+    || log.linked_org_id
+    || log.linkedOrgId
+    || '',
+  ).trim();
+  const orgCode = String(
+    log.orgCode
+    || log.org_code
+    || log.organizationCode
+    || log.organization_id
+    || log.organization_code
+    || '',
+  ).trim();
+  return { orgId, orgCode };
+}
+
+function isQuestionableLog(log, historyByUser = new Map()) {
+  const hours = resolveLogHours(log);
+  if (!Number.isFinite(hours) || hours <= 0) return true;
+  if (hours > AUTO_APPROVE_MAX_HOURS) return true;
+
+  const flagKeys = [
+    'flagged',
+    'questionable',
+    'needs_review',
+    'requires_review',
+    'review_required',
+    'manual_review',
+    'review_status',
+    'approval_status',
+    'approvalStatus',
+  ];
+  const flagged = flagKeys.some((key) => {
+    const value = log[key];
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      return normalized.includes('flag') || normalized.includes('review') || normalized.includes('question');
+    }
+    return false;
+  });
+  if (flagged) return true;
+
+  const dateMs = resolveTimestampMillis(resolveLogDateValue(log));
+  if (dateMs && dateMs > Date.now() + 24 * 60 * 60 * 1000) return true;
+
+  const userId = resolveLogUserId(log);
+  if (userId && historyByUser.has(userId)) {
+    const history = historyByUser.get(userId) || [];
+    if (history.length >= 3) {
+      const avg = history.reduce((sum, value) => sum + value, 0) / history.length;
+      if (avg > 0 && avg <= 2.5 && hours >= avg * 3) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function resolveAutoProcessingEnabled({ orgId, orgCode }) {
+  const collections = ['organizations', 'orgs', 'volunteer_organizations'];
+  for (const coll of collections) {
+    const refId = orgId || orgCode;
+    if (!refId) continue;
+    const snap = await db.collection(coll).doc(refId).get();
+    if (snap.exists) {
+      const data = snap.data() || {};
+      return Boolean(data.auto_process_logs);
+    }
+  }
+  return false;
+}
+
+export const autoApproveVolunteerLogs = onDocumentWritten('volunteer_logs/{logId}', async (event) => {
+  const after = event.data?.after;
+  if (!after || !after.exists) return;
+  const log = after.data() || {};
+  const status = resolveLogStatus(log);
+  if (status !== 'pending') return;
+  if (log.auto_approved === true) return;
+
+  const org = resolveLogOrg(log);
+  const isSchoolPlan = await resolveOrgSchoolPlan(org);
+  if (isSchoolPlan) {
+    await after.ref.update({
+      approve: 'approved',
+      status: 'approved',
+      approved_at: Timestamp.now(),
+      auto_approved: true,
+    });
+    return;
+  }
+  const autoProcessingEnabled = await resolveAutoProcessingEnabled(org);
+  const planTier = await resolveOrgPlanTier({ orgId: org.orgId, orgCode: org.orgCode });
+  const planLimits = getPlanLimits(planTier);
+  if (!planLimits.autoLogReview && event.auth?.token?.grandfathered !== true) return;
+  if (!autoProcessingEnabled) return;
+
+  const userId = resolveLogUserId(log);
+  if (!userId) return;
+
+  const historyByUser = new Map();
+  const now = Date.now();
+  const history = [];
+  const baseQuery = org.orgId
+    ? db.collection('volunteer_logs').where('orgId', '==', org.orgId)
+    : org.orgCode
+      ? db.collection('volunteer_logs').where('orgCode', '==', org.orgCode)
+      : db.collection('volunteer_logs');
+
+  const [approvedStatusSnap, approvedFieldSnap] = await Promise.all([
+    baseQuery.where('status', '==', 'approved').get(),
+    baseQuery.where('approve', '==', 'approved').get().catch(() => ({ forEach: () => {} })),
+  ]);
+  const seenDocs = new Set();
+  const collectHistory = (docSnap) => {
+    if (seenDocs.has(docSnap.id)) return;
+    seenDocs.add(docSnap.id);
+    const data = docSnap.data() || {};
+    const logUserId = resolveLogUserId(data);
+    if (!logUserId || logUserId !== userId) return;
+    const hours = resolveLogHours(data);
+    if (!Number.isFinite(hours) || hours <= 0) return;
+    const dateMs = resolveTimestampMillis(resolveLogDateValue(data));
+    if (!dateMs || now - dateMs > AUTO_APPROVE_HISTORY_WINDOW_MS) return;
+    history.push(hours);
+  };
+  approvedStatusSnap.forEach(collectHistory);
+  if (approvedFieldSnap?.forEach) {
+    approvedFieldSnap.forEach(collectHistory);
+  }
+  if (history.length) {
+    historyByUser.set(userId, history);
+  }
+
+  if (isQuestionableLog(log, historyByUser)) return;
+
+  await after.ref.update({
+    approve: 'approved',
+    status: 'approved',
+    approved_at: Timestamp.now(),
+    auto_approved: true,
+  });
+});
+
 export const getSubscriptionStatus = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'The function must be called while authenticated.');
@@ -223,6 +746,1321 @@ export const getSubscriptionStatus = onCall(async (request) => {
     status: isActive ? 'active' : subscription.status,
     subscription,
   };
+});
+
+export const consumeNebulaePrompt = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in to use Nebulae AI.');
+  }
+
+  if (request.auth?.token?.grandfathered === true) {
+    return { allowed: true, planTier: 'grandfathered', remaining: null };
+  }
+
+  const { orgId, orgCode } = await resolveOrgContextForUser(uid);
+  if (!orgId && !orgCode) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const planTier = await resolveOrgPlanTier({ orgId, orgCode, userId: uid });
+  const limits = getPlanLimits(planTier);
+
+  if (limits.aiPromptsPerDay === 0) {
+    throw new HttpsError('permission-denied', 'Nebulae AI is not enabled for your plan.');
+  }
+
+  if (limits.aiPromptsPerDay === null) {
+    return { allowed: true, planTier, remaining: null };
+  }
+
+  const dayKey = new Date().toISOString().slice(0, 10);
+  const usageKey = orgId || orgCode || uid;
+  const usageRef = db.collection('org_usage').doc(usageKey);
+  let remaining = null;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(usageRef);
+    const data = snap.exists ? snap.data() || {} : {};
+    const map = data.nebulae_prompts || {};
+    const used = Number(map[dayKey] || 0);
+
+    if (used >= limits.aiPromptsPerDay) {
+      throw new HttpsError('resource-exhausted', 'Nebulae AI prompt limit reached for today.');
+    }
+
+    const nextUsed = used + 1;
+    const nextMap = { ...map, [dayKey]: nextUsed };
+    remaining = Math.max(0, limits.aiPromptsPerDay - nextUsed);
+
+    tx.set(usageRef, {
+      orgId: orgId || null,
+      orgCode: orgCode || null,
+      nebulae_prompts: nextMap,
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+  });
+
+  return { allowed: true, planTier, remaining };
+});
+
+export const requestPlanChange = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const targetTier = normalizePlanTier(request.data?.targetTier);
+  if (!targetTier) {
+    throw new HttpsError('invalid-argument', 'Target plan is required.');
+  }
+
+  const userSnap = await db.collection('users').doc(uid).get();
+  if (!userSnap.exists) {
+    throw new HttpsError('not-found', 'User record not found.');
+  }
+  const userData = userSnap.data() || {};
+  const subscription = userData.subscription || {};
+  const periodEndRaw = subscription.currentPeriodEnd || subscription.current_period_end || subscription.trialEnd || subscription.trial_end || null;
+  const periodEndMs = resolveTimestampMillis(periodEndRaw) || Date.now();
+
+  const orgContext = await resolveOrgContextForUser(uid);
+  const orgId = orgContext.orgId || null;
+  const orgCode = orgContext.orgCode || null;
+
+  const pendingPayload = {
+    pending_plan_tier: targetTier,
+    pending_plan_effective_at: periodEndMs,
+    pending_plan_requested_at: Timestamp.now(),
+    pending_plan_requested_by: uid,
+  };
+
+  await userSnap.ref.set(pendingPayload, { merge: true });
+
+  if (orgId) {
+    const orgCollections = ['organizations', 'orgs', 'volunteer_organizations'];
+    await Promise.all(orgCollections.map((coll) =>
+      db.collection(coll).doc(orgId).set(pendingPayload, { merge: true }).catch(() => {})
+    ));
+  }
+
+  return {
+    pendingPlanTier: targetTier,
+    effectiveAt: periodEndMs,
+    orgId,
+    orgCode,
+  };
+});
+
+export const listSubAdminDirectory = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const { orgId, orgCode } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const groupsRef = db.collection('organizations').doc(orgId).collection('sub_admin_groups');
+  const accountsRef = db.collection('organizations').doc(orgId).collection('sub_admin_accounts');
+  const [groupsSnap, accountsSnap, userSnap] = await Promise.all([
+    groupsRef.get(),
+    accountsRef.get(),
+    db.collection('users').doc(uid).get(),
+  ]);
+
+  const groups = groupsSnap.docs
+    .map((docSnap) => {
+      const data = docSnap.data() || {};
+      return {
+        id: docSnap.id,
+        name: String(data.name || 'Untitled Group'),
+        description: String(data.description || ''),
+        memberCount: Number(data.memberCount || 0),
+        createdAt: data.createdAt || null,
+        updatedAt: data.updatedAt || null,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const groupMap = new Map(groups.map((group) => [group.id, group]));
+  const accounts = accountsSnap.docs
+    .map((docSnap) => {
+      const data = docSnap.data() || {};
+      const groupId = String(data.groupId || '');
+      return {
+        id: docSnap.id,
+        email: String(data.email || ''),
+        displayName: String(data.displayName || ''),
+        groupId,
+        groupName: groupMap.get(groupId)?.name || String(data.groupName || ''),
+        createdAt: data.createdAt || null,
+        lastSessionStartedAt: data.lastSessionStartedAt || null,
+        status: String(data.status || 'active'),
+      };
+    })
+    .sort((a, b) => {
+      const groupCmp = (a.groupName || '').localeCompare(b.groupName || '');
+      if (groupCmp !== 0) return groupCmp;
+      return a.email.localeCompare(b.email);
+    });
+
+  const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+  const activeSession = userData.activeSubAdminId
+    ? {
+      subAdminId: String(userData.activeSubAdminId),
+      email: String(userData.activeSubAdminEmail || ''),
+      displayName: String(userData.activeSubAdminDisplayName || ''),
+      groupId: String(userData.activeSubAdminGroupId || ''),
+      groupName: String(userData.activeSubAdminGroupName || ''),
+      startedAt: userData.activeSubAdminStartedAt || null,
+    }
+    : null;
+
+  return {
+    orgId,
+    orgCode: orgCode || null,
+    groups,
+    accounts,
+    activeSession,
+  };
+});
+
+export const createSubAdminGroup = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const { orgId } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const name = String(request.data?.name || '').trim();
+  const description = String(request.data?.description || '').trim();
+  if (!name) {
+    throw new HttpsError('invalid-argument', 'Group name is required.');
+  }
+
+  const groupsRef = db.collection('organizations').doc(orgId).collection('sub_admin_groups');
+  const normalizedName = name.toLowerCase();
+  const existing = await groupsRef.where('nameLower', '==', normalizedName).limit(1).get();
+  if (!existing.empty) {
+    throw new HttpsError('already-exists', 'A group with this name already exists.');
+  }
+
+  const now = Timestamp.now();
+  const groupRef = groupsRef.doc();
+  await groupRef.set({
+    name,
+    nameLower: normalizedName,
+    description: description || '',
+    memberCount: 0,
+    orgId,
+    createdBy: uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return { id: groupRef.id, name, description: description || '' };
+});
+
+export const createSubAdminAccount = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const { orgId } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const groupId = String(request.data?.groupId || '').trim();
+  const email = normalizeSubAdminEmail(request.data?.email);
+  const displayName = String(request.data?.displayName || '').trim();
+  const password = normalizeSubAdminPassword(request.data?.password);
+
+  if (!groupId) {
+    throw new HttpsError('invalid-argument', 'Group is required.');
+  }
+  if (!email) {
+    throw new HttpsError('invalid-argument', 'Email is required.');
+  }
+  if (password.length < SUBADMIN_PASSWORD_MIN_LENGTH) {
+    throw new HttpsError('invalid-argument', `Password must be at least ${SUBADMIN_PASSWORD_MIN_LENGTH} characters.`);
+  }
+
+  const orgRef = db.collection('organizations').doc(orgId);
+  const groupsRef = orgRef.collection('sub_admin_groups');
+  const accountsRef = orgRef.collection('sub_admin_accounts');
+  const groupRef = groupsRef.doc(groupId);
+  const groupSnap = await groupRef.get();
+  if (!groupSnap.exists) {
+    throw new HttpsError('not-found', 'Group not found.');
+  }
+
+  const fingerprint = buildSubAdminPasswordFingerprint(password);
+  const indexRef = subAdminPasswordIndexRef(fingerprint);
+  if (!indexRef) {
+    throw new HttpsError('failed-precondition', 'Unable to index sub-admin password.');
+  }
+
+  const { salt, hash } = buildSubAdminPasswordHash(password);
+  const now = Timestamp.now();
+  const accountRef = accountsRef.doc();
+  const groupData = groupSnap.data() || {};
+  const groupName = String(groupData.name || 'Group');
+  await db.runTransaction(async (tx) => {
+    const existingIndex = await tx.get(indexRef);
+    if (existingIndex.exists) {
+      throw new HttpsError(
+        'already-exists',
+        'Password already in use. Duplicate emails are allowed, but each sub-admin must use a different password.'
+      );
+    }
+    tx.set(accountRef, {
+      orgId,
+      groupId,
+      groupName,
+      email,
+      displayName: displayName || '',
+      passwordHash: hash,
+      passwordSalt: salt,
+      passwordFingerprint: fingerprint,
+      status: 'active',
+      createdBy: uid,
+      createdAt: now,
+      updatedAt: now,
+      lastSessionStartedAt: null,
+    });
+    tx.set(indexRef, {
+      fingerprint,
+      orgId,
+      accountId: accountRef.id,
+      accountPath: accountRef.path,
+      email,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    });
+    tx.set(groupRef, {
+      memberCount: FieldValue.increment(1),
+      updatedAt: now,
+    }, { merge: true });
+  });
+
+  return {
+    id: accountRef.id,
+    email,
+    displayName: displayName || '',
+    groupId,
+    groupName,
+    status: 'active',
+  };
+});
+
+export const createSubAdminPortal = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const { orgId } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const title = String(request.data?.title || '').trim();
+  const email = normalizeSubAdminEmail(request.data?.email);
+  const password = normalizeSubAdminPassword(request.data?.password);
+
+  if (!title) {
+    throw new HttpsError('invalid-argument', 'Title is required.');
+  }
+  if (!email) {
+    throw new HttpsError('invalid-argument', 'Email is required.');
+  }
+  if (password.length < SUBADMIN_PASSWORD_MIN_LENGTH) {
+    throw new HttpsError('invalid-argument', `Password must be at least ${SUBADMIN_PASSWORD_MIN_LENGTH} characters.`);
+  }
+
+  const orgRef = db.collection('organizations').doc(orgId);
+  const groupsRef = orgRef.collection('sub_admin_groups');
+  const accountsRef = orgRef.collection('sub_admin_accounts');
+  const normalizedTitle = title.toLowerCase();
+
+  const fingerprint = buildSubAdminPasswordFingerprint(password);
+  const indexRef = subAdminPasswordIndexRef(fingerprint);
+  if (!indexRef) {
+    throw new HttpsError('failed-precondition', 'Unable to index sub-admin password.');
+  }
+
+  const now = Timestamp.now();
+  let groupRef = groupsRef.doc();
+  let groupName = title;
+  let groupCreated = false;
+  const existingGroupSnap = await groupsRef.where('nameLower', '==', normalizedTitle).limit(1).get();
+  if (!existingGroupSnap.empty) {
+    groupRef = existingGroupSnap.docs[0].ref;
+    const existingData = existingGroupSnap.docs[0].data() || {};
+    groupName = String(existingData.name || title).trim() || title;
+  } else {
+    groupCreated = true;
+  }
+
+  const { salt, hash } = buildSubAdminPasswordHash(password);
+  const accountRef = accountsRef.doc();
+
+  await db.runTransaction(async (tx) => {
+    const existingIndex = await tx.get(indexRef);
+    if (existingIndex.exists) {
+      throw new HttpsError(
+        'already-exists',
+        'Password already in use. Duplicate emails are allowed, but each sub-admin must use a different password.'
+      );
+    }
+    if (groupCreated) {
+      tx.set(groupRef, {
+        name: groupName,
+        nameLower: normalizedTitle,
+        description: '',
+        memberCount: 1,
+        orgId,
+        createdBy: uid,
+        createdAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    } else {
+      tx.set(groupRef, {
+        updatedAt: now,
+        memberCount: FieldValue.increment(1),
+      }, { merge: true });
+    }
+
+    tx.set(accountRef, {
+      orgId,
+      groupId: groupRef.id,
+      groupName,
+      email,
+      displayName: title,
+      passwordHash: hash,
+      passwordSalt: salt,
+      passwordFingerprint: fingerprint,
+      status: 'active',
+      createdBy: uid,
+      createdAt: now,
+      updatedAt: now,
+      lastSessionStartedAt: null,
+    });
+
+    tx.set(indexRef, {
+      fingerprint,
+      orgId,
+      accountId: accountRef.id,
+      accountPath: accountRef.path,
+      email,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  return {
+    accountId: accountRef.id,
+    groupId: groupRef.id,
+    title: groupName,
+    email,
+  };
+});
+
+export const setSubAdminAccountStatus = onCall(async (request) => {
+  const { uid, token } = await requireSuperAdmin(request);
+  const { orgId } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const subAdminId = String(request.data?.subAdminId || '').trim();
+  const nextStatusRaw = String(request.data?.status || '').trim().toLowerCase();
+  if (!subAdminId) {
+    throw new HttpsError('invalid-argument', 'subAdminId is required.');
+  }
+  if (!['active', 'archived'].includes(nextStatusRaw)) {
+    throw new HttpsError('invalid-argument', 'Status must be either active or archived.');
+  }
+  if (nextStatusRaw === 'archived') {
+    const authTimeSeconds = Number(token?.auth_time || 0);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const ageSeconds = nowSeconds - authTimeSeconds;
+    if (!Number.isFinite(authTimeSeconds) || authTimeSeconds <= 0 || ageSeconds > SUPER_ADMIN_REAUTH_MAX_AGE_SECONDS) {
+      throw new HttpsError('failed-precondition', 'Please re-enter your login password to archive a sub-admin.');
+    }
+  }
+
+  const accountRef = db.collection('organizations').doc(orgId).collection('sub_admin_accounts').doc(subAdminId);
+  const accountSnap = await accountRef.get();
+  if (!accountSnap.exists) {
+    throw new HttpsError('not-found', 'Sub-admin account not found.');
+  }
+  const accountData = accountSnap.data() || {};
+  const fingerprint = String(accountData.passwordFingerprint || '').trim();
+  const indexRef = fingerprint ? subAdminPasswordIndexRef(fingerprint) : null;
+
+  const now = Timestamp.now();
+  const updates = {
+    status: nextStatusRaw,
+    updatedAt: now,
+    archivedAt: nextStatusRaw === 'archived' ? now : null,
+    archivedBy: nextStatusRaw === 'archived' ? uid : null,
+    unarchivedAt: nextStatusRaw === 'active' ? now : null,
+    unarchivedBy: nextStatusRaw === 'active' ? uid : null,
+  };
+  await accountRef.set(updates, { merge: true });
+  if (indexRef) {
+    await indexRef.set({
+      status: nextStatusRaw,
+      updatedAt: now,
+    }, { merge: true }).catch(() => {});
+  }
+
+  if (nextStatusRaw === 'archived') {
+    const activeSessionsSnap = await db.collection('users').where('activeSubAdminId', '==', subAdminId).get();
+    if (!activeSessionsSnap.empty) {
+      const batch = db.batch();
+      activeSessionsSnap.docs.forEach((docSnap) => {
+        batch.set(docSnap.ref, {
+          activeSubAdminId: null,
+          activeSubAdminEmail: null,
+          activeSubAdminDisplayName: null,
+          activeSubAdminGroupId: null,
+          activeSubAdminGroupName: null,
+          activeSubAdminStartedAt: null,
+          updatedAt: now,
+        }, { merge: true });
+      });
+      await batch.commit();
+    }
+  }
+
+  return { subAdminId, status: nextStatusRaw };
+});
+
+export const backfillSubAdminPasswordIndex = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const { orgId } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const accountsSnap = await db
+    .collection('organizations')
+    .doc(orgId)
+    .collection('sub_admin_accounts')
+    .get();
+
+  const now = Timestamp.now();
+  let created = 0;
+  let skipped = 0;
+  let conflicts = 0;
+
+  for (const accountDoc of accountsSnap.docs) {
+    const data = accountDoc.data() || {};
+    const fingerprint = String(data.passwordFingerprint || '').trim();
+    if (!fingerprint) {
+      skipped += 1;
+      continue;
+    }
+    const indexRef = subAdminPasswordIndexRef(fingerprint);
+    if (!indexRef) {
+      skipped += 1;
+      continue;
+    }
+
+    const indexSnap = await indexRef.get();
+    if (indexSnap.exists) {
+      const indexData = indexSnap.data() || {};
+      const indexedAccountId = String(indexData.accountId || '').trim();
+      const indexedOrgId = String(indexData.orgId || '').trim();
+      if (indexedAccountId && indexedAccountId !== accountDoc.id) {
+        conflicts += 1;
+      } else if (indexedOrgId && indexedOrgId !== orgId) {
+        conflicts += 1;
+      }
+      continue;
+    }
+
+    await indexRef.set({
+      fingerprint,
+      orgId,
+      accountId: accountDoc.id,
+      accountPath: accountDoc.ref.path,
+      email: normalizeSubAdminEmail(data.email),
+      status: String(data.status || 'active').toLowerCase(),
+      createdAt: now,
+      updatedAt: now,
+      createdBy: uid,
+    });
+    created += 1;
+  }
+
+  return { ok: true, orgId, total: accountsSnap.size, created, skipped, conflicts };
+});
+
+export const authenticateSubAdminLogin = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const email = normalizeSubAdminEmail(request.data?.email || request.auth?.token?.email);
+  const password = normalizeSubAdminPassword(request.data?.password);
+  if (!email) {
+    throw new HttpsError('invalid-argument', 'Sub-admin email is required.');
+  }
+  if (!password) {
+    throw new HttpsError('invalid-argument', 'Sub-admin password is required.');
+  }
+
+  const tokenEmail = normalizeSubAdminEmail(request.auth?.token?.email);
+  if (tokenEmail && tokenEmail !== email) {
+    throw new HttpsError('permission-denied', 'Signed-in email does not match provided sub-admin email.');
+  }
+
+  const fingerprint = buildSubAdminPasswordFingerprint(password);
+  const indexRef = subAdminPasswordIndexRef(fingerprint);
+  if (!indexRef) {
+    throw new HttpsError('failed-precondition', 'Unable to verify sub-admin credentials.');
+  }
+
+  const indexSnap = await indexRef.get();
+  if (!indexSnap.exists) {
+    throw new HttpsError('permission-denied', 'Invalid sub-admin credentials.');
+  }
+
+  const indexData = indexSnap.data() || {};
+  const indexStatus = String(indexData.status || 'active').toLowerCase();
+  if (indexStatus !== 'active') {
+    throw new HttpsError('failed-precondition', 'Sub-admin account is inactive.');
+  }
+
+  const rawOrgId = String(indexData.orgId || '').trim();
+  const accountId = String(indexData.accountId || '').trim();
+  if (!rawOrgId || !accountId) {
+    throw new HttpsError('failed-precondition', 'Sub-admin account is missing organization metadata.');
+  }
+
+  const accountDoc = await db
+    .collection('organizations')
+    .doc(rawOrgId)
+    .collection('sub_admin_accounts')
+    .doc(accountId)
+    .get();
+
+  if (!accountDoc.exists) {
+    throw new HttpsError('permission-denied', 'Invalid sub-admin credentials.');
+  }
+
+  const accountData = accountDoc.data() || {};
+  if (normalizeSubAdminEmail(accountData.email) !== email) {
+    throw new HttpsError('permission-denied', 'Invalid sub-admin credentials.');
+  }
+  if (String(accountData.status || 'active').toLowerCase() !== 'active') {
+    throw new HttpsError('failed-precondition', 'Sub-admin account is inactive.');
+  }
+  if (!verifySubAdminPassword(password, accountData.passwordSalt, accountData.passwordHash)) {
+    throw new HttpsError('permission-denied', 'Invalid sub-admin credentials.');
+  }
+
+  let orgId = rawOrgId;
+  let orgCode = String(
+    accountData.orgCode
+    || accountData.organizationCode
+    || accountData.organization_code
+    || accountData.accessCode
+    || accountData.access_code
+    || '',
+  ).trim().toUpperCase();
+  let orgName = String(accountData.organizationName || accountData.organization_name || '').trim();
+  let planTier = normalizePlanTier(accountData.planTier || accountData.plan_tier || accountData.plan_key || DEFAULT_PLAN_TIER);
+
+  const orgSnap = await resolveOrgDocById(orgId);
+  if (orgSnap?.exists) {
+    const orgData = orgSnap.data() || {};
+    orgId = orgSnap.id;
+    orgCode = String(
+      orgData.access_code
+      || orgData.accessCode
+      || orgData.orgCode
+      || orgData.org_code
+      || orgData.organizationCode
+      || orgData.organization_code
+      || orgCode
+      || '',
+    ).trim().toUpperCase();
+    orgName = String(orgData.name || orgData.organizationName || orgData.organization_name || orgName || '').trim();
+    planTier = normalizePlanTier(
+      orgData.plan_tier
+      || orgData.planTier
+      || orgData.plan_key
+      || orgData.planKey
+      || planTier
+      || DEFAULT_PLAN_TIER
+    );
+  }
+
+  const now = Timestamp.now();
+  const session = {
+    subAdminId: accountDoc.id,
+    email: String(accountData.email || email),
+    displayName: String(accountData.displayName || ''),
+    groupId: String(accountData.groupId || ''),
+    groupName: String(accountData.groupName || ''),
+    startedAt: now,
+  };
+
+  await Promise.all([
+    db.collection('users').doc(uid).set({
+      email,
+      role: 'admin',
+      isAdmin: true,
+      is_admin: true,
+      accessCode: orgCode || null,
+      access_code: orgCode || null,
+      organizationCode: orgCode || null,
+      organization_code: orgCode || null,
+      organizationId: orgId || null,
+      organization_id: orgId || null,
+      organizationName: orgName || null,
+      organization_name: orgName || null,
+      subAdminId: session.subAdminId,
+      subAdminEmail: session.email,
+      subAdminDisplayName: session.displayName,
+      subAdminGroupId: session.groupId,
+      subAdminGroupName: session.groupName,
+      activeSubAdminId: session.subAdminId,
+      activeSubAdminEmail: session.email,
+      activeSubAdminDisplayName: session.displayName,
+      activeSubAdminGroupId: session.groupId,
+      activeSubAdminGroupName: session.groupName,
+      activeSubAdminStartedAt: now,
+      updatedAt: now,
+    }, { merge: true }),
+    accountDoc.ref.set({
+      lastSessionStartedAt: now,
+      lastSessionStartedBy: uid,
+      updatedAt: now,
+    }, { merge: true }),
+  ]);
+
+  return {
+    session,
+    org: {
+      orgId: orgId || null,
+      orgCode: orgCode || null,
+      orgName: orgName || null,
+      planTier,
+    },
+  };
+});
+
+export const subAdminLogin = onRequest(async (req, res) => {
+  if (handleCorsPreflight(req, res, ['POST'])) return;
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
+  }
+
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const email = normalizeSubAdminEmail(body.email);
+    const password = normalizeSubAdminPassword(body.password);
+    const orgCodeHint = String(body.orgCode || '').trim().toUpperCase();
+
+    if (!email) {
+      res.status(400).json({ error: 'Email is required.' });
+      return;
+    }
+    if (!password) {
+      res.status(400).json({ error: 'Password is required.' });
+      return;
+    }
+
+    let orgIdHint = '';
+    if (orgCodeHint) {
+      const orgDoc = await resolveOrgDocByCode(orgCodeHint);
+      if (orgDoc) {
+        orgIdHint = orgDoc.id;
+      }
+    }
+
+    const fingerprint = buildSubAdminPasswordFingerprint(password);
+    const indexRef = subAdminPasswordIndexRef(fingerprint);
+    if (!indexRef) {
+      res.status(500).json({ error: 'Login temporarily unavailable.' });
+      return;
+    }
+
+    let accountOrgId = '';
+    let accountId = '';
+    let accountData = null;
+    let accountDoc = null;
+
+    const validateResolvedAccount = () => {
+      if (!accountDoc || !accountDoc.exists) return false;
+      const data = accountData || accountDoc.data() || {};
+      if (normalizeSubAdminEmail(data.email) !== email) return false;
+      if (String(data.status || 'active').toLowerCase() !== 'active') return false;
+      return verifySubAdminPassword(password, data.passwordSalt, data.passwordHash);
+    };
+
+    const indexSnap = await indexRef.get();
+    let resolved = false;
+
+    if (indexSnap.exists) {
+      const indexData = indexSnap.data() || {};
+      if (String(indexData.status || 'active').toLowerCase() !== 'active') {
+        res.status(403).json({ error: 'Invalid email or password.' });
+        return;
+      }
+      accountOrgId = String(indexData.orgId || '').trim();
+      accountId = String(indexData.accountId || '').trim();
+      if (!accountOrgId || !accountId) {
+        res.status(500).json({ error: 'Login temporarily unavailable.' });
+        return;
+      }
+      if (orgIdHint && accountOrgId !== orgIdHint) {
+        res.status(403).json({ error: 'Invalid email or password.' });
+        return;
+      }
+      accountDoc = await db
+        .collection('organizations')
+        .doc(accountOrgId)
+        .collection('sub_admin_accounts')
+        .doc(accountId)
+        .get();
+      if (!accountDoc.exists) {
+        // Stale index; remove it and fall back to slower lookup.
+        await indexRef.delete().catch(() => {});
+        accountOrgId = '';
+        accountId = '';
+        accountData = null;
+        accountDoc = null;
+      } else {
+        accountData = accountDoc.data() || {};
+        if (!validateResolvedAccount()) {
+          res.status(403).json({ error: 'Invalid email or password.' });
+          return;
+        }
+        resolved = true;
+      }
+    }
+
+    if (!resolved && orgIdHint) {
+      const accountsSnap = await db
+        .collection('organizations')
+        .doc(orgIdHint)
+        .collection('sub_admin_accounts')
+        .where('email', '==', email)
+        .get();
+
+      const matches = accountsSnap.docs.filter((docSnap) => {
+        const data = docSnap.data() || {};
+        if (String(data.status || 'active').toLowerCase() !== 'active') return false;
+        return verifySubAdminPassword(password, data.passwordSalt, data.passwordHash);
+      });
+
+      if (!matches.length) {
+        res.status(403).json({ error: 'Invalid email or password.' });
+        return;
+      }
+      if (matches.length > 1) {
+        res.status(409).json({ error: 'Multiple sub-admin accounts match these credentials.' });
+        return;
+      }
+
+      accountDoc = matches[0];
+      accountData = accountDoc.data() || {};
+      accountOrgId = orgIdHint;
+      accountId = accountDoc.id;
+      resolved = true;
+    }
+
+    if (!resolved) {
+      // Legacy fallback: scan organizations until we find an email+password match.
+      // This runs only when the password index is missing (older accounts).
+      const orgsSnap = await db.collection('organizations').select(FieldPath.documentId()).get();
+      const orgIds = orgsSnap.docs.map((docSnap) => docSnap.id);
+
+      const found = [];
+      const batchSize = 12;
+      for (let i = 0; i < orgIds.length; i += batchSize) {
+        const slice = orgIds.slice(i, i + batchSize);
+        const snaps = await Promise.all(slice.map(async (orgId) => {
+          try {
+            const snap = await db
+              .collection('organizations')
+              .doc(orgId)
+              .collection('sub_admin_accounts')
+              .where('email', '==', email)
+              .get();
+            return { orgId, snap };
+          } catch (_error) {
+            return { orgId, snap: null };
+          }
+        }));
+
+        for (const entry of snaps) {
+          const snap = entry.snap;
+          if (!snap || snap.empty) continue;
+          for (const docSnap of snap.docs) {
+            const data = docSnap.data() || {};
+            if (String(data.status || 'active').toLowerCase() !== 'active') continue;
+            if (!verifySubAdminPassword(password, data.passwordSalt, data.passwordHash)) continue;
+            found.push({ orgId: entry.orgId, docSnap, data });
+            if (found.length > 1) break;
+          }
+          if (found.length > 1) break;
+        }
+
+        if (found.length) break;
+      }
+
+      if (!found.length) {
+        res.status(403).json({ error: 'Invalid email or password.' });
+        return;
+      }
+      if (found.length > 1) {
+        res.status(409).json({ error: 'Multiple sub-admin accounts match these credentials.' });
+        return;
+      }
+
+      accountOrgId = found[0].orgId;
+      accountDoc = found[0].docSnap;
+      accountData = found[0].data || {};
+      accountId = accountDoc.id;
+      resolved = true;
+    }
+
+    if (!resolved || !accountDoc || !accountData) {
+      res.status(403).json({ error: 'Invalid email or password.' });
+      return;
+    }
+
+    // Backfill the index for future logins (idempotent).
+    await indexRef
+      .set({
+        fingerprint,
+        orgId: accountOrgId,
+        accountId,
+        accountPath: accountDoc.ref.path,
+        email,
+        status: 'active',
+        updatedAt: Timestamp.now(),
+        createdAt: Timestamp.now(),
+      }, { merge: true })
+      .catch(() => {});
+
+    const groupId = String(accountData?.groupId || '').trim();
+    if (!accountOrgId || !groupId) {
+      res.status(400).json({ error: 'Sub-admin account is missing organization metadata.' });
+      return;
+    }
+
+    const orgSnap = await resolveOrgDocById(accountOrgId);
+    const orgData = orgSnap?.exists ? (orgSnap.data() || {}) : {};
+    const orgCode = String(
+      orgData.access_code
+      || orgData.accessCode
+      || orgData.orgCode
+      || orgData.org_code
+      || orgData.organizationCode
+      || orgData.organization_code
+      || accountData.orgCode
+      || accountData.organizationCode
+      || accountData.organization_code
+      || accountData.accessCode
+      || accountData.access_code
+      || ''
+    ).trim().toUpperCase();
+    const orgName = String(orgData.name || orgData.organizationName || orgData.organization_name || '').trim();
+    const planTier = normalizePlanTier(
+      orgData.plan_tier
+      || orgData.planTier
+      || orgData.plan_key
+      || orgData.planKey
+      || accountData.planTier
+      || accountData.plan_tier
+      || accountData.plan_key
+      || DEFAULT_PLAN_TIER
+    );
+
+    const sessionStartedAt = Timestamp.now();
+    const session = {
+      subAdminId: accountId,
+      email: String(accountData.email || email),
+      displayName: String(accountData.displayName || ''),
+      groupId,
+      groupName: String(accountData.groupName || ''),
+      startedAt: sessionStartedAt,
+    };
+
+    const uid = `subadmin_${accountOrgId}_${accountId}`;
+    const customToken = await authAdmin.createCustomToken(uid, {
+      paid: true, // Required for current Firestore rules and admin data access.
+      admin: true,
+      isAdmin: true,
+      role: 'admin',
+      sub_admin: true,
+      isSubAdmin: true,
+      orgId: accountOrgId,
+      subAdminId: accountId,
+      subAdminGroupId: groupId,
+    });
+
+    await Promise.all([
+      db.collection('users').doc(uid).set({
+        email: session.email,
+        role: 'admin',
+        isAdmin: true,
+        is_admin: true,
+        accessCode: orgCode || null,
+        access_code: orgCode || null,
+        organizationCode: orgCode || null,
+        organization_code: orgCode || null,
+        organizationId: accountOrgId || null,
+        organization_id: accountOrgId || null,
+        organizationName: orgName || null,
+        organization_name: orgName || null,
+        planTier: planTier || null,
+        plan_tier: planTier || null,
+        subAdminId: session.subAdminId,
+        subAdminEmail: session.email,
+        subAdminDisplayName: session.displayName,
+        subAdminGroupId: session.groupId,
+        subAdminGroupName: session.groupName,
+        activeSubAdminId: session.subAdminId,
+        activeSubAdminEmail: session.email,
+        activeSubAdminDisplayName: session.displayName,
+        activeSubAdminGroupId: session.groupId,
+        activeSubAdminGroupName: session.groupName,
+        activeSubAdminStartedAt: sessionStartedAt,
+        updatedAt: sessionStartedAt,
+      }, { merge: true }),
+      db.collection('user_organizations').doc(uid).set({
+        user_id: uid,
+        userId: uid,
+        user_email: session.email,
+        email: session.email,
+        org_id: accountOrgId,
+        orgId: accountOrgId,
+        organization_id: accountOrgId,
+        organizationId: accountOrgId,
+        access_code: orgCode || null,
+        accessCode: orgCode || null,
+        organization_code: orgCode || null,
+        organizationCode: orgCode || null,
+        organization_name: orgName || null,
+        organizationName: orgName || null,
+        plan_tier: planTier || null,
+        planTier: planTier || null,
+        updatedAt: sessionStartedAt,
+      }, { merge: true }),
+      accountDoc.ref.set({
+        lastSessionStartedAt: sessionStartedAt,
+        lastSessionStartedBy: uid,
+        updatedAt: sessionStartedAt,
+      }, { merge: true }),
+    ]);
+
+    res.json({
+      customToken,
+      session,
+      org: {
+        orgId: accountOrgId,
+        orgCode: orgCode || null,
+        orgName: orgName || null,
+        planTier,
+      },
+    });
+  } catch (error) {
+    logger.error('Sub-admin login failed', error);
+    res.status(500).json({ error: 'Login temporarily unavailable.' });
+  }
+});
+
+export const startSubAdminSession = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const { orgId } = await resolveOrgContextForUser(uid);
+  if (!orgId) {
+    throw new HttpsError('failed-precondition', 'Organization context is required.');
+  }
+
+  const subAdminId = String(request.data?.subAdminId || '').trim();
+  if (!subAdminId) {
+    throw new HttpsError('invalid-argument', 'subAdminId is required.');
+  }
+
+  const accountRef = db.collection('organizations').doc(orgId).collection('sub_admin_accounts').doc(subAdminId);
+  const accountSnap = await accountRef.get();
+  if (!accountSnap.exists) {
+    throw new HttpsError('not-found', 'Sub-admin account not found.');
+  }
+  const accountData = accountSnap.data() || {};
+  if (String(accountData.status || 'active') !== 'active') {
+    throw new HttpsError('failed-precondition', 'Sub-admin account is inactive.');
+  }
+
+  const now = Timestamp.now();
+  const session = {
+    subAdminId,
+    email: String(accountData.email || ''),
+    displayName: String(accountData.displayName || ''),
+    groupId: String(accountData.groupId || ''),
+    groupName: String(accountData.groupName || ''),
+    startedAt: now,
+  };
+
+  await Promise.all([
+    db.collection('users').doc(uid).set({
+      activeSubAdminId: session.subAdminId,
+      activeSubAdminEmail: session.email,
+      activeSubAdminDisplayName: session.displayName,
+      activeSubAdminGroupId: session.groupId,
+      activeSubAdminGroupName: session.groupName,
+      activeSubAdminStartedAt: now,
+      updatedAt: now,
+    }, { merge: true }),
+    accountRef.set({
+      lastSessionStartedAt: now,
+      lastSessionStartedBy: uid,
+      updatedAt: now,
+    }, { merge: true }),
+  ]);
+
+  return { session };
+});
+
+export const clearSubAdminSession = onCall(async (request) => {
+  const { uid } = await requireSuperAdmin(request);
+  const now = Timestamp.now();
+  await db.collection('users').doc(uid).set({
+    activeSubAdminId: null,
+    activeSubAdminEmail: null,
+    activeSubAdminDisplayName: null,
+    activeSubAdminGroupId: null,
+    activeSubAdminGroupName: null,
+    activeSubAdminStartedAt: null,
+    updatedAt: now,
+  }, { merge: true });
+  return { cleared: true };
+});
+
+export const getOrganizationJoinTargets = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const accessCode = String(request.data?.accessCode || '').trim().toUpperCase();
+  if (!accessCode || accessCode.length !== 6) {
+    throw new HttpsError('invalid-argument', 'Please enter a valid 6-character organization code.');
+  }
+
+  const org = await resolveOrganizationByAccessCode(accessCode);
+  if (!org) {
+    throw new HttpsError('not-found', 'Organization not found. Check the code and try again.');
+  }
+
+  const payload = await buildJoinTargetsForOrganization({
+    uid,
+    orgId: org.orgId,
+    orgCode: org.orgCode,
+    orgName: org.orgName,
+  });
+
+  return {
+    orgId: payload.orgId,
+    orgCode: payload.orgCode,
+    orgName: payload.orgName,
+    hasSubAdminGroups: payload.hasSubAdminGroups,
+    requiresGroupSelection: payload.hasSubAdminGroups,
+    targets: payload.targets.map((target) => ({
+      id: target.id,
+      name: target.name,
+      isSuperAdmin: target.isSuperAdmin,
+      alreadyJoined: target.alreadyJoined,
+    })),
+  };
+});
+
+export const submitOrganizationJoinRequests = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const accessCode = String(request.data?.accessCode || '').trim().toUpperCase();
+  if (!accessCode || accessCode.length !== 6) {
+    throw new HttpsError('invalid-argument', 'Please enter a valid 6-character organization code.');
+  }
+
+  const org = await resolveOrganizationByAccessCode(accessCode);
+  if (!org) {
+    throw new HttpsError('not-found', 'Organization not found. Check the code and try again.');
+  }
+
+  const targetPayload = await buildJoinTargetsForOrganization({
+    uid,
+    orgId: org.orgId,
+    orgCode: org.orgCode,
+    orgName: org.orgName,
+  });
+
+  const requestedScopeIds = sanitizeJoinRequestGroupIds(request.data?.groupIds);
+  const defaultScope = targetPayload.hasSubAdminGroups ? [] : [SUPER_ADMIN_GROUP_KEY];
+  const selectedScopeIds = (requestedScopeIds.length ? requestedScopeIds : defaultScope)
+    .filter((scopeId) => targetPayload.targets.some((target) => target.id === scopeId));
+
+  if (!selectedScopeIds.length) {
+    throw new HttpsError('invalid-argument', 'Select at least one group to request.');
+  }
+
+  const userSnap = await db.collection('users').doc(uid).get().catch(() => null);
+  const userData = userSnap?.exists ? (userSnap.data() || {}) : {};
+  const userName = String(
+    userData.displayName
+    || userData.name
+    || [userData.firstName, userData.lastName].filter(Boolean).join(' ')
+    || request.auth?.token?.name
+    || request.auth?.token?.email
+    || 'Volunteer',
+  ).trim();
+  const userEmail = String(
+    userData.email
+    || request.auth?.token?.email
+    || '',
+  ).trim().toLowerCase();
+
+  const { createdTargets, skippedTargets } = await queueOrganizationJoinRequests({
+    uid,
+    email: userEmail,
+    userName,
+    orgId: targetPayload.orgId,
+    orgCode: targetPayload.orgCode,
+    orgName: targetPayload.orgName,
+    selectedGroupScopeIds: selectedScopeIds,
+    availableTargets: targetPayload.targets,
+    blockedScopes: targetPayload.blockedScopes,
+  });
+
+  if (!createdTargets.length) {
+    throw new HttpsError('failed-precondition', 'You have already joined or requested these groups.');
+  }
+
+  return {
+    orgId: targetPayload.orgId,
+    orgCode: targetPayload.orgCode,
+    orgName: targetPayload.orgName,
+    createdCount: createdTargets.length,
+    createdTargets,
+    skippedTargets,
+  };
+});
+
+export const acceptJoinRequest = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const isAdmin = await isAuthorizedAdmin({ uid, ...(request.auth?.token || {}) });
+  if (!isAdmin) {
+    throw new HttpsError('permission-denied', 'Admin access required.');
+  }
+
+  const requestId = String(request.data?.requestId || '').trim();
+  if (!requestId) {
+    throw new HttpsError('invalid-argument', 'Request id is required.');
+  }
+
+  const joinSnap = await db.collection('organization_join_requests').doc(requestId).get();
+  if (!joinSnap.exists) {
+    throw new HttpsError('not-found', 'Join request not found.');
+  }
+  const joinData = joinSnap.data() || {};
+  const orgId =
+    joinData.orgId
+    || joinData.org_id
+    || joinData.organizationId
+    || joinData.organization_id
+    || null;
+  const orgCode =
+    joinData.orgCode
+    || joinData.org_code
+    || joinData.organizationCode
+    || joinData.organization_code
+    || joinData.accessCode
+    || joinData.access_code
+    || null;
+
+  const effectiveTier = await resolveEffectivePlanTier({ orgId, orgCode, userId: uid });
+  const limits = getPlanLimits(effectiveTier);
+  const isGrandfathered = request.auth?.token?.grandfathered === true;
+  if (!isGrandfathered && limits.volunteerLimit != null) {
+    const count = await countOrganizationMembers({ orgId, orgCode });
+    if (count >= limits.volunteerLimit) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Volunteer limit reached for the ${effectiveTier} plan.`
+      );
+    }
+  }
+
+  const userId = joinData.user_id || joinData.userId || null;
+  const targetGroupId = extractGroupScopeFromData(joinData);
+  const normalizedTargetGroupId = normalizeGroupScopeKey(targetGroupId);
+  const scopedGroupId = normalizedTargetGroupId === SUPER_ADMIN_GROUP_KEY ? null : normalizedTargetGroupId;
+  const scopedGroupName = resolveGroupNameFromData(joinData) || (scopedGroupId ? 'Subadmin Group' : 'Super Admin');
+  if (userId) {
+    const timestamp = Timestamp.now();
+    await db.collection('users').doc(userId).set({
+      organizationCode: orgCode || null,
+      accessCode: orgCode || null,
+      organization_id: orgId || null,
+      organizationName: joinData.organization_name || joinData.organizationName || null,
+      role: 'volunteer',
+      status: 'active',
+      organizationJoinedAt: timestamp,
+      updatedAt: timestamp,
+    }, { merge: true });
+
+    const scopedMembershipId = makeSafeScopedId('membership', userId, orgId || orgCode || 'org', scopedGroupId || SUPER_ADMIN_GROUP_KEY);
+    const membershipPayload = {
+      user_id: userId,
+      userId,
+      user_email: joinData.user_email || joinData.email || null,
+      user_name: joinData.user_name || joinData.userName || null,
+      organization_id: orgId || null,
+      org_id: orgId || null,
+      organizationId: orgId || null,
+      orgId: orgId || null,
+      organizationCode: orgCode || null,
+      orgCode: orgCode || null,
+      accessCode: orgCode || null,
+      organizationName: joinData.organization_name || joinData.organizationName || null,
+      organization_name: joinData.organization_name || joinData.organizationName || null,
+      sub_admin_group_id: scopedGroupId,
+      subAdminGroupId: scopedGroupId,
+      sub_admin_group_name: scopedGroupName,
+      subAdminGroupName: scopedGroupName,
+      status: 'accepted',
+      updatedAt: timestamp,
+      createdAt: timestamp,
+    };
+
+    await db.collection('user_organizations').doc(scopedMembershipId).set(membershipPayload, { merge: true });
+    await db.collection('user_organizations').doc(userId).set({
+      ...membershipPayload,
+      createdAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+
+  await joinSnap.ref.set({
+    status: 'accepted',
+    handled_at: Timestamp.now(),
+    handled_by: uid,
+    handled_by_email: request.auth?.token?.email || null,
+  }, { merge: true });
+
+  return { ok: true };
 });
 
 async function assertPriceExists(stripe, priceId) {
@@ -437,12 +2275,32 @@ async function ensureUserOrganizationLink(orgAccessCode, orgId, adminId, adminUs
 
 function getPriceMap() {
   const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIREBASE_EMULATOR_HUB);
+  const tierPrices = {
+    orbit_org_monthly: process.env.ORBIT_PRICE_ORG_MONTHLY || DEFAULT_ORBIT_PRICE_ORG_MONTHLY,
+    orbit_org_yearly: process.env.ORBIT_PRICE_ORG_YEARLY || DEFAULT_ORBIT_PRICE_ORG_YEARLY,
+    orbit_school_monthly: process.env.ORBIT_PRICE_SCHOOL_MONTHLY || DEFAULT_ORBIT_PRICE_SCHOOL_MONTHLY,
+    orbit_school_yearly: process.env.ORBIT_PRICE_SCHOOL_YEARLY || DEFAULT_ORBIT_PRICE_SCHOOL_YEARLY,
+    nebula_org_monthly: process.env.NEBULA_PRICE_ORG_MONTHLY || DEFAULT_NEBULA_PRICE_ORG_MONTHLY,
+    nebula_org_yearly: process.env.NEBULA_PRICE_ORG_YEARLY || DEFAULT_NEBULA_PRICE_ORG_YEARLY,
+    nebula_school_monthly: process.env.NEBULA_PRICE_SCHOOL_MONTHLY || DEFAULT_NEBULA_PRICE_SCHOOL_MONTHLY,
+    nebula_school_yearly: process.env.NEBULA_PRICE_SCHOOL_YEARLY || DEFAULT_NEBULA_PRICE_SCHOOL_YEARLY,
+    cosmos_org_monthly: process.env.COSMOS_PRICE_ORG_MONTHLY || DEFAULT_COSMOS_PRICE_ORG_MONTHLY,
+    cosmos_org_yearly: process.env.COSMOS_PRICE_ORG_YEARLY || DEFAULT_COSMOS_PRICE_ORG_YEARLY,
+    cosmos_school_monthly: process.env.COSMOS_PRICE_SCHOOL_MONTHLY || DEFAULT_COSMOS_PRICE_SCHOOL_MONTHLY,
+    cosmos_school_yearly: process.env.COSMOS_PRICE_SCHOOL_YEARLY || DEFAULT_COSMOS_PRICE_SCHOOL_YEARLY,
+  };
+  const tierDefaults = Object.values(tierPrices).filter(Boolean).reduce((acc, value, index) => {
+    const key = Object.keys(tierPrices)[index];
+    acc[key] = value;
+    return acc;
+  }, {});
   if (isEmulator) {
     const testMonthly = process.env.STRIPE_PRICE_MONTHLY_TEST || process.env.PUBLIC_STRIPE_PRICE_MONTHLY;
     const testYearly = process.env.STRIPE_PRICE_YEARLY_TEST || process.env.PUBLIC_STRIPE_PRICE_YEARLY;
     const testSchoolMonthly = process.env.STRIPE_PRICE_SCHOOL_TEST || process.env.PUBLIC_STRIPE_PRICE_SCHOOL;
     const testSchoolYearly = process.env.STRIPE_PRICE_SCHOOL_YEARLY_TEST || process.env.PUBLIC_STRIPE_PRICE_SCHOOL_YEARLY;
     return {
+      ...tierDefaults,
       monthly: testMonthly || safeSecretValue(STRIPE_PRICE_MONTHLY, DEFAULT_PRICE_MONTHLY),
       yearly: testYearly || safeSecretValue(STRIPE_PRICE_YEARLY, DEFAULT_PRICE_YEARLY),
       school: testSchoolMonthly || safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
@@ -453,6 +2311,7 @@ function getPriceMap() {
   const envYearly = process.env.STRIPE_PRICE_YEARLY;
   const envSchool = process.env.STRIPE_PRICE_SCHOOL;
   return {
+    ...tierDefaults,
     monthly: envMonthly || safeSecretValue(STRIPE_PRICE_MONTHLY, DEFAULT_PRICE_MONTHLY),
     yearly: envYearly || safeSecretValue(STRIPE_PRICE_YEARLY, DEFAULT_PRICE_YEARLY),
     school: envSchool || safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
@@ -461,14 +2320,21 @@ function getPriceMap() {
 
 function getProductMap() {
   const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIREBASE_EMULATOR_HUB);
+  const tierProducts = {
+    orbit: process.env.ORBIT_PRODUCT_ID || DEFAULT_ORBIT_PRODUCT_ID,
+    nebula: process.env.NEBULA_PRODUCT_ID || DEFAULT_NEBULA_PRODUCT_ID,
+    cosmos: process.env.COSMOS_PRODUCT_ID || DEFAULT_COSMOS_PRODUCT_ID,
+  };
   if (isEmulator) {
     return {
+      ...tierProducts,
       monthly: process.env.STRIPE_PRODUCT_MONTHLY_TEST || process.env.PUBLIC_STRIPE_PRODUCT_MONTHLY || DEFAULT_PRODUCT_MONTHLY,
       yearly: process.env.STRIPE_PRODUCT_YEARLY_TEST || process.env.PUBLIC_STRIPE_PRODUCT_YEARLY || DEFAULT_PRODUCT_YEARLY,
       school: process.env.STRIPE_PRODUCT_SCHOOL_TEST || process.env.PUBLIC_STRIPE_PRODUCT_SCHOOL || DEFAULT_PRODUCT_SCHOOL,
     };
   }
   return {
+    ...tierProducts,
     monthly: process.env.STRIPE_PRODUCT_MONTHLY || DEFAULT_PRODUCT_MONTHLY,
     yearly: process.env.STRIPE_PRODUCT_YEARLY || DEFAULT_PRODUCT_YEARLY,
     school: process.env.STRIPE_PRODUCT_SCHOOL || DEFAULT_PRODUCT_SCHOOL,
@@ -480,9 +2346,54 @@ function resolvePriceId(input) {
   const priceMap = getPriceMap();
   if (priceMap[input]) return priceMap[input];
   if (Object.values(priceMap).includes(input)) return input;
+  if (typeof input === 'string') {
+    const normalized = input.trim().toLowerCase();
+    if (normalized === 'orbit') return priceMap.orbit_org_monthly || null;
+    if (normalized === 'nebula') return priceMap.nebula_org_monthly || null;
+    if (normalized === 'cosmos') return priceMap.cosmos_org_monthly || null;
+  }
   if (typeof input === 'string' && /^price_[a-zA-Z0-9]+$/.test(input)) {
     return input;
   }
+  return null;
+}
+
+function resolvePlanTierFromSubscription(subscription) {
+  if (!subscription) return null;
+  const key = subscription?.metadata?.plan_key
+    || subscription?.metadata?.planKey
+    || subscription?.plan?.metadata?.plan_key
+    || subscription?.plan?.metadata?.planKey;
+  if (typeof key === 'string') {
+    const normalized = key.toLowerCase();
+    if (['orbit', 'nebula', 'cosmos'].includes(normalized)) return normalized;
+  }
+  const priceId = subscription?.items?.data?.[0]?.price?.id
+    || subscription?.plan?.id
+    || subscription?.plan
+    || null;
+  if (!priceId) return null;
+  const orbitIds = [
+    process.env.ORBIT_PRICE_ORG_MONTHLY || DEFAULT_ORBIT_PRICE_ORG_MONTHLY,
+    process.env.ORBIT_PRICE_ORG_YEARLY || DEFAULT_ORBIT_PRICE_ORG_YEARLY,
+    process.env.ORBIT_PRICE_SCHOOL_MONTHLY || DEFAULT_ORBIT_PRICE_SCHOOL_MONTHLY,
+    process.env.ORBIT_PRICE_SCHOOL_YEARLY || DEFAULT_ORBIT_PRICE_SCHOOL_YEARLY,
+  ];
+  const nebulaIds = [
+    process.env.NEBULA_PRICE_ORG_MONTHLY || DEFAULT_NEBULA_PRICE_ORG_MONTHLY,
+    process.env.NEBULA_PRICE_ORG_YEARLY || DEFAULT_NEBULA_PRICE_ORG_YEARLY,
+    process.env.NEBULA_PRICE_SCHOOL_MONTHLY || DEFAULT_NEBULA_PRICE_SCHOOL_MONTHLY,
+    process.env.NEBULA_PRICE_SCHOOL_YEARLY || DEFAULT_NEBULA_PRICE_SCHOOL_YEARLY,
+  ];
+  const cosmosIds = [
+    process.env.COSMOS_PRICE_ORG_MONTHLY || DEFAULT_COSMOS_PRICE_ORG_MONTHLY,
+    process.env.COSMOS_PRICE_ORG_YEARLY || DEFAULT_COSMOS_PRICE_ORG_YEARLY,
+    process.env.COSMOS_PRICE_SCHOOL_MONTHLY || DEFAULT_COSMOS_PRICE_SCHOOL_MONTHLY,
+    process.env.COSMOS_PRICE_SCHOOL_YEARLY || DEFAULT_COSMOS_PRICE_SCHOOL_YEARLY,
+  ];
+  if (orbitIds.includes(priceId)) return 'orbit';
+  if (nebulaIds.includes(priceId)) return 'nebula';
+  if (cosmosIds.includes(priceId)) return 'cosmos';
   return null;
 }
 
@@ -496,20 +2407,114 @@ function isSchoolPlanKey(value) {
   return String(value || '').trim().toLowerCase() === 'school';
 }
 
+function normalizePlanKeyValue(value) {
+  if (value == null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized || null;
+}
+
+function isSchoolPlanValue(value) {
+  const normalized = normalizePlanKeyValue(value);
+  return Boolean(normalized && (normalized === 'school' || normalized.includes('school')));
+}
+
 function getSchoolPriceIds() {
   return new Set([
     DEFAULT_PRICE_SCHOOL,
     safeSecretValue(STRIPE_PRICE_SCHOOL, DEFAULT_PRICE_SCHOOL),
+    process.env.ORBIT_PRICE_SCHOOL_MONTHLY,
+    process.env.ORBIT_PRICE_SCHOOL_YEARLY,
+    process.env.NEBULA_PRICE_SCHOOL_MONTHLY,
+    process.env.NEBULA_PRICE_SCHOOL_YEARLY,
+    process.env.COSMOS_PRICE_SCHOOL_MONTHLY,
+    process.env.COSMOS_PRICE_SCHOOL_YEARLY,
   ].filter(Boolean));
 }
 
 function isSchoolSubscriptionPayload(payload = {}) {
   const schoolIds = getSchoolPriceIds();
   const planKey = String(payload.planKey || payload.plan_key || '').trim().toLowerCase();
-  const planId = payload.plan || payload.planId || payload.plan_id || null;
+  const planId = payload.plan
+    || payload.planId
+    || payload.plan_id
+    || payload.plan?.id
+    || payload.items?.[0]?.price?.id
+    || payload.items?.data?.[0]?.price?.id
+    || null;
 
   if (isSchoolPlanKey(planKey)) return true;
+  if (isSchoolPlanValue(planKey)) return true;
   if (planId && schoolIds.has(planId)) return true;
+  return false;
+}
+
+function isSchoolOrgData(data = {}) {
+  if (data.school_plan_active === true || data.is_school_plan === true || data.schoolPlan === true) return true;
+
+  const planKey = normalizePlanKeyValue(
+    data.planKey
+    || data.plan_key
+    || data.plan
+    || data.planType
+    || data.plan_type
+    || data.subscription_plan_key
+    || data.subscriptionPlanKey
+    || data.metadata?.plan_key,
+  );
+  if (isSchoolPlanValue(planKey)) return true;
+
+  const category = normalizePlanKeyValue(
+    data.category
+    || data.type
+    || data.org_type
+    || data.organization_type,
+  );
+  if (isSchoolPlanValue(category)) return true;
+
+  const sharePolicy = normalizePlanKeyValue(
+    data.default_share_policy
+    || data.defaultSharePolicy
+    || data.metadata?.default_share_policy,
+  );
+  if (sharePolicy === 'required') return true;
+
+  if (data.default_auto_share === true) return true;
+
+  const subscription = data.subscription || data.subscriptionData || data.subscription_info || null;
+  if (subscription && isSchoolSubscriptionPayload(subscription)) return true;
+
+  return false;
+}
+
+async function resolveOrgSchoolPlan({ orgId, orgCode } = {}) {
+  let orgSnap = null;
+  if (orgId) {
+    orgSnap = await resolveOrgDocById(orgId);
+  }
+  if (!orgSnap?.exists && orgCode) {
+    orgSnap = await resolveOrgDocByCode(orgCode);
+  }
+
+  if (orgSnap?.exists) {
+    const data = orgSnap.data() || {};
+    if (isSchoolOrgData(data)) return true;
+
+    const ownerId =
+      data.owner_uid
+      || data.ownerUid
+      || data.created_by
+      || data.createdBy
+      || null;
+    if (ownerId) {
+      try {
+        const userSnap = await db.collection('users').doc(ownerId).get();
+        if (userSnap.exists && isSchoolOrgData(userSnap.data() || {})) return true;
+      } catch (error) {
+        logger.warn('Unable to resolve school plan from owner user', error);
+      }
+    }
+  }
+
   return false;
 }
 
@@ -696,15 +2701,26 @@ async function findUserDocByUid(uid) {
   return null;
 }
 
-async function syncCustomClaimsForUser(uid, paid) {
+async function syncCustomClaimsForUser(uid, paid, planTier = DEFAULT_PLAN_TIER, grandfathered = false) {
   if (!uid) return;
   try {
     const userRecord = await authAdmin.getUser(uid);
     const currentClaims = userRecord.customClaims || {};
-    if (currentClaims.paid === paid) {
+    const normalizedTier = normalizePlanTier(planTier);
+    const normalizedGrandfathered = Boolean(grandfathered);
+    if (
+      currentClaims.paid === paid
+      && currentClaims.plan_tier === normalizedTier
+      && currentClaims.grandfathered === normalizedGrandfathered
+    ) {
       return;
     }
-    await authAdmin.setCustomUserClaims(uid, { ...currentClaims, paid });
+    await authAdmin.setCustomUserClaims(uid, {
+      ...currentClaims,
+      paid,
+      plan_tier: normalizedTier,
+      grandfathered: normalizedGrandfathered,
+    });
   } catch (error) {
     logger.warn(`Unable to sync custom claims for ${uid}`, error);
   }
@@ -738,6 +2754,461 @@ function isAdminRole(value) {
 
 function hasAdminFlag(data = {}) {
   return data.isAdmin === true || data.is_admin === true || data.admin === true;
+}
+
+function isSuperAdminRole(value) {
+  if (!value) return false;
+  const allowed = new Set(['superadmin', 'super_admin', 'owner']);
+  if (Array.isArray(value)) {
+    return value.some((role) => allowed.has(String(role).toLowerCase()));
+  }
+  return allowed.has(String(value).toLowerCase());
+}
+
+function hasSuperAdminFlag(data = {}) {
+  return data.super_admin === true
+    || data.superAdmin === true
+    || data.is_super_admin === true
+    || data.isSuperAdmin === true
+    || isSuperAdminRole(data.role)
+    || isSuperAdminRole(data.roles);
+}
+
+function extractOrgContextFromUserData(data = {}) {
+  const orgId =
+    data.organizationId
+    || data.organization_id
+    || data.orgId
+    || data.org_id
+    || data.linked_org_id
+    || data.linkedOrgId
+    || null;
+  const orgCode =
+    data.accessCode
+    || data.access_code
+    || data.orgCode
+    || data.org_code
+    || data.organizationCode
+    || data.organization_code
+    || null;
+  return { orgId, orgCode };
+}
+
+function extractStripeCustomerId(data = {}) {
+  return data.stripeCustomerId
+    || data.stripeCustomer
+    || data.subscription?.customerId
+    || data.subscription?.customer_id
+    || data.subscription?.customer
+    || null;
+}
+
+async function isBillingOwnerForUser(uid, userData = {}) {
+  if (!uid) return false;
+
+  let { orgId, orgCode } = extractOrgContextFromUserData(userData);
+  if (!orgId && !orgCode) {
+    const resolved = await resolveOrgContextForUser(uid);
+    orgId = resolved.orgId || null;
+    orgCode = resolved.orgCode || null;
+  }
+
+  let orgSnap = null;
+  if (orgId) {
+    orgSnap = await resolveOrgDocById(orgId);
+  }
+  if (!orgSnap?.exists && orgCode) {
+    orgSnap = await resolveOrgDocByCode(orgCode);
+  }
+  if (!orgSnap?.exists) return false;
+
+  const orgData = orgSnap.data() || {};
+  const ownerCandidates = [
+    orgData.billing_owner_uid,
+    orgData.billingOwnerUid,
+    orgData.owner_uid,
+    orgData.ownerUid,
+    orgData.created_by,
+    orgData.createdBy,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value));
+
+  if (ownerCandidates.includes(String(uid))) {
+    return true;
+  }
+
+  const userCustomerId = extractStripeCustomerId(userData);
+  const orgCustomerId = extractStripeCustomerId(orgData)
+    || orgData.stripe_customer_id
+    || orgData.stripeCustomerId
+    || null;
+
+  if (userCustomerId && orgCustomerId && String(userCustomerId) === String(orgCustomerId)) {
+    return true;
+  }
+
+  return false;
+}
+
+function getSubAdminPasswordPepper() {
+  return process.env.SUBADMIN_PASSWORD_PEPPER || DEFAULT_SUBADMIN_PASSWORD_PEPPER;
+}
+
+function normalizeSubAdminEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeSubAdminPassword(password) {
+  return String(password || '').trim();
+}
+
+function buildSubAdminPasswordFingerprint(password) {
+  const pepper = getSubAdminPasswordPepper();
+  return crypto
+    .createHash('sha256')
+    .update(`${pepper}:${password}`)
+    .digest('hex');
+}
+
+function subAdminPasswordIndexRef(fingerprint) {
+  const key = String(fingerprint || '').trim();
+  if (!key) return null;
+  return db.collection(SUBADMIN_PASSWORD_INDEX_COLLECTION).doc(key);
+}
+
+function buildSubAdminPasswordHash(password) {
+  const pepper = getSubAdminPasswordPepper();
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto
+    .pbkdf2Sync(password, `${pepper}:${salt}`, 120000, 64, 'sha512')
+    .toString('hex');
+  return { salt, hash };
+}
+
+function verifySubAdminPassword(password, passwordSalt, passwordHash) {
+  const normalizedPassword = normalizeSubAdminPassword(password);
+  const salt = String(passwordSalt || '').trim();
+  const expectedHash = String(passwordHash || '').trim();
+  if (!normalizedPassword || !salt || !expectedHash) return false;
+
+  const pepper = getSubAdminPasswordPepper();
+  const actualHash = crypto
+    .pbkdf2Sync(normalizedPassword, `${pepper}:${salt}`, 120000, 64, 'sha512')
+    .toString('hex');
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+  } catch (error) {
+    return actualHash === expectedHash;
+  }
+}
+
+function normalizeGroupScopeKey(value) {
+  const raw = String(value || '').trim();
+  return raw || SUPER_ADMIN_GROUP_KEY;
+}
+
+function extractGroupScopeFromData(data = {}) {
+  for (const field of GROUP_SCOPE_FIELDS) {
+    const value = data[field];
+    if (value === null || value === undefined) continue;
+    const normalized = String(value).trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function resolveGroupNameFromData(data = {}) {
+  return String(
+    data.target_group_name
+    || data.targetGroupName
+    || data.sub_admin_group_name
+    || data.subAdminGroupName
+    || data.groupName
+    || data.group_name
+    || 'Subadmin Group',
+  ).trim();
+}
+
+function resolveOrgIdentityFromData(data = {}) {
+  const orgId = String(
+    data.orgId
+    || data.org_id
+    || data.organizationId
+    || data.organization_id
+    || '',
+  ).trim();
+  const orgCode = String(
+    data.orgCode
+    || data.org_code
+    || data.organizationCode
+    || data.organization_code
+    || data.accessCode
+    || data.access_code
+    || '',
+  ).trim().toUpperCase();
+  return { orgId, orgCode };
+}
+
+function isBlockingJoinStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return ['pending', 'accepted', 'approved', 'active', 'connected', 'granted', 'confirmed'].some((token) =>
+    normalized.includes(token)
+  );
+}
+
+function makeSafeScopedId(...parts) {
+  return parts
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join('_')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 180);
+}
+
+function sanitizeJoinRequestGroupIds(input) {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set();
+  const values = [];
+  input.forEach((raw) => {
+    const value = normalizeGroupScopeKey(raw);
+    if (seen.has(value)) return;
+    seen.add(value);
+    values.push(value);
+  });
+  return values;
+}
+
+async function resolveOrganizationByAccessCode(accessCode) {
+  const normalizedCode = String(accessCode || '').trim().toUpperCase();
+  if (!normalizedCode || normalizedCode.length !== 6) {
+    return null;
+  }
+  const orgDoc = await resolveOrgDocByCode(normalizedCode);
+  if (!orgDoc?.exists) return null;
+  const orgData = orgDoc.data() || {};
+  const resolvedCode = String(
+    orgData.access_code
+    || orgData.accessCode
+    || orgData.orgCode
+    || orgData.org_code
+    || orgData.organizationCode
+    || orgData.organization_code
+    || normalizedCode,
+  ).trim().toUpperCase();
+  return {
+    orgId: orgDoc.id,
+    orgCode: resolvedCode || normalizedCode,
+    orgName: String(orgData.name || orgData.orgName || orgData.organizationName || 'Organization').trim(),
+  };
+}
+
+async function listOrganizationSubAdminGroups(orgId) {
+  if (!orgId) return [];
+  const groupsRef = db.collection('organizations').doc(orgId).collection('sub_admin_groups');
+  const snap = await groupsRef.get().catch(() => null);
+  if (!snap || snap.empty) return [];
+  return snap.docs
+    .map((docSnap) => {
+      const data = docSnap.data() || {};
+      return {
+        id: docSnap.id,
+        name: String(data.name || 'Subadmin Group').trim() || 'Subadmin Group',
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function collectBlockedJoinScopesForUser({ uid, orgId, orgCode }) {
+  const blockedScopes = new Set();
+  if (!uid) return blockedScopes;
+
+  const orgIdValue = String(orgId || '').trim();
+  const orgCodeValue = String(orgCode || '').trim().toUpperCase();
+
+  const [requestSnap, membershipSnap] = await Promise.all([
+    db.collection('organization_join_requests').where('user_id', '==', uid).get().catch(() => null),
+    db.collection('user_organizations').where('user_id', '==', uid).get().catch(() => null),
+  ]);
+
+  const includeIfScopedToOrg = (data = {}) => {
+    const identity = resolveOrgIdentityFromData(data);
+    if (orgIdValue && identity.orgId === orgIdValue) return true;
+    if (orgCodeValue && identity.orgCode === orgCodeValue) return true;
+    return false;
+  };
+
+  if (requestSnap) {
+    requestSnap.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      if (!includeIfScopedToOrg(data)) return;
+      if (!isBlockingJoinStatus(data.status)) return;
+      blockedScopes.add(normalizeGroupScopeKey(extractGroupScopeFromData(data)));
+    });
+  }
+
+  if (membershipSnap) {
+    membershipSnap.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      if (!includeIfScopedToOrg(data)) return;
+      if (!isBlockingJoinStatus(data.status)) return;
+      blockedScopes.add(normalizeGroupScopeKey(extractGroupScopeFromData(data)));
+    });
+  }
+
+  return blockedScopes;
+}
+
+async function buildJoinTargetsForOrganization({ uid, orgId, orgCode, orgName }) {
+  const [groups, blockedScopes] = await Promise.all([
+    listOrganizationSubAdminGroups(orgId),
+    collectBlockedJoinScopesForUser({ uid, orgId, orgCode }),
+  ]);
+
+  const targets = [
+    {
+      id: SUPER_ADMIN_GROUP_KEY,
+      name: 'Super Admin',
+      isSuperAdmin: true,
+      alreadyJoined: blockedScopes.has(SUPER_ADMIN_GROUP_KEY),
+    },
+    ...groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      isSuperAdmin: false,
+      alreadyJoined: blockedScopes.has(group.id),
+    })),
+  ];
+
+  return {
+    orgId,
+    orgCode,
+    orgName,
+    hasSubAdminGroups: groups.length > 0,
+    targets,
+    blockedScopes,
+  };
+}
+
+async function queueOrganizationJoinRequests({
+  uid,
+  email,
+  userName,
+  orgId,
+  orgCode,
+  orgName,
+  selectedGroupScopeIds,
+  availableTargets,
+  blockedScopes,
+}) {
+  const now = Timestamp.now();
+  const targetById = new Map(
+    availableTargets.map((target) => [target.id, target]),
+  );
+  const createdTargets = [];
+  const skippedTargets = [];
+
+  for (const scopeId of selectedGroupScopeIds) {
+    const target = targetById.get(scopeId);
+    if (!target) {
+      skippedTargets.push({ id: scopeId, reason: 'not-found' });
+      continue;
+    }
+    if (blockedScopes.has(scopeId)) {
+      skippedTargets.push({ id: scopeId, reason: 'already-requested' });
+      continue;
+    }
+
+    const isSuperAdminTarget = scopeId === SUPER_ADMIN_GROUP_KEY || target.isSuperAdmin;
+    const scopedGroupId = isSuperAdminTarget ? null : scopeId;
+    const scopedGroupName = isSuperAdminTarget ? 'Super Admin' : target.name;
+    const requestDocId = makeSafeScopedId('join', uid, orgId, scopeId);
+    const requestRef = db.collection('organization_join_requests').doc(requestDocId);
+
+    await requestRef.set({
+      user_id: uid,
+      userId: uid,
+      user_email: (email || '').toLowerCase() || null,
+      email: (email || '').toLowerCase() || null,
+      user_name: userName || 'Volunteer',
+      userName: userName || 'Volunteer',
+      orgId,
+      org_id: orgId,
+      organizationId: orgId,
+      organization_id: orgId,
+      orgCode,
+      org_code: orgCode,
+      organizationCode: orgCode,
+      organization_code: orgCode,
+      organization_name: orgName,
+      organizationName: orgName,
+      role: 'volunteer',
+      requested_role: 'volunteer',
+      requestType: 'group_join',
+      source: 'volunteer_portal',
+      status: 'pending',
+      target_group_id: scopedGroupId,
+      targetGroupId: scopedGroupId,
+      target_group_name: scopedGroupName,
+      targetGroupName: scopedGroupName,
+      sub_admin_group_id: scopedGroupId,
+      subAdminGroupId: scopedGroupId,
+      sub_admin_group_name: scopedGroupName,
+      subAdminGroupName: scopedGroupName,
+      updated_at: now,
+      created_at: now,
+    }, { merge: true });
+
+    blockedScopes.add(scopeId);
+    createdTargets.push({
+      id: scopeId,
+      name: scopedGroupName,
+      isSuperAdmin: isSuperAdminTarget,
+    });
+  }
+
+  return {
+    createdTargets,
+    skippedTargets,
+  };
+}
+
+async function requireSuperAdmin(request) {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const token = request.auth?.token || {};
+  if (
+    token.super_admin === true
+    || token.superAdmin === true
+    || token.is_super_admin === true
+    || token.isSuperAdmin === true
+    || isSuperAdminRole(token.role)
+    || isSuperAdminRole(token.roles)
+  ) {
+    return { uid, token, userData: null };
+  }
+
+  const userSnap = await db.collection('users').doc(uid).get();
+  if (!userSnap.exists) {
+    throw new HttpsError('permission-denied', 'Super admin access is required.');
+  }
+
+  const userData = userSnap.data() || {};
+  if (hasSuperAdminFlag(userData)) {
+    return { uid, token, userData };
+  }
+
+  const billingOwner = await isBillingOwnerForUser(uid, userData);
+  if (!billingOwner) {
+    throw new HttpsError('permission-denied', 'Super admin access is required.');
+  }
+
+  return { uid, token, userData };
 }
 
 async function isAuthorizedAdmin(decoded = {}) {
@@ -975,6 +3446,10 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
       paid: subscriptionPayload.paid,
       emailNormalized: normalizedEmail || userDoc.get('emailNormalized') || null,
       stripeCustomerId: subscription.customer,
+      pending_plan_tier: null,
+      pending_plan_effective_at: null,
+      pending_plan_requested_at: null,
+      pending_plan_requested_by: null,
     };
 
     if (isSchoolSubscriptionPayload(subscriptionPayload)) {
@@ -998,7 +3473,54 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
     } catch (mirrorError) {
       logger.warn('Unable to mirror subscription update to user_organizations', mirrorError);
     }
-    await syncCustomClaimsForUser(userRef.id, subscriptionPayload.paid);
+    const planTier = resolvePlanTierFromSubscriptionPayload(subscriptionPayload);
+    updatePayload.plan_tier = planTier;
+    const isGrandfathered = Boolean(existingData.grandfathered || existingData.is_grandfathered);
+    await syncCustomClaimsForUser(userRef.id, subscriptionPayload.paid, planTier, isGrandfathered);
+    const userContext = extractOrgContextFromUserData(existingData);
+    let resolvedOrgId = userContext.orgId || null;
+    let resolvedOrgCode = userContext.orgCode || null;
+    if (!resolvedOrgId && !resolvedOrgCode) {
+      const resolved = await resolveOrgContextForUser(userRef.id);
+      resolvedOrgId = resolved.orgId || null;
+      resolvedOrgCode = resolved.orgCode || null;
+    }
+    let resolvedOrgSnap = null;
+    if (resolvedOrgId) {
+      resolvedOrgSnap = await resolveOrgDocById(resolvedOrgId);
+    }
+    if (!resolvedOrgSnap?.exists && resolvedOrgCode) {
+      resolvedOrgSnap = await resolveOrgDocByCode(resolvedOrgCode);
+    }
+    if (resolvedOrgSnap?.exists) {
+      const orgCollections = ['organizations', 'orgs', 'volunteer_organizations'];
+      const orgPlanPayload = {
+        billing_owner_uid: userRef.id,
+      };
+      if (normalizedEmail) {
+        orgPlanPayload.billing_owner_email = normalizedEmail;
+      }
+      if (updatePayload.plan_tier) {
+        const isSchoolPlan = isSchoolSubscriptionPayload(subscriptionPayload);
+        orgPlanPayload.plan_tier = planTier;
+        orgPlanPayload.pending_plan_tier = null;
+        orgPlanPayload.pending_plan_effective_at = null;
+        orgPlanPayload.pending_plan_requested_at = null;
+        orgPlanPayload.pending_plan_requested_by = null;
+        orgPlanPayload.school_plan_active = isSchoolPlan;
+        if (subscriptionPayload.planKey) {
+          orgPlanPayload.plan_key = subscriptionPayload.planKey;
+        }
+        if (isSchoolPlan) {
+          orgPlanPayload.default_share_policy = 'required';
+          orgPlanPayload.default_auto_share = true;
+          orgPlanPayload.default_share_status = 'approved';
+        }
+      }
+      await Promise.all(orgCollections.map((coll) =>
+        db.collection(coll).doc(resolvedOrgSnap.id).set(orgPlanPayload, { merge: true }).catch(() => {})
+      ));
+    }
     if (normalizedEmail) {
       await db
         .collection('pendingSubscriptions')
@@ -1019,6 +3541,27 @@ async function upsertSubscriptionRecord(stripe, subscription, fallbackEmail, fal
         .doc(effectiveUid)
         .delete()
         .catch(() => {});
+    }
+
+    if (
+      existingSubscription?.id
+      && existingSubscription.id !== subscription.id
+      && subscription.status
+      && subscription.status !== 'canceled'
+    ) {
+      try {
+        await stripe.subscriptions.del(existingSubscription.id);
+        logger.info('Canceled previous subscription after upgrade', {
+          oldId: existingSubscription.id,
+          newId: subscription.id,
+        });
+      } catch (cancelError) {
+        logger.warn('Unable to cancel previous subscription', {
+          oldId: existingSubscription.id,
+          newId: subscription.id,
+          message: cancelError?.message,
+        });
+      }
     }
   } else {
     if (!historyEntry.changeType) {
@@ -1223,6 +3766,9 @@ export const createCheckout = onRequest(
       email,
       uid,
       trial: trialRequested,
+      orgName,
+      firstName,
+      lastName,
     } = req.body || {};
     const resolvedPriceId = resolvePriceId(priceId || plan);
 
@@ -1242,7 +3788,7 @@ export const createCheckout = onRequest(
     }
 
     const shouldEvaluateTrial = Boolean(trialRequested);
-    const TRIAL_PERIOD_DAYS = 14;
+    const TRIAL_PERIOD_DAYS = 365;
     let shouldApplyTrial = false;
 
     if (shouldEvaluateTrial) {
@@ -1314,8 +3860,10 @@ export const createCheckout = onRequest(
         successParams.set('plan', planKey);
       }
       const successQuery = successParams.toString();
-      const successUrl = `${publicBase}/admin/create?${successQuery}&session_id={CHECKOUT_SESSION_ID}`;
-      const cancelUrl = `${publicBase}/admin/create?checkout=cancel`;
+      const isAuthedCheckout = Boolean(decodedToken?.uid);
+      const successPath = isAuthedCheckout ? '/admin/create' : '/#create';
+      const successUrl = `${publicBase}${successPath}?${successQuery}&session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${publicBase}/#pricing`;
 
       const subscriptionData = {
         metadata: {
@@ -1348,6 +3896,9 @@ export const createCheckout = onRequest(
           plan: resolvedPriceId,
           plan_key: planKey || '',
           email: normalizedEmail || (email || '').toLowerCase(),
+          org_name: String(orgName || '').trim(),
+          first_name: String(firstName || '').trim(),
+          last_name: String(lastName || '').trim(),
         },
         subscription_data: subscriptionData,
       });
@@ -1457,6 +4008,26 @@ export const createOrganization = onRequest(
     }
 
     try {
+      let resolvedSubscription = session?.subscription || null;
+      if (resolvedSubscription && typeof resolvedSubscription === 'string') {
+        try {
+          resolvedSubscription = await getStripeClient().subscriptions.retrieve(resolvedSubscription, {
+            expand: ['items.data.price', 'items.data.price.product'],
+          });
+        } catch (error) {
+          logger.warn('Unable to expand checkout subscription during org create', { message: error?.message });
+        }
+      }
+      const derivedTier = resolvePlanTierFromSubscription(resolvedSubscription);
+      const schoolPlanSource = resolvedSubscription || {
+        plan: session?.metadata?.plan,
+        planKey: session?.metadata?.plan_key,
+        plan_key: session?.metadata?.plan_key,
+      };
+      const isSchoolPlan = isSchoolSubscriptionPayload(schoolPlanSource);
+      const planKey = resolvedSubscription?.metadata?.plan_key
+        || session?.metadata?.plan_key
+        || null;
       const orgCode = await createUniqueAccessCode();
       const orgRef = db.collection('organizations').doc();
 
@@ -1466,11 +4037,23 @@ export const createOrganization = onRequest(
         created_at: Timestamp.now(),
         created_by: decodedToken.uid,
         owner_uid: decodedToken.uid,
+        billing_owner_uid: decodedToken.uid,
+        billing_owner_email: (decodedToken.email || '').toLowerCase() || null,
         source: 'stripe_checkout',
         stripe_session_id: sessionId || null,
         stripe_customer_id: session?.customer?.id || session?.customer || null,
-        stripe_subscription_id: session?.subscription?.id || session?.subscription || null,
+        stripe_subscription_id: resolvedSubscription?.id || session?.subscription || null,
+        plan_tier: derivedTier || null,
+        school_plan_active: isSchoolPlan,
       };
+      if (planKey) {
+        payload.plan_key = planKey;
+      }
+      if (isSchoolPlan) {
+        payload.default_share_policy = 'required';
+        payload.default_auto_share = true;
+        payload.default_share_status = 'approved';
+      }
 
       await orgRef.set(payload, { merge: true });
       await ensureUserOrganizationLink(orgCode, orgRef.id, decodedToken.uid, {
@@ -1485,6 +4068,7 @@ export const createOrganization = onRequest(
           organizationName: name,
           organizationId: orgRef.id,
           accessCode: orgCode,
+          plan_tier: derivedTier || null,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
         },
@@ -1519,7 +4103,7 @@ export const joinOrganization = onRequest(
       return;
     }
 
-    const { accessCode } = req.body || {};
+    const { accessCode, groupIds } = req.body || {};
     const normalizedCode = String(accessCode || '').trim().toUpperCase();
     if (!normalizedCode || normalizedCode.length !== 6) {
       res.status(400).json({ error: 'Please enter a valid 6-character organization code.' });
@@ -1527,39 +4111,69 @@ export const joinOrganization = onRequest(
     }
 
     try {
-      const orgSnapshot = await db
-        .collection('organizations')
-        .where('access_code', '==', normalizedCode)
-        .limit(1)
-        .get();
-
-      if (orgSnapshot.empty) {
+      const org = await resolveOrganizationByAccessCode(normalizedCode);
+      if (!org) {
         res.status(404).json({ error: 'Organization not found. Check the code and try again.' });
         return;
       }
 
-      const orgDoc = orgSnapshot.docs[0];
-      const orgData = orgDoc.data() || {};
+      const targetPayload = await buildJoinTargetsForOrganization({
+        uid: decodedToken.uid,
+        orgId: org.orgId,
+        orgCode: org.orgCode,
+        orgName: org.orgName,
+      });
 
-      await ensureUserOrganizationLink(normalizedCode, orgDoc.id, decodedToken.uid, {
-        email: decodedToken.email || null,
-      }, orgData);
+      const requestedScopeIds = sanitizeJoinRequestGroupIds(groupIds);
+      const defaultScope = targetPayload.hasSubAdminGroups ? [] : [SUPER_ADMIN_GROUP_KEY];
+      const selectedScopeIds = (requestedScopeIds.length ? requestedScopeIds : defaultScope)
+        .filter((scopeId) => targetPayload.targets.some((target) => target.id === scopeId));
 
-      await db.collection('users').doc(decodedToken.uid).set(
-        {
-          email: decodedToken.email || null,
-          organizationId: orgDoc.id,
-          organizationName: orgData.name || null,
-          accessCode: normalizedCode,
-          updatedAt: Timestamp.now(),
-        },
-        { merge: true },
-      );
+      if (!selectedScopeIds.length) {
+        res.status(400).json({ error: 'Select at least one group to request.' });
+        return;
+      }
+
+      const userSnap = await db.collection('users').doc(decodedToken.uid).get().catch(() => null);
+      const userData = userSnap?.exists ? (userSnap.data() || {}) : {};
+      const userName = String(
+        userData.displayName
+        || userData.name
+        || [userData.firstName, userData.lastName].filter(Boolean).join(' ')
+        || decodedToken.name
+        || decodedToken.email
+        || 'Volunteer',
+      ).trim();
+      const userEmail = String(
+        decodedToken.email
+        || userData.email
+        || '',
+      ).trim().toLowerCase();
+
+      const { createdTargets } = await queueOrganizationJoinRequests({
+        uid: decodedToken.uid,
+        email: userEmail,
+        userName,
+        orgId: targetPayload.orgId,
+        orgCode: targetPayload.orgCode,
+        orgName: targetPayload.orgName,
+        selectedGroupScopeIds: selectedScopeIds,
+        availableTargets: targetPayload.targets,
+        blockedScopes: targetPayload.blockedScopes,
+      });
+
+      if (!createdTargets.length) {
+        res.status(409).json({ error: 'You have already joined or requested these groups.' });
+        return;
+      }
 
       res.json({
-        organizationId: orgDoc.id,
-        organizationCode: normalizedCode,
-        organizationName: orgData.name || null,
+        organizationId: targetPayload.orgId,
+        organizationCode: targetPayload.orgCode,
+        organizationName: targetPayload.orgName || null,
+        createdCount: createdTargets.length,
+        createdTargets,
+        pendingApproval: true,
       });
     } catch (error) {
       logger.error('Join organization failed', error);
@@ -1590,7 +4204,7 @@ export const createPortal = onRequest(
     try {
       const userDoc = await db.collection('users').doc(decodedToken.uid).get();
       if (!userDoc.exists) {
-        res.status(404).json({ error: 'Admin record not found.' });
+        res.json({ customerId: null, invoices: [] });
         return;
       }
 
@@ -1657,8 +4271,22 @@ export const getCheckoutSession = onRequest(
         || (session.customer && typeof session.customer === 'object'
           ? session.customer.email
           : null);
+      const name = session.customer_details?.name
+        || (session.customer && typeof session.customer === 'object'
+          ? session.customer.name
+          : null);
+      const metadata = session?.metadata || {};
+      const firstName = metadata.first_name || null;
+      const lastName = metadata.last_name || null;
+      const orgName = metadata.org_name || null;
 
-      res.json({ email: email || null });
+      res.json({
+        email: email || null,
+        name: name || null,
+        firstName,
+        lastName,
+        orgName,
+      });
     } catch (error) {
       logger.error(`Checkout session lookup failed for ${sessionId}`, error);
       res.status(500).json({ error: 'Unable to retrieve checkout session.' });
@@ -1686,7 +4314,7 @@ export const listInvoices = onRequest(
     try {
       const userDoc = await db.collection('users').doc(decodedToken.uid).get();
       if (!userDoc.exists) {
-        res.status(404).json({ error: 'Admin record not found.' });
+        res.json({ customerId: null, invoices: [] });
         return;
       }
 
@@ -1707,7 +4335,7 @@ export const listInvoices = onRequest(
       }
 
       if (!resolvedCustomerId) {
-        res.status(404).json({ error: 'No Stripe customer record found for this account.' });
+        res.json({ customerId: null, invoices: [] });
         return;
       }
 
@@ -1801,29 +4429,64 @@ export const listSubscriptions = onRequest(
         resolvedCustomerId: baseCustomerId
       });
 
+      const pickBestSubscription = (subs = []) => {
+        if (!Array.isArray(subs) || subs.length === 0) return null;
+        const priority = new Map([
+          ['trialing', 0],
+          ['active', 1],
+          ['past_due', 2],
+          ['incomplete', 3],
+          ['unpaid', 4],
+          ['incomplete_expired', 5],
+          ['canceled', 6],
+        ]);
+        return subs
+          .filter(Boolean)
+          .sort((a, b) => {
+            const aPriority = priority.has(a.status) ? priority.get(a.status) : 99;
+            const bPriority = priority.has(b.status) ? priority.get(b.status) : 99;
+            if (aPriority !== bPriority) return aPriority - bPriority;
+            const aEnd = a.current_period_end || a.created || 0;
+            const bEnd = b.current_period_end || b.created || 0;
+            return bEnd - aEnd;
+          })[0] || null;
+      };
+
       if (!subscription && fallbackEmail) {
-        let lookupId = baseCustomerId;
-        if (!lookupId) {
-          try {
-            const customers = await stripe.customers.list({ email: fallbackEmail, limit: 1 });
-            lookupId = customers.data?.[0]?.id || null;
-          } catch (err) {
-            logger.warn('Initial customer lookup failed', { email: fallbackEmail });
-          }
+        let customers = [];
+        try {
+          const customerResp = await stripe.customers.list({ email: fallbackEmail, limit: 10 });
+          customers = customerResp.data || [];
+        } catch (err) {
+          logger.warn('Customer lookup failed', { email: fallbackEmail });
         }
-        if (lookupId) {
+
+        const lookupIds = [
+          baseCustomerId,
+          ...customers.map((customer) => customer?.id).filter(Boolean)
+        ].filter(Boolean);
+
+        const seen = new Set();
+        const allSubs = [];
+        for (const id of lookupIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
           try {
             const subs = await stripe.subscriptions.list({
-              customer: lookupId,
+              customer: id,
               status: 'all',
-              limit: 1,
+              limit: 10,
               expand: ['data.items.data.price', 'data.items.data.price.product', 'data.default_payment_method'],
             });
-            subscription = subs.data?.[0] || null;
+            if (Array.isArray(subs.data)) {
+              allSubs.push(...subs.data);
+            }
           } catch (err) {
-            logger.warn('Subscription list failed', { customer: lookupId });
+            logger.warn('Subscription list failed', { customer: id });
           }
         }
+
+        subscription = pickBestSubscription(allSubs);
       }
 
       // Ensure we have the most complete subscription object possible
@@ -1865,12 +4528,32 @@ export const listSubscriptions = onRequest(
       subscriptionHistory.sort((a, b) => (b?.recordedAtMs || 0) - (a?.recordedAtMs || 0));
       invoiceHistory.sort((a, b) => (b?.created || 0) - (a?.created || 0));
 
+      const derivedTier = resolvePlanTierFromSubscription(subscription);
+      if (derivedTier && derivedTier !== (userData.plan_tier || userData.planTier)) {
+        try {
+          await userDoc.ref.set({ plan_tier: derivedTier, updatedAt: Timestamp.now() }, { merge: true });
+        } catch (error) {
+          logger.warn('Unable to persist derived plan tier', { message: error?.message });
+        }
+      }
+
+      const normalizedStatus = subscription?.status || null;
+      const normalizedTrialEnd = subscription?.trial_end || subscription?.trialEnd || null;
+      const normalizedPeriodEnd = subscription?.current_period_end || subscription?.currentPeriodEnd || null;
+
       res.json({
         subscription,
         subscriptionHistory,
         invoiceHistory,
         lastInvoice,
         paymentMethod,
+        planTier: derivedTier || userData.plan_tier || userData.planTier || null,
+        normalizedStatus,
+        trialEnd: normalizedTrialEnd,
+        currentPeriodEnd: normalizedPeriodEnd,
+        pendingPlanTier: userData.pending_plan_tier || userData.pendingPlanTier || null,
+        pendingPlanEffectiveAt: userData.pending_plan_effective_at || userData.pendingPlanEffectiveAt || null,
+        grandfathered: Boolean(userData.grandfathered || userData.is_grandfathered),
       });
     } catch (error) {
       logger.error('Subscription history retrieval failed', error);
@@ -1961,7 +4644,9 @@ export const syncUserClaims = onDocumentWritten('users/{userId}', async (event) 
     return;
   }
 
-  await syncCustomClaimsForUser(userId, paid);
+  const planTier = normalizePlanTier(afterData.plan_tier || afterData.planTier || afterData.planKey || afterData.plan_key);
+  const grandfathered = Boolean(afterData.grandfathered || afterData.is_grandfathered);
+  await syncCustomClaimsForUser(userId, paid, planTier, grandfathered);
 });
 
 const PURGE_COLLECTIONS = [
@@ -2474,6 +5159,34 @@ export const stripeWebhook = onRequest(
     }
   }
 );
+
+export const applyPendingPlanChanges = onSchedule('every 12 hours', async () => {
+  const now = Date.now();
+  const collections = ['organizations', 'orgs', 'volunteer_organizations'];
+  for (const coll of collections) {
+    const snap = await db.collection(coll)
+      .where('pending_plan_effective_at', '<=', now)
+      .limit(200)
+      .get();
+    if (snap.empty) continue;
+    const updates = snap.docs.map((docSnap) => {
+      const data = docSnap.data() || {};
+      const pendingTier = normalizePlanTier(data.pending_plan_tier || data.pendingPlanTier);
+      if (!pendingTier) return null;
+      return docSnap.ref.set({
+        plan_tier: pendingTier,
+        pending_plan_tier: null,
+        pending_plan_effective_at: null,
+        pending_plan_requested_at: null,
+        pending_plan_requested_by: null,
+        plan_updated_at: Timestamp.now(),
+      }, { merge: true });
+    }).filter(Boolean);
+    if (updates.length) {
+      await Promise.all(updates);
+    }
+  }
+});
 
 export const cleanupPendingSubscriptions = onSchedule('every 24 hours', async (context) => {
   const now = Timestamp.now();

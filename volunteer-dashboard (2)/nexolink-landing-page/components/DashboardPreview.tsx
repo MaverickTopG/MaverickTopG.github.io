@@ -50,7 +50,7 @@ const DashboardPreview: React.FC = () => {
             <p className="text-charcoal/50 text-xl">From hours logged to verified community impact.</p>
         </div>
 
-        <div className="max-w-6xl mx-auto relative shadow-2xl rounded-[1.5rem] overflow-hidden border border-charcoal/10 bg-white aspect-[16/10] group">
+        <div className="max-w-6xl mx-auto relative shadow-2xl rounded-[1.5rem] overflow-hidden border border-charcoal/10 bg-white aspect-[3024/1648] group">
             
             {/* Base Layer: Wireframe (SVG Representation) */}
             <div className="absolute inset-0 bg-[#f0f0f0] p-8 flex flex-col">
@@ -70,43 +70,12 @@ const DashboardPreview: React.FC = () => {
 
             {/* Top Layer: Full UI (Clipped) */}
             <div ref={fullImageRef} className="absolute top-0 left-0 w-full overflow-hidden bg-charcoal h-0">
-                <div className="w-full aspect-[16/10] bg-[#0F1115] p-8 relative">
-                    {/* Simulated High Fidelity UI */}
-                    <div className="flex justify-between items-center mb-10">
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-neon rounded-lg"></div>
-                            <div className="text-white font-bold text-xl">Dashboard</div>
-                        </div>
-                        <div className="flex gap-4">
-                            <div className="px-4 py-2 bg-white/10 rounded-full text-white/60 text-xs font-bold">Export Report</div>
-                            <div className="w-8 h-8 rounded-full bg-white/20"></div>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-6 mb-6">
-                         <div className="bg-[#1a1c23] p-6 rounded-2xl border border-white/5">
-                             <div className="text-neon font-bold text-2xl mb-1">98.2%</div>
-                             <div className="text-white/40 text-xs uppercase tracking-widest">Efficiency</div>
-                         </div>
-                         <div className="bg-[#1a1c23] p-6 rounded-2xl border border-white/5">
-                             <div className="text-white font-bold text-2xl mb-1">1,024</div>
-                             <div className="text-white/40 text-xs uppercase tracking-widest">Active Users</div>
-                         </div>
-                         <div className="bg-neon p-6 rounded-2xl border border-neon text-charcoal">
-                             <div className="font-bold text-2xl mb-1">$45k</div>
-                             <div className="text-charcoal/60 text-xs uppercase tracking-widest">Value Generated</div>
-                         </div>
-                    </div>
-
-                    <div className="w-full h-64 bg-[#1a1c23] rounded-2xl border border-white/5 p-6 relative overflow-hidden">
-                        <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-neon/20 to-transparent"></div>
-                        <div className="flex items-end justify-between h-full gap-2 relative z-10 px-4 pb-2">
-                             {[40, 60, 30, 70, 50, 80, 65, 90, 70, 60, 85, 95].map((h, i) => (
-                                 <div key={i} className="flex-1 bg-neon rounded-t-sm" style={{height: `${h}%`, opacity: 0.5 + (i/24)}}></div>
-                             ))}
-                        </div>
-                    </div>
-                </div>
+                <img
+                    src="/dashboard.png"
+                    alt="Dashboard preview"
+                    className="w-full h-full object-contain"
+                    loading="eager"
+                />
             </div>
 
             {/* Scanner Line */}

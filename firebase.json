@@ -2,6 +2,9 @@
   "functions": {
     "source": "functions"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "hosting": {
     "public": "volunteer-dashboard (2)/nexolink-landing-page/dist",
     "cleanUrls": true,
@@ -15,6 +18,42 @@
       "functions/**"
     ],
     "headers": [
+      {
+        "source": "/admin",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/admin/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/volunteer",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/volunteer/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
       {
         "source": "**/*.html",
         "headers": [
@@ -42,6 +81,10 @@
       {
         "source": "/volunteer/**",
         "destination": "/volunteer/index.html"
+      },
+      {
+        "source": "/api/subAdminLogin",
+        "function": "subAdminLogin"
       },
       {
         "source": "/api/checkout",
@@ -90,6 +133,10 @@
       {
         "source": "/api/purgeEmail",
         "function": "purgeEmail"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
       }
     ]
   }

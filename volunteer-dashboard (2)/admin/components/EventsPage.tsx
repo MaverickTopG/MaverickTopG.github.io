@@ -9,9 +9,8 @@ import {
   ArrowLeft,
   Search,
   Mail,
+  MessageSquare,
   CheckCircle2,
-  MoreHorizontal,
-  Phone,
   Download,
   Trash2,
   X,
@@ -21,9 +20,14 @@ import { onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } f
 import { deleteDoc, doc } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { AiInsightWidget } from './AiInsightWidget';
+import { useGeminiInsight } from '../hooks/useGeminiInsight';
 
 interface EventsPageProps {
   onNavigate: (view: string) => void;
+  isActive?: boolean;
+  aiEnabled?: boolean;
+  planTier?: string;
 }
 
 interface Event {
@@ -52,11 +56,14 @@ interface Event {
 type Signup = {
   id: string;
   eventId: string;
+  volunteerId?: string;
   volunteerName: string;
   volunteerEmail: string;
   status: string;
   role: string;
 };
+
+const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
 
 const parseDate = (value?: string) => {
   if (!value) return null;
@@ -192,7 +199,12 @@ const resolveCapacityPercent = (event: Event, signups: Signup[]) => {
   return Math.min(100, Math.round((signups.length / max) * 100));
 };
 
-export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
+export const EventsPage: React.FC<EventsPageProps> = ({
+  onNavigate,
+  isActive = false,
+  aiEnabled = false,
+  planTier = 'nebula',
+}) => {
   const [filter, setFilter] = useState('Upcoming');
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [orgCode, setOrgCode] = useState('');
@@ -205,6 +217,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [volunteerSearch, setVolunteerSearch] = useState('');
+  const [insightUpdatedAt, setInsightUpdatedAt] = useState(() => Date.now());
 
   useEffect(() => {
     setVolunteerSearch('');
@@ -222,7 +235,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
         setSignupsByEvent({});
         return;
       }
-      const context = await resolveOrgContext(db, user.uid);
+      const context = await resolveOrgContext(db, user.uid, user.email || null);
       setOrgCode(context.orgCode || '');
       setOrgId(context.orgId || '');
     });
@@ -278,6 +291,14 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
           const entry: Signup = {
             id: row.id,
             eventId,
+            volunteerId: String(
+              data.volunteerId
+              || data.volunteer_id
+              || data.userId
+              || data.user_id
+              || data.uid
+              || ''
+            ).trim(),
             volunteerName: String(data.volunteerName || data.volunteer_name || data.displayName || data.name || 'Volunteer'),
             volunteerEmail: String(data.volunteerEmail || data.volunteer_email || data.email || ''),
             status: String(data.status || 'pending'),
@@ -302,6 +323,31 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
     if (filter === 'Live') return events.filter(isLiveEvent);
     return events.filter(isUpcomingEvent);
   }, [events, drafts, filter]);
+
+  const handleCopyEmail = (email: string) => {
+    if (!email) return;
+    navigator.clipboard.writeText(email);
+  };
+
+  const handleMessageVolunteer = (volunteer: Signup) => {
+    const payload = {
+      id: volunteer.volunteerId || '',
+      email: volunteer.volunteerEmail || '',
+      name: volunteer.volunteerName || '',
+    };
+    sessionStorage.setItem('nexolink:message-target', JSON.stringify(payload));
+    onNavigate('messaging');
+  };
+
+  const handleOpenEventAction = (event: Event) => {
+    const status = String(event.status || '').toLowerCase();
+    if (status === 'draft') {
+      sessionStorage.setItem(EVENT_DRAFT_EDIT_KEY, event.id);
+      onNavigate('create-event');
+      return;
+    }
+    setSelectedEvent(event);
+  };
 
   const openDeleteModal = (event: Event) => {
     setDeleteTarget(event);
@@ -366,6 +412,141 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
     });
   }, [selectedSignups, volunteerSearch]);
 
+  const eventInsights = useMemo(() => {
+    const activeEvents = events.filter((event) => !isPastEvent(event));
+    const snapshots = activeEvents.map((event) => {
+      const signups = signupsByEvent[event.id] || [];
+      const capacity = resolveEventCapacity(event, signups);
+      const percent = resolveCapacityPercent(event, signups);
+      const openSlots = Math.max(capacity - signups.length, 0);
+      const pendingCount = signups.filter((signup) => {
+        const status = String(signup.status || '').toLowerCase();
+        return status !== 'confirmed' && status !== 'checked in' && status !== 'checked-in';
+      }).length;
+      const pendingRate = signups.length ? Math.round((pendingCount / signups.length) * 100) : 0;
+      return {
+        event,
+        capacity,
+        signups: signups.length,
+        percent,
+        openSlots,
+        pendingRate,
+        pendingCount,
+      };
+    });
+
+    const understaffed = snapshots
+      .filter((snapshot) => snapshot.capacity > 0 && snapshot.percent < 70)
+      .sort((a, b) => a.percent - b.percent)
+      .slice(0, 3);
+    const overstaffed = snapshots
+      .filter((snapshot) => snapshot.capacity > 0 && snapshot.percent >= 100)
+      .sort((a, b) => b.percent - a.percent)
+      .slice(0, 2);
+    const noShowRisk = snapshots
+      .filter((snapshot) => snapshot.signups > 0 && snapshot.pendingRate >= 40)
+      .sort((a, b) => b.pendingRate - a.pendingRate)
+      .slice(0, 3);
+
+    return { activeEvents, understaffed, overstaffed, noShowRisk };
+  }, [events, signupsByEvent]);
+
+  useEffect(() => {
+    setInsightUpdatedAt(Date.now());
+  }, [events, signupsByEvent, eventInsights.understaffed.length, eventInsights.overstaffed.length, eventInsights.noShowRisk.length]);
+
+  const insightUpdatedLabel = useMemo(() => {
+    const time = new Date(insightUpdatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `Live refresh · ${time}`;
+  }, [insightUpdatedAt]);
+
+  const understaffedItems = eventInsights.understaffed.length
+    ? eventInsights.understaffed.map((snapshot) => ({
+        label: snapshot.event.title,
+        value: `${snapshot.signups}/${snapshot.capacity}`,
+        tone: 'warning' as const,
+        helper: `${snapshot.openSlots} open · ${snapshot.percent}%`,
+      }))
+    : [
+        {
+          label: 'All staffed',
+          value: 'OK',
+          tone: 'ok' as const,
+        },
+      ];
+
+  const overstaffedItems = eventInsights.overstaffed.length
+    ? eventInsights.overstaffed.map((snapshot) => ({
+        label: snapshot.event.title,
+        value: `+${Math.max(snapshot.signups - snapshot.capacity, 0)}`,
+        tone: 'alert' as const,
+      }))
+    : [
+        {
+          label: 'No overruns',
+          value: 'OK',
+          tone: 'ok' as const,
+        },
+      ];
+
+  const noShowItems = eventInsights.noShowRisk.length
+    ? eventInsights.noShowRisk.map((snapshot) => ({
+        label: snapshot.event.title,
+        value: `${snapshot.pendingRate}%`,
+        tone: 'warning' as const,
+        helper: `${snapshot.pendingCount} unconfirmed`,
+      }))
+    : [
+        {
+          label: 'No-show risk low',
+          value: 'OK',
+          tone: 'ok' as const,
+        },
+      ];
+
+  const fallbackInsight = useMemo(
+    () => ({
+      summary: `${eventInsights.activeEvents.length} active · ${eventInsights.understaffed.length} understaffed · ${eventInsights.noShowRisk.length} no-show risk`,
+      sections: [
+        { title: 'Understaffed', items: understaffedItems },
+        { title: 'Overstaffed', items: overstaffedItems },
+        { title: 'No-Show Risk', items: noShowItems },
+      ],
+    }),
+    [eventInsights, understaffedItems, overstaffedItems, noShowItems],
+  );
+
+  const insightSource = useMemo(
+    () => ({
+      activeEvents: eventInsights.activeEvents.length,
+      understaffed: eventInsights.understaffed.map((snapshot) => ({
+        title: snapshot.event.title,
+        signups: snapshot.signups,
+        capacity: snapshot.capacity,
+        percent: snapshot.percent,
+      })),
+      overstaffed: eventInsights.overstaffed.map((snapshot) => ({
+        title: snapshot.event.title,
+        signups: snapshot.signups,
+        capacity: snapshot.capacity,
+      })),
+      noShowRisk: eventInsights.noShowRisk.map((snapshot) => ({
+        title: snapshot.event.title,
+        pendingRate: snapshot.pendingRate,
+        pendingCount: snapshot.pendingCount,
+      })),
+    }),
+    [eventInsights],
+  );
+
+  const { insight: aiInsight } = useGeminiInsight({
+    enabled: aiEnabled && isActive,
+    planTier,
+    pageKey: 'events',
+    sourceData: insightSource,
+    fallback: fallbackInsight,
+  });
+
   const handleExportRoster = () => {
     if (!selectedEvent) return;
     const signups = signupsByEvent[selectedEvent.id] || [];
@@ -394,22 +575,6 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-  };
-
-  const handleMessageAll = () => {
-    if (!selectedEvent) return;
-    const signups = signupsByEvent[selectedEvent.id] || [];
-    const emails = signups
-      .map((signup) => signup.volunteerEmail)
-      .map((email) => String(email || '').trim())
-      .filter(Boolean);
-    if (!emails.length) {
-      window.alert('No volunteer email addresses available.');
-      return;
-    }
-    const subject = encodeURIComponent(`${selectedEvent.title} - Volunteer Update`);
-    const bcc = encodeURIComponent(emails.join(','));
-    window.location.href = `mailto:?subject=${subject}&bcc=${bcc}`;
   };
 
   const container = {
@@ -461,13 +626,6 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                 >
                     <Download className="w-4 h-4" />
                     <span className="hidden md:inline">Export Roster</span>
-                </button>
-                <button
-                  onClick={handleMessageAll}
-                  className="h-12 px-5 bg-gray-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-black transition-colors shadow-lg shadow-gray-900/10"
-                >
-                    <Mail className="w-4 h-4" />
-                    <span className="hidden md:inline">Message All</span>
                 </button>
              </div>
           </div>
@@ -613,7 +771,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                                       <td className="py-4 px-6">
                                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${
                                               vol.status.toLowerCase() === 'checked in' ? 'bg-lime-50 text-lime-700 border-lime-100' :
-                                              vol.status.toLowerCase() === 'confirmed' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                              vol.status.toLowerCase() === 'confirmed' ? 'bg-green-50 text-green-700 border-green-100' :
                                               vol.status.toLowerCase() === 'cancelled' ? 'bg-red-50 text-red-700 border-red-100' :
                                               'bg-gray-50 text-gray-600 border-gray-100'
                                           }`}>
@@ -626,14 +784,19 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                                       </td>
                                       <td className="py-4 px-6 text-right">
                                           <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                              <button className="p-2 hover:bg-lime-100 text-gray-400 hover:text-lime-700 rounded-lg transition-colors" title="Message">
+                                              <button
+                                                onClick={() => handleCopyEmail(vol.volunteerEmail)}
+                                                className="p-2 hover:bg-lime-100 text-gray-400 hover:text-lime-700 rounded-lg transition-colors"
+                                                title="Copy Email"
+                                              >
                                                   <Mail className="w-4 h-4" />
                                               </button>
-                                              <button className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-900 rounded-lg transition-colors" title="Call">
-                                                  <Phone className="w-4 h-4" />
-                                              </button>
-                                              <button className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-900 rounded-lg transition-colors">
-                                                  <MoreHorizontal className="w-4 h-4" />
+                                              <button
+                                                onClick={() => handleMessageVolunteer(vol)}
+                                                className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-900 rounded-lg transition-colors"
+                                                title="Message"
+                                              >
+                                                  <MessageSquare className="w-4 h-4" />
                                               </button>
                                           </div>
                                       </td>
@@ -677,11 +840,15 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
 
              {/* Actions */}
              <div className="flex gap-3">
-                <button 
-                    onClick={() => onNavigate('create-event')}
-                    className="w-12 h-12 bg-gray-900 hover:bg-black text-white rounded-2xl flex items-center justify-center shadow-lg shadow-gray-900/20 hover:-translate-y-0.5 transition-all"
+                <button
+                  onClick={() => {
+                    sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
+                    onNavigate('create-event');
+                  }}
+                  className="h-11 px-5 bg-gray-900 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-black transition-all shadow-sm hover:shadow-md"
                 >
-                    <Plus className="w-6 h-6" />
+                    <Plus className="w-5 h-5" />
+                    <span>Create Event</span>
                 </button>
              </div>
           </motion.div>
@@ -709,15 +876,13 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                     whileHover={{ scale: 1.005 }}
                     className="bg-white rounded-[2.5rem] p-6 md:p-8 shadow-sm border border-gray-100 flex flex-col md:flex-row gap-6 md:items-center group relative"
                 >
-                    {String(event.status || 'published').toLowerCase() !== 'draft' && (
-                      <button
-                        onClick={() => openDeleteModal(event)}
-                        className="absolute top-6 right-6 p-2 text-red-400 hover:text-red-600 rounded-full transition-colors"
-                        title="Delete event"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => openDeleteModal(event)}
+                      className="absolute top-6 right-6 p-2 text-red-400 hover:text-red-600 rounded-full transition-colors"
+                      title="Delete event"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
                     {/* Cover / Date Badge */}
                     <div className="relative group/cover w-full sm:w-60 md:w-48 aspect-square shrink-0 bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 self-start">
                         {event.coverImageUrl ? (
@@ -771,10 +936,10 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
                     </div>
 
                     <button 
-                        onClick={() => setSelectedEvent(event)}
+                        onClick={() => handleOpenEventAction(event)}
                         className="absolute bottom-6 right-6 px-5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-900 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors"
                     >
-                        Manage
+                        {String(event.status || '').toLowerCase() === 'draft' ? 'Edit' : 'Manage'}
                         <ChevronRight className="w-4 h-4" />
                     </button>
                 </motion.div>
@@ -852,6 +1017,19 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate }) => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {isActive && aiEnabled && (
+        <AiInsightWidget
+          title="Event Ops"
+          subtitle="Live staffing + turnout"
+          summary={aiInsight.summary}
+          pillLabel={`Understaffed ${eventInsights.understaffed.length}`}
+          updatedLabel={insightUpdatedLabel}
+          sections={aiInsight.sections}
+          onOpenCopilot={() => onNavigate('nebulae')}
+          copilotPrompt="Summarize the event staffing risks and recommend fixes for understaffed or high no-show events."
+        />
+      )}
     </>
   );
 };

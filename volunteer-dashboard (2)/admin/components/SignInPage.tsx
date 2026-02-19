@@ -1,18 +1,21 @@
 import React, { useState } from 'react';
+import { signInWithCustomToken, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirebaseAuth } from '../lib/firebase';
 import { motion } from 'framer-motion';
-import { 
-  Sparkles, 
-  ArrowRight, 
-  Mail, 
-  Lock, 
-  Eye, 
-  EyeOff, 
-  Loader2, 
-  Globe,
-  Users,
+import {
   Activity,
-  ArrowLeft
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Loader2,
+  Lock,
+  Mail,
+  Sparkles,
+  Users,
 } from 'lucide-react';
+
+const SUBADMIN_SESSION_STORAGE_KEY = 'nexolink_active_sub_admin_session';
 
 interface SignInPageProps {
   onSignIn: () => void;
@@ -24,16 +27,86 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
     
     setIsLoading(true);
-    // Simulate network request
-    setTimeout(() => {
+    setError(null);
+    try {
+      const auth = getFirebaseAuth();
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+      localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
       onSignIn();
-    }, 1500);
+    } catch (err: any) {
+      console.error('Login failed', err);
+      const code = String(err?.code || '');
+      const couldBeSubAdmin = code.startsWith('auth/');
+
+      if (couldBeSubAdmin) {
+        try {
+          const resp = await fetch('/api/subAdminLogin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email.trim(), password }),
+          });
+
+          if (!resp.ok) {
+            const payload = await resp.json().catch(() => ({}));
+            const message = String(payload?.error || '').trim() || 'Invalid email or password.';
+            setError(message);
+            return;
+          }
+
+          const payload = await resp.json().catch(() => ({}));
+          const customToken = String(payload?.customToken || '').trim();
+          if (!customToken) {
+            setError('Login failed. Please try again.');
+            return;
+          }
+
+          const session = payload?.session || null;
+          if (session?.groupId) {
+            try {
+              localStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(session));
+            } catch (_storageError) {
+              // Ignore storage failures.
+            }
+            try {
+              window.dispatchEvent(new CustomEvent('nexolink:subadmin-session', { detail: session }));
+            } catch (_error) {
+              // Ignore.
+            }
+          } else {
+            localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+          }
+
+          const auth = getFirebaseAuth();
+          try {
+            await signInWithCustomToken(auth, customToken);
+            onSignIn();
+            return;
+          } catch (tokenError) {
+            console.error('Custom token sign-in failed', tokenError);
+            localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+            setError('Login failed. Please try again.');
+            return;
+          }
+        } catch (fallbackError) {
+          console.error('Sub-admin login fallback failed', fallbackError);
+        }
+      }
+
+      let message = 'Invalid email or password.';
+      if (code === 'auth/user-not-found') message = 'No account found with this email.';
+      if (code === 'auth/wrong-password') message = 'Incorrect password.';
+      if (code === 'auth/too-many-requests') message = 'Too many failed attempts. Please try again later.';
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -78,6 +151,12 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
                 >
                     <h1 className="text-4xl font-bold text-gray-900 mb-3 tracking-tight">Welcome back</h1>
                     <p className="text-gray-500 font-medium mb-8">Enter your details to access the dashboard.</p>
+
+                    {error && (
+                      <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                        {error}
+                      </div>
+                    )}
 
                     {/* Social Login */}
                     <div className="grid grid-cols-2 gap-4 mb-8">

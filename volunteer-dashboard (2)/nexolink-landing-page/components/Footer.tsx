@@ -2,7 +2,7 @@
 import React from 'react';
 
 interface FooterProps {
-  onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'privacy' | 'terms' | 'about' | 'volunteers-info' | 'donate') => void;
+  onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'privacy' | 'terms' | 'about' | 'volunteers-info' | 'donate' | 'contact') => void;
 }
 
 const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
@@ -32,6 +32,7 @@ const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                 <li><button onClick={() => onNavigate?.('about')} className="hover:text-charcoal transition-colors">Our Story</button></li>
                 <li><button onClick={() => onNavigate?.('pricing')} className="hover:text-charcoal transition-colors">Plans & Pricing</button></li>
                 <li><button onClick={() => onNavigate?.('blog')} className="hover:text-charcoal transition-colors">Latest News</button></li>
+                <li><button onClick={() => onNavigate?.('contact')} className="hover:text-charcoal transition-colors">Contact</button></li>
                 <li><button onClick={() => onNavigate?.('donate')} className="hover:text-charcoal transition-colors font-bold text-neon-dark underline decoration-neon/30 underline-offset-4">Support the Mission</button></li>
               </ul>
             </div>

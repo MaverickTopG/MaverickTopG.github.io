@@ -15,7 +15,7 @@ export const Toast: React.FC<ToastProps> = ({ message, type = 'success', isVisib
       const timer = setTimeout(onClose, 3000);
       return () => clearTimeout(timer);
     }
-  }, [isVisible, onClose]);
+  }, [isVisible, message, type, onClose]);
 
   return (
     <AnimatePresence>
@@ -24,7 +24,7 @@ export const Toast: React.FC<ToastProps> = ({ message, type = 'success', isVisib
           initial={{ opacity: 0, y: 50, scale: 0.9 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-          className="fixed bottom-12 right-12 z-[10001] flex items-center gap-4 bg-white px-8 py-5 rounded-[2.5rem] shadow-[0_30px_70px_rgba(0,0,0,0.15)] border border-gray-100 min-w-[320px]"
+          className="fixed bottom-12 right-12 z-[2147483647] flex items-center gap-4 bg-white px-8 py-5 rounded-[2.5rem] shadow-[0_30px_70px_rgba(0,0,0,0.15)] border border-gray-100 min-w-[320px]"
         >
           <div className={`p-2 rounded-full ${type === 'success' ? 'bg-lime-100 text-lime-600' : 'bg-red-100 text-red-600'}`}>
             {type === 'success' ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}

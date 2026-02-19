@@ -19,6 +19,8 @@ import {
   File as FileIcon,
   Download,
   Filter,
+  X,
+  MessageSquare,
 } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
@@ -38,6 +40,13 @@ import {
 } from 'firebase/storage';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
 import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import {
+  extractVolunteerMembership,
+  hasPremiumAccessForMembership,
+  hydrateVolunteerMembershipPlans,
+  mergeVolunteerMemberships,
+  type VolunteerMembership,
+} from '../lib/membershipAccess';
 
 type Attachment = {
   url: string;
@@ -69,39 +78,43 @@ type ThreadMeta = {
   recipientId?: string;
 };
 
-const ALL_VOLUNTEERS_THREAD = (orgCode: string) => `org-${orgCode}-all`;
+const DEFAULT_THREAD_SCOPE_TOKEN = 'super-admin';
+const ALL_VOLUNTEERS_THREAD = (orgCode: string, scopeToken = DEFAULT_THREAD_SCOPE_TOKEN) =>
+  `org-${orgCode}-scope-${scopeToken}-all`;
+const DIRECT_VOLUNTEER_THREAD = (orgCode: string, volunteerId: string, scopeToken = DEFAULT_THREAD_SCOPE_TOKEN) =>
+  `org-${orgCode}-scope-${scopeToken}-user-${volunteerId}`;
+const LEGACY_ALL_VOLUNTEERS_THREAD = (orgCode: string) => `org-${orgCode}-all`;
+const LEGACY_DIRECT_VOLUNTEER_THREAD_PREFIX = (orgCode: string) => `org-${orgCode}-user-`;
+
+const normalizeThreadIdForOrg = (threadId: string, orgCode: string) => {
+  const normalizedCode = normalizeOrgCode(orgCode);
+  if (!threadId || !normalizedCode) return threadId;
+
+  const codeCandidates = Array.from(
+    new Set([normalizedCode, normalizedCode.toLowerCase(), normalizedCode.toUpperCase()]),
+  );
+
+  for (const code of codeCandidates) {
+    if (threadId === LEGACY_ALL_VOLUNTEERS_THREAD(code)) {
+      return ALL_VOLUNTEERS_THREAD(normalizedCode);
+    }
+
+    const legacyDirectPrefix = LEGACY_DIRECT_VOLUNTEER_THREAD_PREFIX(code);
+    if (threadId.startsWith(legacyDirectPrefix)) {
+      const volunteerId = threadId.slice(legacyDirectPrefix.length);
+      if (volunteerId) {
+        return DIRECT_VOLUNTEER_THREAD(normalizedCode, volunteerId);
+      }
+    }
+  }
+
+  return threadId;
+};
+
 const normalizeOrgCode = (value: unknown) => {
   if (value == null) return '';
   const text = String(value).trim().toUpperCase();
   return text || '';
-};
-const isPersonalOrgRecord = (data: Record<string, unknown>, id: string, code: string, name: string) => {
-  const rawId = String(id || '').toLowerCase();
-  const rawCode = String(code || '').toLowerCase();
-  const rawName = String(name || '').toLowerCase();
-  return Boolean(
-    data?.is_personal
-    || rawId.startsWith('personal-')
-    || rawCode.startsWith('personal-')
-    || rawName === 'personal'
-  );
-};
-const isAcceptedJoinStatus = (status = '') => {
-  const normalized = String(status || '').toLowerCase();
-  return normalized === 'accepted'
-    || normalized === 'approved'
-    || normalized === 'active'
-    || normalized === 'connected'
-    || normalized === 'granted'
-    || normalized === 'confirmed'
-    || normalized.startsWith('accept')
-    || normalized.startsWith('approved');
-};
-const isDeclinedJoinStatus = (status = '') => {
-  const normalized = String(status || '').toLowerCase();
-  return ['rejected', 'declined', 'denied', 'canceled', 'cancelled', 'revoked', 'removed'].some((token) =>
-    normalized.includes(token)
-  );
 };
 
 export const MessagingPage: React.FC = () => {
@@ -144,8 +157,9 @@ export const MessagingPage: React.FC = () => {
   ];
 
   /* New State for Org Filtering */
-  const [userOrgs, setUserOrgs] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [userOrgs, setUserOrgs] = useState<VolunteerMembership[]>([]);
   const [showOrgFilter, setShowOrgFilter] = useState(false);
+  const hasPremiumOrgAccess = userOrgs.length > 0;
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -166,59 +180,40 @@ export const MessagingPage: React.FC = () => {
       setAdminUid(user.uid);
       setAdminEmail(user.email || '');
 
-      // Fetch User's Organizations from both Dashboard and Mobile sources
+      // Fetch user's memberships from both dashboard and mobile sources.
       try {
         const [orgSnaps, membershipSnaps] = await Promise.all([
           getDocs(query(collection(db, 'user_organizations'), where('user_id', '==', user.uid))),
           getDocs(query(collection(db, 'users'), where('user_id', '==', user.uid)))
         ]);
-
-        const loadedOrgs: Array<{ id: string; name: string; code: string }> = [];
-        const processDoc = (docSnap: any) => {
-          if (docSnap.id === user.uid) return;
-          const data = docSnap.data();
-          const code = normalizeOrgCode(data.access_code || data.orgCode || data.org_code || data.organizationCode || data.org_access_code);
-          const id = String(data.orgId || data.org_id || data.organizationId || data.linked_org_id || docSnap.id || '');
-          const name = String(data.name || data.orgName || data.organizationName || data.schoolName || data.school_name || code || 'Organization');
-          const status = String(data.status || '').toLowerCase();
-          const removedByUser = Boolean(data.removed_by_user);
-          const isPersonal = isPersonalOrgRecord(data, id, code, name);
-
-          if (isPersonal || removedByUser || isDeclinedJoinStatus(status)) return;
-          const isIncluded = (status ? isAcceptedJoinStatus(status) : true);
-          if (isIncluded && (code || id)) {
-            loadedOrgs.push({ id, code, name });
-          }
-        };
-
-        orgSnaps.forEach(processDoc);
-        membershipSnaps.forEach(processDoc);
-        
-        // Remove duplicates based on code or ID
-        const uniqueOrgs = loadedOrgs.filter((org, index, self) => 
-            index === self.findIndex((t) => (t.code && t.code === org.code) || (t.id && t.id === org.id))
+        const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
+          Boolean(value);
+        const allMemberships = [
+          ...orgSnaps.docs
+            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'user_organizations'))
+            .filter(isMembership),
+          ...membershipSnaps.docs
+            .filter((docSnap) => docSnap.id !== user.uid)
+            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'users'))
+            .filter(isMembership),
+        ];
+        const resolvedMemberships = await hydrateVolunteerMembershipPlans(
+          db as any,
+          mergeVolunteerMemberships(allMemberships),
         );
+        const premiumMemberships = resolvedMemberships.filter(hasPremiumAccessForMembership);
 
         const context = await resolveOrgContext(db, user.uid);
         const contextCode = normalizeOrgCode(context.orgCode);
         const contextId = String(context.orgId || '');
 
-        const matchedOrg = uniqueOrgs.find((o) => (contextCode && o.code === contextCode) || (contextId && o.id === contextId));
-        const fallbackOrg = uniqueOrgs[0] || null;
+        const matchedOrg = premiumMemberships.find((o) => (contextCode && o.code === contextCode) || (contextId && o.id === contextId));
+        const fallbackOrg = premiumMemberships[0] || null;
         const selectedOrg = matchedOrg || fallbackOrg || null;
+        const selectedCode = selectedOrg?.code || '';
+        const selectedId = selectedOrg?.id || '';
 
-        if (!matchedOrg && (contextCode || contextId)) {
-          uniqueOrgs.push({
-            id: contextId || contextCode,
-            code: contextCode,
-            name: context.orgName || contextCode || 'Organization'
-          });
-        }
-
-        const selectedCode = selectedOrg?.code || contextCode || '';
-        const selectedId = selectedOrg?.id || contextId || '';
-
-        uniqueOrgs.sort((a, b) => {
+        premiumMemberships.sort((a, b) => {
           const aIsCurrent = (selectedCode && a.code === selectedCode) || (selectedId && a.id === selectedId);
           const bIsCurrent = (selectedCode && b.code === selectedCode) || (selectedId && b.id === selectedId);
           if (aIsCurrent && !bIsCurrent) return -1;
@@ -226,16 +221,21 @@ export const MessagingPage: React.FC = () => {
           return a.name.localeCompare(b.name);
         });
 
-        setUserOrgs(uniqueOrgs);
+        setUserOrgs(premiumMemberships);
         setOrgCode(selectedCode);
         setOrgId(selectedId);
+        if (!selectedOrg) {
+          setThreads([]);
+          setMessagesByThread({});
+          setUsers([]);
+          setJoinRequests([]);
+        }
 
       } catch (err) {
         console.error("Error fetching user orgs", err);
-        // Fallback
-        const context = await resolveOrgContext(db, user.uid);
-        setOrgCode(context.orgCode || '');
-        setOrgId(context.orgId || '');
+        setUserOrgs([]);
+        setOrgCode('');
+        setOrgId('');
       }
       const snapshot = await getDoc(doc(db, 'users', user.uid));
       const data = snapshot.data() || {};
@@ -301,7 +301,11 @@ export const MessagingPage: React.FC = () => {
   }, [emojiSearch, EMOJIS]);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if ((!orgCode && !orgId) || !hasPremiumOrgAccess) {
+      setUsers([]);
+      setJoinRequests([]);
+      return;
+    }
     const db = getFirestoreDb();
     const unsubUsers = subscribeToOrgCollection({
       db,
@@ -327,7 +331,7 @@ export const MessagingPage: React.FC = () => {
       unsubUsers();
       unsubJoinRequests();
     };
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, hasPremiumOrgAccess]);
 
   const buildVolunteerKey = (email: string, name: string, fallback: string) => {
     if (email) return `email:${email.toLowerCase().trim()}`;
@@ -403,7 +407,10 @@ export const MessagingPage: React.FC = () => {
   }, [users, joinRequests, orgId, adminUid, adminEmail, orgAdminIds, orgAdminEmails]);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if ((!orgCode && !orgId) || !hasPremiumOrgAccess) {
+      setMessagesByThread({});
+      return;
+    }
     const db = getFirestoreDb();
     const unsubscribe = subscribeToOrgCollection({
       db,
@@ -435,43 +442,52 @@ export const MessagingPage: React.FC = () => {
 
           const threadId = String(data.threadId || '');
           if (!threadId) return;
+          const normalizedThreadId = normalizeThreadIdForOrg(threadId, orgCode);
           const entry: Message = {
             id: docSnap.id,
-            threadId,
+            threadId: normalizedThreadId,
             senderId: String(data.senderId || ''),
             senderName: String(data.senderName || 'Coordinator'),
             text: String(data.text || ''),
             createdAt,
             attachment: data.attachment ? (data.attachment as Attachment) : undefined,
           };
-          grouped[threadId] = grouped[threadId] || [];
-          grouped[threadId].push(entry);
+          grouped[normalizedThreadId] = grouped[normalizedThreadId] || [];
+          grouped[normalizedThreadId].push(entry);
         });
         Object.values(grouped).forEach((list) => list.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()));
         setMessagesByThread(grouped);
       },
     });
     return () => unsubscribe();
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, hasPremiumOrgAccess]);
 
   useEffect(() => {
-    if (!orgCode) return;
+    if (!orgCode || !hasPremiumOrgAccess) {
+      setThreads([]);
+      setActiveThreadId('');
+      return;
+    }
     const allThread: ThreadMeta = {
       id: ALL_VOLUNTEERS_THREAD(orgCode),
       name: 'All Volunteers',
       type: 'group',
     };
     const directThreads = volunteers.map((v) => ({
-      id: `org-${orgCode}-user-${v.id}`,
+      id: DIRECT_VOLUNTEER_THREAD(orgCode, v.id),
       name: v.name,
       type: 'direct' as const,
       recipientId: v.id,
     }));
-    setThreads([allThread, ...directThreads]);
-    if (!activeThreadId) {
+    const nextThreads = [allThread, ...directThreads];
+    setThreads(nextThreads);
+    const normalizedActiveThreadId = normalizeThreadIdForOrg(activeThreadId, orgCode);
+    if (!normalizedActiveThreadId || !nextThreads.some((thread) => thread.id === normalizedActiveThreadId)) {
       setActiveThreadId(allThread.id);
+    } else if (normalizedActiveThreadId !== activeThreadId) {
+      setActiveThreadId(normalizedActiveThreadId);
     }
-  }, [orgCode, volunteers, activeThreadId]);
+  }, [orgCode, volunteers, activeThreadId, hasPremiumOrgAccess]);
 
   const filteredThreads = useMemo(() => {
     if (!search.trim()) return threads;
@@ -492,14 +508,35 @@ export const MessagingPage: React.FC = () => {
   const MessageAttachment = ({ attachment }: { attachment: { url: string; name: string; type: string } }) => {
   const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const downloadAttachment = async () => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const response = await fetch(attachment.url);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = attachment.name || 'download';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download attachment', error);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   if (!attachment.type.startsWith('image/')) {
     return (
-      <a 
-        href={attachment.url} 
-        target="_blank" 
-        rel="noopener noreferrer"
-        className="flex items-center gap-3 p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all group"
+      <button 
+        type="button"
+        onClick={downloadAttachment}
+        className="flex items-center gap-3 p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all group text-left w-full"
       >
         <div className={`p-2 rounded-xl ${
           attachment.type.includes('pdf') ? 'bg-red-50 text-red-500' :
@@ -519,8 +556,12 @@ export const MessagingPage: React.FC = () => {
             {attachment.type.split('/')[1]?.toUpperCase() || 'FILE'}
           </span>
         </div>
-        <Download className="w-4 h-4 ml-auto text-gray-300 group-hover:text-gray-900 transition-colors" />
-      </a>
+        {isDownloading ? (
+          <span className="w-4 h-4 ml-auto border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <Download className="w-4 h-4 ml-auto text-gray-300 group-hover:text-gray-900 transition-colors" />
+        )}
+      </button>
     );
   }
 
@@ -559,16 +600,19 @@ export const MessagingPage: React.FC = () => {
       )}
       
       {!loadError && !loading && (
-        <a 
-          href={attachment.url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button 
+          type="button"
+          onClick={downloadAttachment}
           className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"
         >
           <div className="p-3 bg-white rounded-full shadow-lg scale-90 group-hover:scale-100 transition-transform">
-            <Download className="w-5 h-5 text-gray-900" />
+            {isDownloading ? (
+              <span className="w-5 h-5 border-2 border-gray-300 border-t-transparent rounded-full animate-spin block" />
+            ) : (
+              <Download className="w-5 h-5 text-gray-900" />
+            )}
           </div>
-        </a>
+        </button>
       )}
     </div>
   );
@@ -585,6 +629,12 @@ export const MessagingPage: React.FC = () => {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showEmojiPicker]);
+
+  useEffect(() => {
+    if (hasPremiumOrgAccess) return;
+    setShowOrgFilter(false);
+    setShowNewChat(false);
+  }, [hasPremiumOrgAccess]);
 
   const uploadFiles = async (files: File[]) => {
     const storage = getFirebaseStorage();
@@ -604,7 +654,14 @@ export const MessagingPage: React.FC = () => {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if ((!inputValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) || !activeThread || !orgCode) return;
+    if (
+      (!inputValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) ||
+      !activeThread ||
+      !orgCode ||
+      !hasPremiumOrgAccess
+    ) {
+      return;
+    }
     
     setIsUploading(true);
     try {
@@ -647,7 +704,8 @@ export const MessagingPage: React.FC = () => {
   };
 
   const openThread = (threadId: string) => {
-    setActiveThreadId(threadId);
+    if (!orgCode || !hasPremiumOrgAccess) return;
+    setActiveThreadId(normalizeThreadIdForOrg(threadId, orgCode));
     setShowNewChat(false);
   };
 
@@ -664,7 +722,8 @@ export const MessagingPage: React.FC = () => {
              <div className="relative z-20">
                 <button 
                   onClick={() => setShowOrgFilter(!showOrgFilter)}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-900 text-white rounded-2xl font-bold text-sm shadow-md hover:shadow-lg transition-all"
+                  disabled={!hasPremiumOrgAccess}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-900 text-white rounded-2xl font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-45 disabled:cursor-not-allowed"
                 >
                    <span className="truncate">{userOrgs.find(o => o.code === orgCode || o.id === orgId)?.name || 'Select Organization'}</span>
                    <Filter className="w-4 h-4 ml-2 opacity-70" />
@@ -697,7 +756,7 @@ export const MessagingPage: React.FC = () => {
                            </button>
                          ))
                        ) : (
-                         <div className="p-4 text-center text-xs text-gray-400 font-medium">No organizations found</div>
+                         <div className="p-4 text-center text-xs text-gray-400 font-medium">No Nebula/Cosmos organizations found</div>
                        )}
                     </motion.div>
                   )}
@@ -722,6 +781,7 @@ export const MessagingPage: React.FC = () => {
             <h3 className="font-bold text-gray-900 text-lg">Chats</h3>
             <button
               onClick={() => setShowNewChat(true)}
+              disabled={!hasPremiumOrgAccess || !orgCode}
               className="w-8 h-8 rounded-full bg-gray-900 text-white flex items-center justify-center hover:bg-black transition-colors shadow-lg shadow-gray-900/20"
             >
               <Plus className="w-5 h-5" />
@@ -729,7 +789,14 @@ export const MessagingPage: React.FC = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto no-scrollbar space-y-2 px-1">
-            {loading ? (
+            {!hasPremiumOrgAccess ? (
+              <div className="flex flex-col items-center justify-center py-12 px-4 text-gray-400 text-center">
+                <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3">
+                  <MessageSquare className="w-6 h-6 text-gray-300" />
+                </div>
+                <p className="text-xs font-semibold">Messaging is available for Nebula/Cosmos organizations only.</p>
+              </div>
+            ) : loading ? (
               <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                 <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3">
                   <Plus className="w-6 h-6 text-gray-300 animate-spin" />
@@ -786,7 +853,11 @@ export const MessagingPage: React.FC = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/30">
-          {activeMessages.map((msg) => (
+          {!hasPremiumOrgAccess ? (
+            <div className="text-sm text-gray-400">
+              Connect to a Nebula or Cosmos organization to open volunteer messaging.
+            </div>
+          ) : activeMessages.map((msg) => (
             <motion.div
               key={msg.id}
               initial={{ opacity: 0, y: 10 }}
@@ -822,7 +893,7 @@ export const MessagingPage: React.FC = () => {
               </div>
             </motion.div>
           ))}
-          {activeMessages.length === 0 && (
+          {hasPremiumOrgAccess && activeMessages.length === 0 && (
             <div className="text-sm text-gray-400">No messages yet. Start the conversation.</div>
           )}
         </div>
@@ -832,6 +903,7 @@ export const MessagingPage: React.FC = () => {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
+              disabled={!hasPremiumOrgAccess}
               className="p-3 rounded-full hover:bg-gray-200 text-gray-400 transition-colors"
             >
               <Plus className="w-5 h-5" />
@@ -842,6 +914,7 @@ export const MessagingPage: React.FC = () => {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Type a message..."
+              disabled={!hasPremiumOrgAccess}
               className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 placeholder-gray-400 font-medium"
             />
             <div className="flex items-center gap-1 pr-2">
@@ -849,6 +922,7 @@ export const MessagingPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowEmojiPicker((prev) => !prev)}
+                  disabled={!hasPremiumOrgAccess}
                   className="p-2 rounded-full hover:bg-gray-100 text-gray-400 transition-colors"
                   title="Choose Emoji"
                 >
@@ -913,7 +987,11 @@ export const MessagingPage: React.FC = () => {
               </div>
               <button
                 type="submit"
-                disabled={isUploading || (!inputValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0)}
+                disabled={
+                  !hasPremiumOrgAccess ||
+                  isUploading ||
+                  (!inputValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0)
+                }
                 className="ml-2 p-3 bg-lime-300 hover:bg-lime-400 disabled:opacity-50 disabled:hover:bg-lime-300 text-gray-900 rounded-full transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5"
               >
                 {isUploading ? (
@@ -937,25 +1015,52 @@ export const MessagingPage: React.FC = () => {
                 setAttachedImages(prev => [...prev, ...imgs]);
                 setAttachedFiles(prev => [...prev, ...others]);
               }
+              event.target.value = '';
             }}
           />
           {(attachedImages.length > 0 || attachedFiles.length > 0) && (
             <div className="mt-3 flex flex-wrap gap-2">
               {attachedImages.map((file) => (
                 <span
-                  key={file.name}
-                  className="px-3 py-1.5 bg-purple-50 text-[10px] font-bold text-purple-600 rounded-full flex items-center gap-2 border border-purple-100"
+                  key={`${file.name}-${file.lastModified}`}
+                  className="px-3 py-1.5 bg-lime-50 text-[10px] font-bold text-lime-700 rounded-full flex items-center gap-2 border border-lime-200"
                 >
                   {file.name}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachedImages((prev) => prev.filter((f) => f !== file));
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="text-lime-500 hover:text-lime-700 transition-colors"
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </span>
               ))}
               {attachedFiles.map((file) => (
                 <span
-                  key={file.name}
-                  className="px-3 py-1.5 bg-blue-50 text-[10px] font-bold text-blue-600 rounded-full flex items-center gap-2 border border-blue-100"
+                  key={`${file.name}-${file.lastModified}`}
+                  className="px-3 py-1.5 bg-lime-50 text-[10px] font-bold text-lime-700 rounded-full flex items-center gap-2 border border-lime-200"
                 >
                   {getFileIcon(file.type)}
                   {file.name}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachedFiles((prev) => prev.filter((f) => f !== file));
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="text-lime-500 hover:text-lime-700 transition-colors"
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </span>
               ))}
             </div>
@@ -964,7 +1069,7 @@ export const MessagingPage: React.FC = () => {
       </motion.div>
 
       <AnimatePresence>
-        {showNewChat && (
+        {showNewChat && hasPremiumOrgAccess && orgCode && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
             <motion.div
               initial={{ opacity: 0 }}
@@ -993,7 +1098,7 @@ export const MessagingPage: React.FC = () => {
                   {volunteers.map((volunteer) => (
                     <button
                       key={volunteer.id}
-                      onClick={() => openThread(`org-${orgCode}-user-${volunteer.id}`)}
+                      onClick={() => openThread(DIRECT_VOLUNTEER_THREAD(orgCode, volunteer.id))}
                       className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-gray-50 text-left"
                     >
                       <div>

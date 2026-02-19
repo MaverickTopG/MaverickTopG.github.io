@@ -28,46 +28,81 @@ type PricingPageProps = {
 
 const plans = [
   {
-    name: 'Organization',
-    caption: 'Flexible month-to-month access',
-    monthly: '$45',
-    annual: '$39',
-    highlights: ['Full admin portal access', 'Unlimited volunteer records', 'Automated analytics & reports']
+    name: 'Orbit',
+    caption: 'Everything you need to get started.',
+    monthlyPrice: 5,
+    yearlyPrice: 50,
+    highlights: [
+      'Up to 50 volunteers',
+      'Volunteer directory',
+      'Manual hour logging & approvals',
+      'Core dashboard (total hours, volunteers)',
+      'CSV export',
+      'Email support'
+    ]
   },
   {
-    name: 'School',
-    caption: 'Built for schools and districts',
-    monthly: '$65',
-    annual: '$55',
-    highlights: ['Roster uploads and student-friendly sign-ins', 'Compliance-ready reports and exports', 'Centralized reporting for campuses']
+    name: 'Nebula',
+    caption: 'Automated volunteer operations.',
+    monthlyPrice: 10,
+    yearlyPrice: 100,
+    highlights: [
+      'Up to 500 volunteers',
+      '50 Nebulae AI prompts / day',
+      'Everything in Orbit',
+      'Kiosk mode + QR code check-in',
+      'Nebulae AI auto-log review',
+      'Messaging',
+      'Events, shifts, capacity',
+      'Advanced analytics (retention, trends)',
+      'Priority support'
+    ]
   },
   {
-    name: 'Enterprise',
-    caption: 'Regional or national partners',
-    monthly: 'Custom',
-    annual: 'Custom',
-    highlights: ['Dedicated data governance', 'Custom integrations & workflows', 'Executive analytics suite']
+    name: 'Cosmos',
+    caption: 'Unlimited scale. Total control.',
+    monthlyPrice: 15,
+    yearlyPrice: 150,
+    highlights: [
+      'Unlimited volunteers',
+      'Unlimited Nebulae AI prompts',
+      'Everything in Nebula',
+      'Unlimited kiosks & QR sessions',
+      'Advanced AI log intelligence',
+      'Unlimited messaging',
+      'Custom analytics & exports',
+      'Organization-wide automation controls',
+      'Dedicated support',
+      'SLA & uptime guarantees',
+      'Early access to new features'
+    ]
   }
 ];
 
 const faqs = [
   {
-    q: 'What is included with every plan?',
-    a: 'All plans include full admin portal access, analytics, and effortless onboarding so your team can start quickly.'
+    q: 'How do volunteer limits work?',
+    a: 'Orbit supports up to 50 volunteers, Nebula supports up to 500, and Cosmos removes limits entirely.'
   },
   {
-    q: 'Is there a free trial?',
-    a: 'Yes. Every plan includes a 14-day free trial before billing begins.'
+    q: 'What happens when a log looks suspicious?',
+    a: 'Nebula and Cosmos auto-approve normal logs and only surface questionable logs for manual review.'
   },
   {
-    q: 'Who is the School plan for?',
-    a: 'The School plan is designed for schools and districts, with roster uploads, student-friendly sign-ins, and compliance-ready reports.'
+    q: 'Can I upgrade later?',
+    a: 'Yes. You can move between Orbit, Nebula, and Cosmos at any time as your organization grows.'
   }
 ];
 
 export const PricingPage: React.FC<PricingPageProps> = ({ onBack, onEnterAdmin }) => {
-  const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly');
   const [openFaq, setOpenFaq] = useState(0);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [audience, setAudience] = useState<'org' | 'school'>('org');
+
+  const resolvePrice = (plan: { monthlyPrice: number; yearlyPrice: number }) => {
+    if (billingCycle === 'monthly') return plan.monthlyPrice;
+    return Math.round(plan.yearlyPrice / 12);
+  };
 
   return (
     <div className="min-h-screen bg-[#F3F4F6] text-[#0B0D10] relative overflow-hidden">
@@ -101,17 +136,16 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onBack, onEnterAdmin }
         </div>
       </header>
 
-      <main className="max-w-[1100px] mx-auto px-6 pt-16 pb-24">
+      <main className="max-w-[1210px] mx-auto px-6 pt-16 pb-24">
         <motion.div initial="hidden" animate="show" variants={stagger} className="text-center">
           <motion.p variants={fadeUp} className="text-xs uppercase tracking-[0.35em] text-[#6B7280] font-semibold">
             Pricing
           </motion.p>
           <motion.h1 variants={fadeUp} className="font-display text-[3.6rem] leading-[1.03] mt-4">
-            Choose a plan that powers your volunteer impact.
+            Space‑inspired plans for every volunteer mission.
           </motion.h1>
           <motion.p variants={fadeUp} className="mt-6 text-xl text-[#4B5563] max-w-3xl mx-auto">
-            Pick the subscription that fits your workspace. All plans include full admin access, analytics, and effortless onboarding.
-            Includes a 14-day free trial.
+            Orbit gets you started, Nebula automates operations, and Cosmos removes every ceiling.
           </motion.p>
         </motion.div>
 
@@ -122,29 +156,53 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onBack, onEnterAdmin }
           <motion.p variants={fadeUp} className="mt-2 text-base text-[#6B7280]">
             Only pay for what your organization needs.
           </motion.p>
-          <motion.div variants={fadeUp} className="mt-6 inline-flex items-center gap-2 bg-white border border-black/10 rounded-full p-1 shadow-sm">
+        </motion.div>
+
+        <motion.div initial="hidden" animate="show" variants={stagger} className="mt-10 flex flex-col items-center gap-4">
+          <div className="inline-flex items-center rounded-full border border-black/10 bg-white/70 p-1 shadow-sm">
             <button
-              onClick={() => setBilling('monthly')}
-              className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
-                billing === 'monthly' ? 'bg-[#111827] text-white shadow-md' : 'text-[#6B7280]'
+              onClick={() => setAudience('org')}
+              className={`px-4 py-2 text-sm font-semibold rounded-full transition ${
+                audience === 'org' ? 'bg-[#111827] text-white' : 'text-[#6B7280]'
+              }`}
+            >
+              Organizations
+            </button>
+            <button
+              onClick={() => setAudience('school')}
+              className={`px-4 py-2 text-sm font-semibold rounded-full transition ${
+                audience === 'school' ? 'bg-[#111827] text-white' : 'text-[#6B7280]'
+              }`}
+            >
+              School
+            </button>
+          </div>
+          <div className="inline-flex items-center rounded-full border border-black/10 bg-white/70 p-1 shadow-sm">
+            <button
+              onClick={() => setBillingCycle('monthly')}
+              className={`px-4 py-2 text-sm font-semibold rounded-full transition ${
+                billingCycle === 'monthly' ? 'bg-[#111827] text-white' : 'text-[#6B7280]'
               }`}
             >
               Monthly
             </button>
             <button
-              onClick={() => setBilling('annual')}
-              className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
-                billing === 'annual' ? 'bg-[#111827] text-white shadow-md' : 'text-[#6B7280]'
+              onClick={() => setBillingCycle('yearly')}
+              className={`px-4 py-2 text-sm font-semibold rounded-full transition ${
+                billingCycle === 'yearly' ? 'bg-[#111827] text-white' : 'text-[#6B7280]'
               }`}
             >
-              Annual
+              Yearly
             </button>
-          </motion.div>
+          </div>
+          <span className="text-xs text-[#6B7280]">
+            Yearly saves 17% compared to monthly
+          </span>
         </motion.div>
 
-        <motion.div initial="hidden" animate="show" variants={stagger} className="mt-12 grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <motion.div initial="hidden" animate="show" variants={stagger} className="mt-12 grid lg:grid-cols-3 gap-6">
           {plans.map((plan, index) => {
-            const price = billing === 'monthly' ? plan.monthly : plan.annual;
+            const price = resolvePrice(plan);
             return (
               <motion.div
                 key={plan.name}
@@ -158,9 +216,9 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onBack, onEnterAdmin }
                 </p>
                 <h3 className="text-xl font-semibold mt-4">{plan.caption}</h3>
                 <div className="mt-6 flex items-end gap-2">
-                  <span className="text-4xl font-semibold">{price}</span>
+                  <span className="text-4xl font-semibold">${price}</span>
                   <span className={`text-xs uppercase tracking-[0.25em] ${index === 1 ? 'text-white/60' : 'text-[#9CA3AF]'}`}>
-                    per month
+                    {billingCycle === 'monthly' ? 'per month' : 'per month billed yearly'}
                   </span>
                 </div>
                 <div className="mt-6 space-y-3 text-base">

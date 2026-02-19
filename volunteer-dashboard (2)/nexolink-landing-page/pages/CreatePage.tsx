@@ -1,7 +1,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
-import { Building2, Mail, Lock, Plus, ArrowRight } from 'lucide-react';
+import { Building2, Mail, Lock, Plus, ArrowRight, User, Eye, EyeOff } from 'lucide-react';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface CreatePageProps {
   onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'login' | 'create') => void;
@@ -10,13 +13,53 @@ interface CreatePageProps {
 const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [orgName, setOrgName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [emailLocked, setEmailLocked] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const CHECKOUT_SESSION_KEY = 'nexolink_checkout_session_id';
   const CHECKOUT_EMAIL_KEY = 'nexolink_checkout_email';
+  const CHECKOUT_FIRST_NAME_KEY = 'nexolink_checkout_first_name';
+  const CHECKOUT_LAST_NAME_KEY = 'nexolink_checkout_last_name';
+  const CHECKOUT_ORG_NAME_KEY = 'nexolink_checkout_org_name';
+  const CHECKOUT_PASSWORD_KEY = 'nexolink_checkout_password';
+
+  const env = (import.meta as any)?.env || {};
+  const w = typeof window !== 'undefined' ? (window as any) : {};
+  const firebaseConfig = {
+    apiKey: env.PUBLIC_FIREBASE_API_KEY || w.PUBLIC_FIREBASE_API_KEY,
+    authDomain: env.PUBLIC_FIREBASE_AUTH_DOMAIN || w.PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: env.PUBLIC_FIREBASE_PROJECT_ID || w.PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: env.PUBLIC_FIREBASE_STORAGE_BUCKET || w.PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: env.PUBLIC_FIREBASE_MESSAGING_SENDER_ID || w.PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    appId: env.PUBLIC_FIREBASE_APP_ID || w.PUBLIC_FIREBASE_APP_ID
+  };
+
+  if (typeof window !== 'undefined' && !getApps().length) {
+    initializeApp(firebaseConfig);
+  }
+
+  const getRouteParams = () => {
+    if (typeof window === 'undefined') return new URLSearchParams();
+    const params = new URLSearchParams(window.location.search || '');
+    const rawHash = window.location.hash || '';
+    const hashQuery = rawHash.includes('?') ? rawHash.split('?')[1] : '';
+    if (hashQuery) {
+      const hashParams = new URLSearchParams(hashQuery);
+      hashParams.forEach((value, key) => {
+        if (!params.has(key)) {
+          params.set(key, value);
+        }
+      });
+    }
+    return params;
+  };
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -75,11 +118,30 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
   }, []);
 
   useEffect(() => {
+    const params = getRouteParams();
+    const sessionIdParam = params.get('session_id') || params.get('sessionId');
+    const emailParam = params.get('email');
+    if (sessionIdParam) {
+      localStorage.setItem(CHECKOUT_SESSION_KEY, sessionIdParam);
+    }
+    if (emailParam) {
+      localStorage.setItem(CHECKOUT_EMAIL_KEY, emailParam);
+    }
+
+    // Always reset non-email fields on entry.
+    localStorage.removeItem(CHECKOUT_FIRST_NAME_KEY);
+    localStorage.removeItem(CHECKOUT_LAST_NAME_KEY);
+    localStorage.removeItem(CHECKOUT_ORG_NAME_KEY);
+    sessionStorage.removeItem(CHECKOUT_PASSWORD_KEY);
+    setFirstName('');
+    setLastName('');
+    setOrgName('');
+    setPassword('');
+
     const storedEmail = localStorage.getItem(CHECKOUT_EMAIL_KEY);
     if (storedEmail) {
       setEmail(storedEmail);
       setEmailLocked(true);
-      return;
     }
 
     const sessionId = localStorage.getItem(CHECKOUT_SESSION_KEY);
@@ -89,11 +151,13 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
       try {
         const res = await fetch(`/api/checkoutSession?id=${encodeURIComponent(sessionId)}`);
         const data = await res.json();
-        if (res.ok && data?.email) {
+        if (!res.ok) return;
+        if (data?.email) {
           localStorage.setItem(CHECKOUT_EMAIL_KEY, data.email);
           setEmail(data.email);
           setEmailLocked(true);
         }
+        // Intentionally do not autofill non-email fields.
       } catch {
         // ignore lookup failures for now
       }
@@ -101,6 +165,94 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
 
     hydrateEmail();
   }, []);
+
+  const handleCreateAccount = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+
+    if (!firstName || !lastName || !orgName || !email || !password) {
+      setError("All fields are required.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const auth = getAuth();
+      const db = getFirestore();
+      const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const user = credential.user;
+      const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+      if (fullName) {
+        await updateProfile(user, { displayName: fullName });
+      }
+
+      const sessionId = localStorage.getItem(CHECKOUT_SESSION_KEY) || null;
+      const token = await user.getIdToken();
+      const response = await fetch('/api/createOrganization', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          organizationName: orgName,
+          sessionId,
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'Unable to create organization.');
+      }
+
+      const orgData = await response.json();
+      const orgId = orgData?.organizationId || null;
+      const orgCode = orgData?.organizationCode || null;
+
+      await setDoc(doc(db, 'users', user.uid), {
+        uid: user.uid,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        name: fullName,
+        email: email.trim().toLowerCase(),
+        role: 'admin',
+        organizationName: orgName.trim(),
+        organizationId: orgId,
+        accessCode: orgCode,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      localStorage.removeItem(CHECKOUT_ORG_NAME_KEY);
+      localStorage.removeItem(CHECKOUT_FIRST_NAME_KEY);
+      localStorage.removeItem(CHECKOUT_LAST_NAME_KEY);
+      localStorage.removeItem(CHECKOUT_EMAIL_KEY);
+      sessionStorage.removeItem(CHECKOUT_PASSWORD_KEY);
+
+      window.location.href = '/admin';
+    } catch (err: any) {
+      try {
+        const auth = getAuth();
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          const cancelToken = await currentUser.getIdToken();
+          await fetch('/api/cancelSubscription', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${cancelToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ reason: 'account_creation_failed' }),
+          });
+        }
+      } catch {
+        // Best-effort cancellation only.
+      }
+      setError(err?.message || 'Unable to create account.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div ref={containerRef} data-bg="dark" className="min-h-screen bg-charcoal flex flex-col md:flex-row overflow-hidden relative">
@@ -159,7 +311,52 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
                   </h1>
               </div>
 
-              <form className="space-y-10" onSubmit={(e) => e.preventDefault()}>
+              <form className="space-y-10" onSubmit={handleCreateAccount}>
+
+                  {/* Name Grid */}
+                  <div className="grid grid-cols-2 gap-6">
+                      <div className="create-input relative">
+                          <div className="absolute left-0 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-500">
+                              <User className={`w-5 h-5 transition-colors ${focusedField === 'first' ? 'text-neon' : 'text-charcoal/20'}`} />
+                          </div>
+                          <label className={`absolute left-8 top-1/2 -translate-y-1/2 text-xs font-black uppercase tracking-widest transition-all duration-300 pointer-events-none ${focusedField === 'first' || firstName ? 'text-charcoal -translate-y-12 scale-90 opacity-40' : 'text-charcoal/30'}`}>
+                              First Name
+                          </label>
+                          <input 
+                            type="text"
+                            value={firstName}
+                            autoComplete="off"
+                            name="first_name"
+                            onFocus={() => setFocusedField('first')}
+                            onBlur={() => setFocusedField(null)}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setFirstName(value);
+                              localStorage.setItem(CHECKOUT_FIRST_NAME_KEY, value);
+                            }}
+                            className="w-full bg-transparent border-b border-charcoal/10 pl-8 py-4 text-lg font-bold text-charcoal focus:outline-none focus:border-neon transition-colors"
+                          />
+                      </div>
+                      <div className="create-input relative">
+                          <label className={`absolute left-0 top-1/2 -translate-y-1/2 text-xs font-black uppercase tracking-widest transition-all duration-300 pointer-events-none ${focusedField === 'last' || lastName ? 'text-charcoal -translate-y-12 scale-90 opacity-40' : 'text-charcoal/30'}`}>
+                              Last Name
+                          </label>
+                          <input 
+                            type="text"
+                            value={lastName}
+                            autoComplete="off"
+                            name="last_name"
+                            onFocus={() => setFocusedField('last')}
+                            onBlur={() => setFocusedField(null)}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setLastName(value);
+                              localStorage.setItem(CHECKOUT_LAST_NAME_KEY, value);
+                            }}
+                            className="w-full bg-transparent border-b border-charcoal/10 py-4 text-lg font-bold text-charcoal focus:outline-none focus:border-neon transition-colors"
+                          />
+                      </div>
+                  </div>
                   
                   {/* Org Name Field */}
                   <div className="create-input relative">
@@ -172,9 +369,15 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
                       <input 
                         type="text"
                         value={orgName}
+                        autoComplete="off"
+                        name="organization_name"
                         onFocus={() => setFocusedField('org')}
                         onBlur={() => setFocusedField(null)}
-                        onChange={(e) => setOrgName(e.target.value)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setOrgName(value);
+                          localStorage.setItem(CHECKOUT_ORG_NAME_KEY, value);
+                        }}
                         className="w-full bg-transparent border-b border-charcoal/10 pl-8 py-4 text-lg font-bold text-charcoal focus:outline-none focus:border-neon transition-colors"
                       />
                   </div>
@@ -190,6 +393,8 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
                       <input 
                         type="email"
                         value={email}
+                        autoComplete="email"
+                        name="admin_email"
                         onFocus={() => !emailLocked && setFocusedField('email')}
                         onBlur={() => setFocusedField(null)}
                         onChange={(e) => !emailLocked && setEmail(e.target.value)}
@@ -212,28 +417,47 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
                           System Password
                       </label>
                       <input 
-                        type="password"
+                        type={showPassword ? 'text' : 'password'}
                         value={password}
+                        autoComplete="new-password"
+                        name="admin_password"
                         onFocus={() => setFocusedField('password')}
                         onBlur={() => setFocusedField(null)}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full bg-transparent border-b border-charcoal/10 pl-8 py-4 text-lg font-bold text-charcoal focus:outline-none focus:border-neon transition-colors"
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setPassword(value);
+                          sessionStorage.setItem(CHECKOUT_PASSWORD_KEY, value);
+                        }}
+                        className="w-full bg-transparent border-b border-charcoal/10 pl-8 pr-10 py-4 text-lg font-bold text-charcoal focus:outline-none focus:border-neon transition-colors"
                       />
+                      <button
+                        type="button"
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-0 top-1/2 -translate-y-1/2 text-charcoal/40 hover:text-charcoal transition-colors"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
                   </div>
 
                   <div className="create-input pt-4">
-                      <button className="w-full h-20 bg-charcoal text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-[10px] hover:bg-neon hover:text-charcoal transition-all shadow-2xl flex items-center justify-center gap-4 group overflow-hidden relative">
-                          <span className="relative z-10">Request Node Access</span>
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className={`w-full h-20 bg-charcoal text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-[10px] transition-all shadow-2xl flex items-center justify-center gap-4 group overflow-hidden relative ${isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-neon hover:text-charcoal'}`}
+                      >
+                          <span className="relative z-10">{isLoading ? 'Creating Account…' : 'Create Account'}</span>
                           <ArrowRight className="w-4 h-4 relative z-10 group-hover:translate-x-2 transition-transform" />
                           <div className="absolute inset-0 bg-white/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
                       </button>
                   </div>
 
-                  <div className="create-input text-center pt-8">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-charcoal/30">
-                          Already synchronized? <button onClick={() => onNavigate?.('login')} className="text-charcoal hover:text-neon underline decoration-neon decoration-2 underline-offset-4">Log in to Core</button>
-                      </p>
-                  </div>
+                  {error && (
+                    <div className="create-input">
+                      <p className="text-xs font-black uppercase tracking-widest text-red-500">{error}</p>
+                    </div>
+                  )}
+
               </form>
           </div>
       </div>

@@ -16,7 +16,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
 import { resolveOrgContext } from '../lib/orgContext';
@@ -31,10 +31,44 @@ interface Shift {
   endTime: string;
 }
 
+const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
+
+const normalizeShifts = (rawShifts: unknown, startTime: unknown, endTime: unknown): Shift[] => {
+  const fallback = [{ id: '1', startTime: '', endTime: '' }];
+  if (Array.isArray(rawShifts)) {
+    const normalized = rawShifts
+      .map((raw, index) => {
+        if (!raw || typeof raw !== 'object') return null;
+        const row = raw as Record<string, unknown>;
+        return {
+          id: String(row.id || row.shiftId || `${Date.now()}-${index}`),
+          startTime: String(row.startTime || ''),
+          endTime: String(row.endTime || ''),
+        };
+      })
+      .filter((shift): shift is Shift => Boolean(shift));
+    if (normalized.length > 0) return normalized;
+  }
+
+  if (startTime || endTime) {
+    return [
+      {
+        id: '1',
+        startTime: String(startTime || ''),
+        endTime: String(endTime || ''),
+      },
+    ];
+  }
+
+  return fallback;
+};
+
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [activeCategory, setActiveCategory] = useState('Community');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoadingDraft, setIsLoadingDraft] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [orgData, setOrgData] = useState<{ orgId: string; orgCode: string } | null>(null);
   
   // Form State
@@ -58,11 +92,69 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
     const db = getFirestoreDb();
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const context = await resolveOrgContext(db, user.uid);
+        const context = await resolveOrgContext(db, user.uid, user.email || null);
         setOrgData({ orgId: context.orgId || '', orgCode: context.orgCode || '' });
       }
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const draftId = sessionStorage.getItem(EVENT_DRAFT_EDIT_KEY)?.trim() || '';
+    sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
+    if (!draftId) {
+      setEditingEventId(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadDraft = async () => {
+      setIsLoadingDraft(true);
+      try {
+        const db = getFirestoreDb();
+        const snap = await getDoc(doc(db, 'events', draftId));
+        if (!snap.exists()) {
+          if (!cancelled) setEditingEventId(null);
+          return;
+        }
+        const data = snap.data() || {};
+        if (cancelled) return;
+
+        const nextTitle = String(data.title || '');
+        const nextDescription = String(data.description || '');
+        const nextCategory = String(data.category || 'Community');
+        const nextLocation = String(data.location || '');
+        const nextMaxVolunteers = data.maxVolunteers != null ? String(data.maxVolunteers) : '';
+        const nextCoverUrl = String(data.coverImageUrl || '');
+        const nextStartDate = String(data.startDate || '');
+        const rawEndDate = data.endDate ? String(data.endDate) : '';
+        const hasDateRange = Boolean(rawEndDate && nextStartDate && rawEndDate !== nextStartDate);
+        const nextEndDate = hasDateRange ? rawEndDate : '';
+
+        setEditingEventId(draftId);
+        setTitle(nextTitle);
+        setDescription(nextDescription);
+        setActiveCategory(nextCategory || 'Community');
+        setLocation(nextLocation);
+        setMaxVolunteers(nextMaxVolunteers);
+        setCoverImageUrl(nextCoverUrl);
+        setCoverImagePreview(nextCoverUrl);
+        setIsDateRange(hasDateRange);
+        setStartDate(nextStartDate);
+        setEndDate(nextEndDate);
+        setShifts(normalizeShifts(data.shifts, data.startTime, data.endTime));
+      } catch (error) {
+        console.error('Failed to load draft event for edit:', error);
+        if (!cancelled) setEditingEventId(null);
+      } finally {
+        if (!cancelled) setIsLoadingDraft(false);
+      }
+    };
+
+    loadDraft();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -149,11 +241,20 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
         status,
         orgId: orgData.orgId,
         orgCode: orgData.orgCode,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
       };
 
-      await addDoc(collection(db, 'events'), eventData);
+      if (editingEventId) {
+        await updateDoc(doc(db, 'events', editingEventId), {
+          ...eventData,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, 'events'), {
+          ...eventData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
       onBack();
     } catch (error) {
       console.error('Publish failed:', error);
@@ -192,8 +293,16 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
              <ArrowLeft className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
          </button>
          <div>
-            <h2 className="text-3xl font-medium text-gray-900 tracking-tight">Create Event</h2>
-            <p className="text-gray-500 font-medium">Coordinate a new volunteer opportunity.</p>
+            <h2 className="text-3xl font-medium text-gray-900 tracking-tight">
+              {editingEventId ? 'Edit Event' : 'Create Event'}
+            </h2>
+            <p className="text-gray-500 font-medium">
+              {isLoadingDraft
+                ? 'Loading last saved draft...'
+                : editingEventId
+                  ? 'Update your saved draft details.'
+                  : 'Coordinate a new volunteer opportunity.'}
+            </p>
          </div>
       </motion.div>
 
@@ -439,18 +548,18 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
               <div className="flex flex-col gap-3">
                   <button 
                       onClick={() => handlePublish('published')}
-                      disabled={isSubmitting || isUploading}
+                      disabled={isSubmitting || isUploading || isLoadingDraft}
                       className="w-full h-14 bg-gray-900 hover:bg-black text-white rounded-2xl font-bold text-lg shadow-xl shadow-gray-900/10 hover:-translate-y-1 disabled:opacity-50 disabled:translate-y-0 transition-all flex items-center justify-center gap-2"
                   >
                       {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                      Publish Event
+                      {editingEventId ? 'Update Event' : 'Publish Event'}
                   </button>
                   <button 
                       onClick={() => handlePublish('draft')}
-                      disabled={isSubmitting || isUploading}
+                      disabled={isSubmitting || isUploading || isLoadingDraft}
                       className="w-full h-14 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-2xl font-bold transition-colors disabled:opacity-50"
                   >
-                      Save as Draft
+                      {editingEventId ? 'Save Draft Changes' : 'Save as Draft'}
                   </button>
               </div>
 

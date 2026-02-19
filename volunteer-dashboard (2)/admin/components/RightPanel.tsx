@@ -61,7 +61,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
         return;
       }
       try {
-        const context = await resolveOrgContext(db, user.uid);
+        const context = await resolveOrgContext(db, user.uid, user.email || null);
         setOrgCode(context.orgCode || '');
         setOrgId(context.orgId || '');
       } catch (error) {
@@ -231,7 +231,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
   return (
     <>
-      <div className="flex flex-col gap-4 h-full">
+      <div className="flex flex-col gap-4 h-full" data-ai-anchor="right-panel">
         
         {/* Combined Monthly Goal Card */}
         <motion.div 

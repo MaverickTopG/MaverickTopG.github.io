@@ -16,7 +16,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface NavbarProps {
-  onNavigate: (page: 'home' | 'app' | 'pricing' | 'blog' | 'login' | 'volunteer-login' | 'volunteer-signup' | 'volunteer-dashboard' | 'about' | 'volunteers-info' | 'donate') => void;
+  onNavigate: (page: 'home' | 'app' | 'pricing' | 'blog' | 'login' | 'volunteer-login' | 'volunteer-signup' | 'about' | 'volunteers-info' | 'donate') => void;
   currentPage: string;
 }
 

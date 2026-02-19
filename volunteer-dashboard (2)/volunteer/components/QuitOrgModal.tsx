@@ -6,8 +6,9 @@ import {
   query, 
   where, 
   getDocs, 
-  deleteDoc, 
-  doc 
+  doc,
+  updateDoc,
+  serverTimestamp
 } from 'firebase/firestore';
 import { 
   EmailAuthProvider, 
@@ -59,6 +60,16 @@ export const QuitOrgModal: React.FC<QuitOrgModalProps> = ({ isOpen, onClose, org
       normalized.includes(token)
     );
   };
+  const isArchivedMembership = (data: Record<string, unknown>) => {
+    const status = String(data.status || '').toLowerCase();
+    return Boolean(
+      data.removed_by_user
+      || data.archived_by_user
+      || data.removed_at
+      || data.archived_at
+      || ['archived', 'inactive', 'revoked', 'deleted', 'removed'].some((token) => status.includes(token))
+    );
+  };
   const isPersonalRecord = (data: Record<string, unknown>, id: string, code: string, name: string) => {
     const rawId = String(id || '').toLowerCase();
     const rawCode = String(code || '').toLowerCase();
@@ -90,7 +101,7 @@ export const QuitOrgModal: React.FC<QuitOrgModalProps> = ({ isOpen, onClose, org
         const status = String(data.status || '').toLowerCase();
         const whitelist = ['active', 'accepted', 'approved', 'connected', 'granted', 'confirmed', ''];
         if (!whitelist.some(v => status.includes(v))) return;
-        if (isDeclinedJoinStatus(status) || data.removed_by_user) return;
+        if (isDeclinedJoinStatus(status) || isArchivedMembership(data)) return;
         const orgId = String(data.orgId || data.org_id || data.organizationId || data.linked_org_id || docSnap.id || '');
         const orgCode = normalizeCode(data.access_code || data.orgCode || data.org_access_code || data.organizationCode);
         const orgName = String(data.orgName || data.organizationName || data.name || data.schoolName || data.school_name || orgCode || 'Organization');
@@ -148,17 +159,102 @@ export const QuitOrgModal: React.FC<QuitOrgModalProps> = ({ isOpen, onClose, org
       const auth = getFirebaseAuth();
       const db = getFirestoreDb();
       const user = auth.currentUser;
+      const selectedMembership = memberships.find(
+        (membership) =>
+          membership.id === selectedMembershipId && membership.source === selectedSource,
+      );
 
       if (!user || !user.email) throw new Error('Auth state invalid.');
+      if (!selectedMembership) throw new Error('Selected membership is no longer available.');
 
       // 1. Re-authenticate
       const credential = EmailAuthProvider.credential(user.email, password);
       await reauthenticateWithCredential(user, credential);
 
-      // 2. Delete Membership (from the correct collection)
-      await deleteDoc(doc(db, selectedSource, selectedMembershipId));
+      // 2. Archive membership records instead of deleting them.
+      const [membershipSnap, userSnap] = await Promise.all([
+        getDocs(query(collection(db, 'user_organizations'), where('user_id', '==', user.uid))),
+        getDocs(query(collection(db, 'users'), where('user_id', '==', user.uid))),
+      ]);
+      const docsToArchive: Array<{
+        ref: ReturnType<typeof doc>;
+      }> = [];
 
-      setSuccess('Successfully left the organization.');
+      const matchesSelectedMembership = (
+        row: Record<string, unknown>,
+        source: OrgMembership['source'],
+        docId: string,
+      ) => {
+        const docOrgCode = normalizeCode(
+          row.access_code || row.orgCode || row.org_access_code || row.organizationCode,
+        );
+        const docOrgId = String(
+          row.orgId || row.org_id || row.organizationId || row.linked_org_id || docId || '',
+        );
+        const sameSourceDoc =
+          source === selectedMembership.source && docId === selectedMembership.id;
+        const sameCode =
+          selectedMembership.orgCode &&
+          docOrgCode &&
+          selectedMembership.orgCode === docOrgCode;
+        const sameOrgId =
+          selectedMembership.orgId &&
+          docOrgId &&
+          selectedMembership.orgId === docOrgId;
+        return sameSourceDoc || sameCode || sameOrgId;
+      };
+
+      const collectArchiveTargets = (
+        source: OrgMembership['source'],
+        snapshot: Awaited<ReturnType<typeof getDocs>>,
+      ) => {
+        snapshot.forEach((docSnap) => {
+          const row = (docSnap.data() || {}) as Record<string, unknown>;
+          const docCode = normalizeCode(
+            row.access_code || row.orgCode || row.org_access_code || row.organizationCode,
+          );
+          const docOrgId = String(
+            row.orgId || row.org_id || row.organizationId || row.linked_org_id || docSnap.id || '',
+          );
+          const docName = String(
+            row.orgName ||
+              row.organizationName ||
+              row.name ||
+              row.schoolName ||
+              row.school_name ||
+              docCode ||
+              'Organization',
+          );
+          if (isPersonalRecord(row, docOrgId, docCode, docName)) return;
+          if (isArchivedMembership(row)) return;
+          if (!matchesSelectedMembership(row, source, docSnap.id)) return;
+          docsToArchive.push({
+            ref: doc(db, source, docSnap.id),
+          });
+        });
+      };
+
+      collectArchiveTargets('user_organizations', membershipSnap);
+      collectArchiveTargets('users', userSnap);
+
+      if (!docsToArchive.length) {
+        throw new Error('No active membership documents found to archive.');
+      }
+
+      await Promise.all(
+        docsToArchive.map(({ ref }) =>
+          updateDoc(ref, {
+            status: 'archived',
+            removed_by_user: true,
+            removed_at: serverTimestamp(),
+            archived_by_user: true,
+            archived_at: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }),
+        ),
+      );
+
+      setSuccess('Organization archived. It will no longer appear in your portal.');
       setTimeout(() => {
         onClose();
         // Optionally trigger a page reload or context update
@@ -197,7 +293,7 @@ export const QuitOrgModal: React.FC<QuitOrgModalProps> = ({ isOpen, onClose, org
         <div className="p-8 pb-6 flex items-start justify-between">
           <div>
             <h3 className="text-2xl font-bold text-gray-900">Quit Organization</h3>
-            <p className="text-gray-500 mt-1 text-sm">Once you quit, you will lose access to all data and messaging for this organization.</p>
+            <p className="text-gray-500 mt-1 text-sm">This archives your membership so the organization, events, and messages are hidden from your portal.</p>
           </div>
           <button
             onClick={onClose}
@@ -290,7 +386,7 @@ export const QuitOrgModal: React.FC<QuitOrgModalProps> = ({ isOpen, onClose, org
               ) : (
                 <>
                   <Trash2 className="w-5 h-5" />
-                  Terminate Membership
+                  Archive Membership
                 </>
               )}
             </button>

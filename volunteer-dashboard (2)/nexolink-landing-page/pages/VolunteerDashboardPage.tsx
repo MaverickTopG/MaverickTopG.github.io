@@ -19,7 +19,7 @@ import {
   Search,
   Filter
 } from 'lucide-react';
-import { getAuth, signOut } from 'firebase/auth';
+import { getAuth, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { 
   getFirestore, 
   collection, 
@@ -41,7 +41,7 @@ interface VolunteerDashboardPageProps {
 const VolunteerDashboardPage: React.FC<VolunteerDashboardPageProps> = ({ onNavigate }) => {
   const auth = getAuth();
   const db = getFirestore();
-  const user = auth.currentUser;
+  const [user, setUser] = useState<User | null>(() => auth.currentUser);
 
   const [logs, setLogs] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
@@ -56,6 +56,13 @@ const VolunteerDashboardPage: React.FC<VolunteerDashboardPageProps> = ({ onNavig
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => {
+      try { unsub(); } catch {}
+    };
+  }, []);
+
+  useEffect(() => {
     if (!user) {
       if (onNavigate) onNavigate('volunteer-login');
       return;
@@ -67,23 +74,47 @@ const VolunteerDashboardPage: React.FC<VolunteerDashboardPageProps> = ({ onNavig
     });
 
     // Subscribe to logs
-    const logsQuery = query(
-      collection(db, 'volunteer_logs'),
-      where('user_id', '==', user.uid),
-      orderBy('timestamp', 'desc')
-    );
-    const logsUnsub = onSnapshot(logsQuery, (snapshot) => {
-      const logsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setLogs(logsData);
-      setIsLoading(false);
-    });
+    const logsCol = collection(db, 'volunteer_logs');
+    const toSortMs = (row: any) => {
+      const ts = row?.timestamp || row?.createdAt || row?.updatedAt;
+      if (!ts) return 0;
+      if (typeof ts?.toMillis === 'function') return ts.toMillis();
+      if (typeof ts?.toDate === 'function') return ts.toDate().getTime();
+      return 0;
+    };
+
+    let logsUnsub: (() => void) | null = null;
+    const subscribeLogs = (withOrderBy: boolean) => {
+      const q = withOrderBy
+        ? query(logsCol, where('user_id', '==', user.uid), orderBy('timestamp', 'desc'))
+        : query(logsCol, where('user_id', '==', user.uid));
+
+      return onSnapshot(
+        q,
+        (snapshot) => {
+          const logsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          logsData.sort((a, b) => toSortMs(b) - toSortMs(a));
+          setLogs(logsData);
+          setIsLoading(false);
+        },
+        (err: any) => {
+          console.warn('Volunteer logs listener failed', err);
+          if (withOrderBy && err?.code === 'failed-precondition') {
+            try { logsUnsub?.(); } catch {}
+            logsUnsub = subscribeLogs(false);
+          }
+        }
+      );
+    };
+
+    logsUnsub = subscribeLogs(true);
 
     return () => {
       profileUnsub();
-      logsUnsub();
+      try { logsUnsub?.(); } catch {}
     };
   }, [user]);
 

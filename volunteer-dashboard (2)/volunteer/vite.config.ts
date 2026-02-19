@@ -19,6 +19,25 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      build: {
+        chunkSizeWarningLimit: 1500,
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (!id.includes('node_modules')) return;
+              if (id.includes('/firebase/') || id.includes('node_modules/firebase') || id.includes('node_modules/@firebase')) {
+                return 'firebase';
+              }
+              if (id.includes('node_modules/framer-motion')) return 'motion';
+              if (id.includes('node_modules/@google/generative-ai')) return 'genai';
+              if (id.includes('node_modules/lucide-react')) return 'icons';
+              if (id.includes('node_modules/xlsx') || id.includes('node_modules/jspdf')) return 'exports';
+              if (id.includes('node_modules/gsap')) return 'gsap';
+              return 'vendor';
+            },
+          },
+        },
+      },
     };
 });

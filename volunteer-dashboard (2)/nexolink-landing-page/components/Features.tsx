@@ -22,7 +22,7 @@ const features = [
     title: "HOUR APPROVALS",
     desc: "Quick approvals and clear records replace paper forms and spreadsheet chaos.",
     icon: <Globe className="w-8 h-8" />,
-    stat: "98.1k",
+    stat: "100k",
     statLabel: "Hours"
   },
   {

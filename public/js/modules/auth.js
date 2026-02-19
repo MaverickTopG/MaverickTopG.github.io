@@ -6,6 +6,10 @@ import {
   sendPasswordResetEmail,
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 import {
+  getFunctions,
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-functions.js";
+import {
   doc,
   getDoc,
   setDoc,
@@ -17,7 +21,7 @@ import {
   deleteDoc,
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
-import { auth, db } from "./firebase.js";
+import { app, auth, db } from "./firebase.js";
 import { appState } from "./state.js";
 import {
   showDashboardSection,
@@ -45,8 +49,44 @@ const SIGNUP_CHECKOUT_EMAIL_KEY = 'signup_checkout_email';
 const SIGNUP_FORCE_FORM_KEY = 'signup_force_form';
 const SIGNUP_SUCCESS_DATA_KEY = 'signup_success_payload';
 const AUTH_MESSAGE_KEY = 'auth_last_message';
+const SUBADMIN_SESSION_STORAGE_KEY = 'nexolink_active_sub_admin_session';
 
 let authFormHandlersRegistered = false;
+const functions = getFunctions(app);
+
+function isAdminPortalUser(userData = {}) {
+  if (!userData || typeof userData !== "object") return false;
+  const role = String(userData.role || "").toLowerCase();
+  if (role === "admin" || role === "owner" || role === "superadmin" || role === "subadmin") {
+    return true;
+  }
+  if (userData.isAdmin === true || userData.is_admin === true || userData.admin === true) {
+    return true;
+  }
+  if (Array.isArray(userData.roles)) {
+    return userData.roles.some((entry) => {
+      const normalized = String(entry || "").toLowerCase();
+      return normalized === "admin" || normalized === "owner" || normalized === "superadmin" || normalized === "subadmin";
+    });
+  }
+  return false;
+}
+
+async function bootstrapSubAdminSession(email, password) {
+  const callable = httpsCallable(functions, "authenticateSubAdminLogin");
+  const response = await callable({ email, password });
+  const payload = response?.data || {};
+  const session = payload?.session || null;
+  if (session && typeof window !== "undefined") {
+    try {
+      localStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(session));
+      window.dispatchEvent(new CustomEvent("nexolink:subadmin-session", { detail: session }));
+    } catch (error) {
+      console.warn("Unable to persist subadmin session", error);
+    }
+  }
+  return payload;
+}
 
 function storeAuthMessage(type, text) {
   if (typeof window === 'undefined') return;
@@ -535,6 +575,7 @@ export function setupAuthModule() {
         appState.currentAdmin = null;
       appState.currentOrgCode = null;
       sessionStorage.removeItem(TAB_SESSION_KEY);
+      localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
       hideBillingGate();
       showAuthSection();
 
@@ -566,8 +607,9 @@ export function setupAuthModule() {
       const userDocRef = doc(db, 'users', user.uid);
       const userDoc = await getDoc(userDocRef);
 
-      if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+      if (!userDoc.exists() || !isAdminPortalUser(userDoc.data())) {
         storeAuthMessage('error', 'This account does not have admin access.');
+        localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
         await signOut(auth);
         return;
       }
@@ -575,17 +617,22 @@ export function setupAuthModule() {
       const adminData = userDoc.data();
       const subscription = normalizeSubscription(adminData.subscription);
       const isActiveSub = isSubscriptionActive(subscription, adminData.paid === true);
+      const isSubAdminPortal = Boolean(
+        adminData.activeSubAdminGroupId
+        || adminData.subAdminGroupId
+        || adminData.subAdminId
+      );
       const legacyOverrideExpired = adminData.paid === true && hasLegacyAccessExpired();
       const demoAccount = isDemoAccount(adminData);
 
       appState.currentAdmin = { uid: user.uid, ...adminData, subscription };
-      appState.currentOrgCode = adminData.organizationCode;
+      appState.currentOrgCode = adminData.organizationCode || adminData.accessCode || adminData.orgCode || null;
       appState.isAuthenticated = true;
       renderDemoAccountNotice(appState.currentAdmin);
 
       sessionStorage.setItem(TAB_SESSION_KEY, 'true');
 
-      if (!isActiveSub) {
+      if (!isActiveSub && !isSubAdminPortal) {
         if (legacyOverrideExpired) {
           showMessage(
             `Legacy access expired on ${formatLegacyAccessDeadline()}. Choose a plan to continue.`,
@@ -912,12 +959,21 @@ export async function signIn() {
     // We only need to verify the user is an admin here. If they are not,
     // we sign them out, which will trigger the listener to show an error.
     const userDocRef = doc(db, "users", user.uid);
-    const userDoc = await getDoc(userDocRef);
+    let userDoc = await getDoc(userDocRef);
 
-    if (!userDoc.exists() || userDoc.data().role !== "admin") {
-      console.log("User is not an admin or does not exist. Signing out.");
+    if (!userDoc.exists() || !isAdminPortalUser(userDoc.data())) {
+      try {
+        await bootstrapSubAdminSession(email, password);
+        userDoc = await getDoc(userDocRef);
+      } catch (subAdminError) {
+        console.warn("Subadmin bootstrap failed", subAdminError);
+      }
+    }
+
+    if (!userDoc.exists() || !isAdminPortalUser(userDoc.data())) {
+      console.log("User is not an admin/subadmin or does not exist. Signing out.");
+      localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
       await signOut(auth);
-      // The onAuthStateChanged listener will handle the UI update and error message.
       return;
     }
 
@@ -992,6 +1048,7 @@ export function logout() {
   }
 
   sessionStorage.removeItem(TAB_SESSION_KEY);
+  localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
   appState.isAuthenticated = false;
 
   signOut(auth)

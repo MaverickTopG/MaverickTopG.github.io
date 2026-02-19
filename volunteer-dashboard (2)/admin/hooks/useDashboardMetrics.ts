@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgAdmins, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { getActiveSubAdminSession, resolveOrgAdmins, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 import {
   computeDashboardMetrics,
   computeVolunteerHours,
@@ -19,6 +19,9 @@ import {
 type MetricsState = {
   loading: boolean;
   error: string | null;
+  orgCode: string;
+  orgId: string;
+  activityLogs: ActivityLog[];
   metrics: DashboardMetrics;
   volunteers: VolunteerRecord[];
   topVolunteers: VolunteerRecord[];
@@ -57,6 +60,22 @@ export const useDashboardMetrics = (): MetricsState => {
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [orgAdminIds, setOrgAdminIds] = useState<string[]>([]);
   const [orgAdminEmails, setOrgAdminEmails] = useState<string[]>([]);
+  const [memberLinks, setMemberLinks] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
+  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
+  const isSubAdminScoped = Boolean(subAdminScopeKey);
+
+  useEffect(() => {
+    const syncScope = () => {
+      setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
+    };
+    const onScopeEvent = () => syncScope();
+    window.addEventListener('nexolink:subadmin-session', onScopeEvent);
+    window.addEventListener('storage', onScopeEvent);
+    return () => {
+      window.removeEventListener('nexolink:subadmin-session', onScopeEvent);
+      window.removeEventListener('storage', onScopeEvent);
+    };
+  }, []);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -64,6 +83,7 @@ export const useDashboardMetrics = (): MetricsState => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setOrgCode('');
+        setOrgId('');
         setAdminUid('');
         setAdminEmail('');
         setLoading(false);
@@ -72,7 +92,7 @@ export const useDashboardMetrics = (): MetricsState => {
       setAdminUid(user.uid || '');
       setAdminEmail((user.email || '').toLowerCase());
       try {
-        const context = await resolveOrgContext(db, user.uid);
+        const context = await resolveOrgContext(db, user.uid, user.email || null);
         setOrgCode(context.orgCode || '');
         setOrgId(context.orgId || '');
         const adminContext = await resolveOrgAdmins(db, context.orgId, context.orgCode);
@@ -140,18 +160,35 @@ export const useDashboardMetrics = (): MetricsState => {
       },
     });
 
+    const unsubMemberLinks = subscribeToOrgCollection({
+      db,
+      collectionName: 'user_organizations',
+      orgCode,
+      orgId,
+      onData: (rows) => {
+        setMemberLinks(rows);
+      },
+    });
+
     return () => {
       unsubVolunteers();
       unsubLogs();
+      unsubMemberLinks();
     };
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, subAdminScopeKey]);
 
   const computed = useMemo(() => {
+    const isAdminLikeRole = (role: unknown) => {
+      const normalized = String(role || '').trim().toLowerCase();
+      return ['org-admin', 'admin', 'subadmin', 'sub-admin', 'owner', 'organization'].includes(normalized);
+    };
+
     const filteredVolunteers = volunteers.filter((volunteer) => {
       if (orgAdminIds.includes(volunteer.id)) return false;
       if (orgAdminEmails.includes((volunteer.email || '').toLowerCase())) return false;
       if (adminUid && volunteer.id === adminUid) return false;
       if (adminEmail && (volunteer.email || '').toLowerCase() === adminEmail) return false;
+      if (isAdminLikeRole(volunteer.role)) return false;
       return true;
     });
     const filteredLogs = logs.filter((log) => {
@@ -161,13 +198,40 @@ export const useDashboardMetrics = (): MetricsState => {
       if (orgAdminEmails.includes(logEmail)) return false;
       if (adminUid && logUserId === adminUid) return false;
       if (adminEmail && logEmail === adminEmail) return false;
+      const logRole = (log as Record<string, unknown>).role || (log as Record<string, unknown>).volunteer_role;
+      if (isAdminLikeRole(logRole)) return false;
       return true;
     });
-    const dedupedVolunteers = dedupeVolunteers(filteredVolunteers);
+    const scopedAllowedIds = new Set<string>();
+    const scopedAllowedEmails = new Set<string>();
+    if (isSubAdminScoped) {
+      memberLinks.forEach((row) => {
+        const data = row.data || {};
+        const id = String(data.user_id || data.userId || data.uid || row.id || '').trim();
+        const email = String(data.user_email || data.email || '').trim().toLowerCase();
+        if (id) scopedAllowedIds.add(id);
+        if (email) scopedAllowedEmails.add(email);
+      });
+      filteredLogs.forEach((log) => {
+        const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
+        const email = String((log as Record<string, unknown>).volunteer_email || (log as Record<string, unknown>).email || '').trim().toLowerCase();
+        if (id) scopedAllowedIds.add(id);
+        if (email) scopedAllowedEmails.add(email);
+      });
+    }
+
+    const scopedVolunteers = isSubAdminScoped
+      ? filteredVolunteers.filter((volunteer) => {
+          const email = String(volunteer.email || '').trim().toLowerCase();
+          return scopedAllowedIds.has(volunteer.id) || (email && scopedAllowedEmails.has(email));
+        })
+      : filteredVolunteers;
+
+    const dedupedVolunteers = dedupeVolunteers(scopedVolunteers);
     const enriched = computeVolunteerHours(dedupedVolunteers, filteredLogs);
     const metrics = computeDashboardMetrics(enriched, filteredLogs);
     const topVolunteers = [...enriched]
-      .filter((v) => (v.role || 'volunteer') !== 'org-admin')
+      .filter((v) => !isAdminLikeRole(v.role))
       .map((volunteer) => ({
         ...volunteer,
         totalHours: getMonthHoursForVolunteer(volunteer, filteredLogs),
@@ -178,12 +242,13 @@ export const useDashboardMetrics = (): MetricsState => {
     const monthlySeries = buildMonthlySeries(enriched, filteredLogs);
     const yearlySeries = buildYearlySeries(enriched, filteredLogs);
     const recent = buildLastNDaysSeries(enriched, filteredLogs, 10);
-    const eligible = enriched.filter((v) => (v.role || 'volunteer') !== 'org-admin');
+    const eligible = enriched.filter((v) => !isAdminLikeRole(v.role));
     const retained = eligible.filter((v) => (v.totalHours || 0) > 0).length;
     const retentionRate = eligible.length ? Math.round((retained / eligible.length) * 100) : 0;
 
     const currentMonthLabel = new Date().toLocaleDateString(undefined, { month: 'long' });
     return {
+      logs: filteredLogs,
       metrics,
       volunteers: enriched,
       topVolunteers,
@@ -195,11 +260,14 @@ export const useDashboardMetrics = (): MetricsState => {
       retentionRate,
       topVolunteerMonthLabel: `${currentMonthLabel} • Monthly`,
     };
-  }, [adminEmail, adminUid, logs, orgAdminEmails, orgAdminIds, volunteers, weekOffset]);
+  }, [adminEmail, adminUid, isSubAdminScoped, logs, memberLinks, orgAdminEmails, orgAdminIds, volunteers, weekOffset]);
 
   return {
     loading,
     error,
+    orgCode,
+    orgId,
+    activityLogs: computed.logs,
     metrics: computed.metrics,
     volunteers: computed.volunteers,
     topVolunteers: computed.topVolunteers,

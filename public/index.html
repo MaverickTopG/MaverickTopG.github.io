@@ -67,19 +67,15 @@
         background: #9EFF4F;
         color: #0F1115;
       }
-      /* Custom scrollbar */
-      ::-webkit-scrollbar {
-        width: 8px;
+      /* Hide scrollbars across the site */
+      * {
+        scrollbar-width: none;
+        -ms-overflow-style: none;
       }
-      ::-webkit-scrollbar-track {
-        background: #f1f1f1;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #d1d1d1;
-        border-radius: 10px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #9EFF4F;
+      *::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+        display: none;
       }
     </style>
 

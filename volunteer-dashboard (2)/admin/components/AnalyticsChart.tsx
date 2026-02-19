@@ -231,14 +231,17 @@ export const AnalyticsChart: React.FC<AnalyticsChartProps> = ({
   const weekRangeLabel = useMemo(() => {
     if (activeTab !== 'Weekly') return '';
     const today = new Date();
-    const day = today.getUTCDay();
-    const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - day));
-    start.setUTCDate(start.getUTCDate() + weekOffset * 7);
+    today.setHours(0, 0, 0, 0);
+    const day = today.getDay();
+    const start = new Date(today);
+    start.setDate(start.getDate() - day + weekOffset * 7);
     const end = new Date(start);
-    end.setUTCDate(start.getUTCDate() + 6);
+    end.setDate(start.getDate() + 6);
+    const displayStart = new Date(start);
+    displayStart.setDate(displayStart.getDate() - 1);
     const format = (d: Date) =>
       d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return `${format(start)} - ${format(end)}`;
+    return `${format(displayStart)} - ${format(end)}`;
   }, [activeTab, weekOffset]);
 
   const data = useMemo(() => {

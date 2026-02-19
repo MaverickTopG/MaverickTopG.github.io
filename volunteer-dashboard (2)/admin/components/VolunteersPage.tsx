@@ -19,8 +19,10 @@ import {
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore';
+import { AiInsightWidget } from './AiInsightWidget';
+import { useGeminiInsight } from '../hooks/useGeminiInsight';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgAdmins, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { getActiveSubAdminSession, resolveOrgAdmins, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 
 type VolunteerRow = {
   id: string;
@@ -37,7 +39,19 @@ type VolunteerRow = {
   matchNames: string[];
 };
 
-export const VolunteersPage: React.FC = () => {
+interface VolunteersPageProps {
+  isActive?: boolean;
+  aiEnabled?: boolean;
+  onOpenCopilot?: () => void;
+  planTier?: string;
+}
+
+export const VolunteersPage: React.FC<VolunteersPageProps> = ({
+  isActive = false,
+  aiEnabled = false,
+  onOpenCopilot,
+  planTier = 'nebula',
+}) => {
   const [activeFilter, setActiveFilter] = useState('All Members');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -70,8 +84,11 @@ export const VolunteersPage: React.FC = () => {
   const [memberLinks, setMemberLinks] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
   const [joinRequests, setJoinRequests] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
+  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
   const [page, setPage] = useState(1);
   const pageSize = 7;
+  const [insightUpdatedAt, setInsightUpdatedAt] = useState(() => Date.now());
+  const isSubAdminScoped = Boolean(subAdminScopeKey);
 
   const filters = ['All Members', 'Highest Hours', 'Lowest Hours', 'Archived'];
 
@@ -111,7 +128,7 @@ export const VolunteersPage: React.FC = () => {
       }
       setAdminUid(user.uid || '');
       setAdminEmail(user.email || '');
-      const context = await resolveOrgContext(db, user.uid);
+      const context = await resolveOrgContext(db, user.uid, user.email || null);
       setOrgCode(context.orgCode || '');
       setOrgId(context.orgId || '');
       setOrgName(context.orgName || '');
@@ -120,6 +137,16 @@ export const VolunteersPage: React.FC = () => {
       setOrgAdminEmails(adminContext.adminEmails || []);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
+    window.addEventListener('nexolink:subadmin-session', syncScope);
+    window.addEventListener('storage', syncScope);
+    return () => {
+      window.removeEventListener('nexolink:subadmin-session', syncScope);
+      window.removeEventListener('storage', syncScope);
+    };
   }, []);
 
   useEffect(() => {
@@ -172,13 +199,38 @@ export const VolunteersPage: React.FC = () => {
       unsubMembers();
       unsubJoinRequests();
     };
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, subAdminScopeKey]);
 
   const volunteers = useMemo<VolunteerRow[]>(() => {
     const volunteerMap = new Map<string, VolunteerRow>();
     const keyByUserId = new Map<string, string>();
     const keyByEmail = new Map<string, string>();
     const keyByName = new Map<string, string>();
+    const scopedAllowedIds = new Set<string>();
+    const scopedAllowedEmails = new Set<string>();
+
+    if (isSubAdminScoped) {
+      memberLinks.forEach((link) => {
+        const data = link.data || {};
+        const id = String(data.user_id || data.userId || data.uid || link.id || '').trim();
+        const email = String(data.email || data.user_email || '').trim().toLowerCase();
+        if (id) scopedAllowedIds.add(id);
+        if (email) scopedAllowedEmails.add(email);
+      });
+      joinRequests.forEach((req) => {
+        const data = req.data || {};
+        const id = String(data.user_id || data.userId || '').trim();
+        const email = String(data.user_email || data.email || '').trim().toLowerCase();
+        if (id) scopedAllowedIds.add(id);
+        if (email) scopedAllowedEmails.add(email);
+      });
+      logs.forEach((log) => {
+        const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
+        const email = String(log.volunteer_email || log.email || '').trim().toLowerCase();
+        if (id) scopedAllowedIds.add(id);
+        if (email) scopedAllowedEmails.add(email);
+      });
+    }
 
     users.forEach((user) => {
       const data = user.data || {};
@@ -187,6 +239,12 @@ export const VolunteersPage: React.FC = () => {
       const email = String(data.email || '').trim();
       const name = [first, last].filter(Boolean).join(' ').trim() || email || 'Volunteer';
       const role = String(data.role || 'Volunteer');
+      if (isSubAdminScoped) {
+        const normalizedEmail = email.toLowerCase();
+        if (!scopedAllowedIds.has(user.id) && (!normalizedEmail || !scopedAllowedEmails.has(normalizedEmail))) {
+          return;
+        }
+      }
       
       // Strict filters for organizations and admins
       if (orgId && user.id === orgId) return;
@@ -398,8 +456,193 @@ export const VolunteersPage: React.FC = () => {
       }
     });
 
-    return Array.from(volunteerMap.values());
-  }, [adminEmail, adminUid, logs, memberLinks, orgAdminEmails, orgAdminIds, users]);
+    // This page is strictly for volunteers. Never include admin/sub-admin accounts.
+    return Array.from(volunteerMap.values()).filter((row) => !isAdminRole(String(row.role || '')));
+  }, [adminEmail, adminUid, isSubAdminScoped, joinRequests, logs, memberLinks, orgAdminEmails, orgAdminIds, users]);
+
+  const activeVolunteers = useMemo(
+    () => volunteers.filter((volunteer) => volunteer.status !== 'archived'),
+    [volunteers],
+  );
+
+  const volunteerInsights = useMemo(() => {
+    const now = Date.now();
+    const withSignals = activeVolunteers.map((volunteer) => {
+      const daysSince = volunteer.lastLogDate
+        ? Math.floor((now - volunteer.lastLogDate.getTime()) / (1000 * 60 * 60 * 24))
+        : null;
+      let score = 0;
+      if (volunteer.hours >= 40) score += 3;
+      else if (volunteer.hours >= 25) score += 2;
+      else if (volunteer.hours >= 15) score += 1;
+
+      if (daysSince !== null) {
+        if (daysSince <= 2) score += 2;
+        else if (daysSince <= 7) score += 1;
+        else if (daysSince >= 21) score -= 1;
+      }
+
+      const risk = score >= 4 ? 'high' : score >= 2 ? 'moderate' : 'healthy';
+      return { ...volunteer, daysSince, risk, score };
+    });
+
+    const high = withSignals.filter((v) => v.risk === 'high');
+    const moderate = withSignals.filter((v) => v.risk === 'moderate');
+    const healthy = withSignals.filter((v) => v.risk === 'healthy');
+    const burnoutHighlights = [...high, ...moderate]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+    const dropoff = withSignals
+      .filter((v) => v.daysSince === null || v.daysSince >= 21)
+      .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999))
+      .slice(0, 3);
+    const reliability = withSignals
+      .filter((v) => (v.daysSince ?? 99) <= 10 && v.hours >= 20)
+      .sort((a, b) => b.hours - a.hours)
+      .slice(0, 3);
+    const roleMatch = withSignals
+      .filter((v) => v.hours <= 5 && (v.daysSince ?? 999) <= 30)
+      .slice(0, 3);
+
+    return {
+      high,
+      moderate,
+      healthy,
+      burnoutHighlights,
+      dropoff,
+      reliability,
+      roleMatch,
+    };
+  }, [activeVolunteers]);
+
+  useEffect(() => {
+    setInsightUpdatedAt(Date.now());
+  }, [activeVolunteers, volunteerInsights.high.length, volunteerInsights.moderate.length]);
+
+  const insightUpdatedLabel = useMemo(() => {
+    const time = new Date(insightUpdatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `Live refresh · ${time}`;
+  }, [insightUpdatedAt]);
+
+  const burnoutItems = volunteerInsights.burnoutHighlights.length
+    ? volunteerInsights.burnoutHighlights.map((volunteer) => ({
+        label: volunteer.name,
+        value: volunteer.risk === 'high' ? 'High' : 'Mod',
+        tone: volunteer.risk === 'high' ? 'alert' : 'warning',
+        helper: `${volunteer.hours.toFixed(0)}h · ${volunteer.lastLogged || 'No logs'}`,
+      }))
+    : [
+        {
+          label: 'All clear',
+          value: 'OK',
+          tone: 'ok' as const,
+        },
+      ];
+
+  const dropoffItems = volunteerInsights.dropoff.length
+    ? volunteerInsights.dropoff.map((volunteer) => ({
+        label: volunteer.name,
+        value: volunteer.daysSince ? `${volunteer.daysSince}d` : 'No logs',
+        tone: 'warning' as const,
+      }))
+    : [
+        {
+          label: 'Retention stable',
+          value: 'OK',
+          tone: 'ok' as const,
+        },
+      ];
+
+  const reliabilityItems = volunteerInsights.reliability.length
+    ? volunteerInsights.reliability.map((volunteer) => ({
+        label: volunteer.name,
+        value: `${volunteer.hours.toFixed(0)}h`,
+        tone: 'ok' as const,
+      }))
+    : [
+        {
+          label: 'No leaders yet',
+          value: '—',
+          tone: 'info' as const,
+        },
+      ];
+
+  const roleMatchItems = volunteerInsights.roleMatch.length
+    ? volunteerInsights.roleMatch.map((volunteer) => ({
+        label: volunteer.name,
+        value: 'Match',
+        tone: 'info' as const,
+      }))
+    : [
+        {
+          label: 'Role fit stable',
+          value: 'OK',
+          tone: 'ok' as const,
+        },
+      ];
+
+  const fallbackInsight = useMemo(
+    () => ({
+      summary: `${activeVolunteers.length} active · ${volunteerInsights.high.length} high risk · ${volunteerInsights.moderate.length} moderate`,
+      sections: [
+        {
+          title: 'Burnout Risk',
+          items: burnoutItems,
+        },
+        {
+          title: 'Retention Drop',
+          items: dropoffItems,
+        },
+        {
+          title: 'Reliability + Match',
+          items: [...reliabilityItems.slice(0, 2), ...roleMatchItems.slice(0, 1)],
+        },
+      ],
+    }),
+    [
+      activeVolunteers.length,
+      burnoutItems,
+      dropoffItems,
+      reliabilityItems,
+      roleMatchItems,
+      volunteerInsights.high.length,
+      volunteerInsights.moderate.length,
+    ],
+  );
+
+  const insightSource = useMemo(
+    () => ({
+      activeVolunteers: activeVolunteers.length,
+      highRiskCount: volunteerInsights.high.length,
+      moderateRiskCount: volunteerInsights.moderate.length,
+      burnoutHighlights: volunteerInsights.burnoutHighlights.map((volunteer) => ({
+        name: volunteer.name,
+        hours: volunteer.hours,
+        lastLogged: volunteer.lastLogged,
+      })),
+      dropoff: volunteerInsights.dropoff.map((volunteer) => ({
+        name: volunteer.name,
+        daysSince: volunteer.daysSince,
+      })),
+      reliability: volunteerInsights.reliability.map((volunteer) => ({
+        name: volunteer.name,
+        hours: volunteer.hours,
+      })),
+      roleMatch: volunteerInsights.roleMatch.map((volunteer) => ({
+        name: volunteer.name,
+        hours: volunteer.hours,
+      })),
+    }),
+    [activeVolunteers.length, volunteerInsights],
+  );
+
+  const { insight: aiInsight } = useGeminiInsight({
+    enabled: aiEnabled && isActive,
+    planTier,
+    pageKey: 'volunteers',
+    sourceData: insightSource,
+    fallback: fallbackInsight,
+  });
 
   const buildVolunteerHistory = (volunteer: VolunteerRow) => {
     const normalizedEmail = volunteer.email?.toLowerCase();
@@ -923,6 +1166,19 @@ export const VolunteersPage: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {isActive && aiEnabled && (
+        <AiInsightWidget
+          title="Volunteer Pulse"
+          subtitle="Live burnout + retention"
+          summary={aiInsight.summary}
+          pillLabel={`Burnout ${volunteerInsights.high.length}H`}
+          updatedLabel={insightUpdatedLabel}
+          sections={aiInsight.sections}
+          onOpenCopilot={onOpenCopilot}
+          copilotPrompt="Explain these volunteer risk signals, identify the top 3 at-risk volunteers, and recommend immediate actions."
+        />
+      )}
     </div>
   );
 };
@@ -933,7 +1189,7 @@ const getLogUserId = (log: Record<string, unknown>) => {
 
 const isAdminRole = (role: string) => {
   const normalized = role.toLowerCase();
-  return ['org-admin', 'admin', 'owner', 'organization'].includes(normalized);
+  return ['org-admin', 'admin', 'subadmin', 'sub-admin', 'owner', 'organization'].includes(normalized);
 };
 
 const buildVolunteerKey = (email: string, name: string, fallback: string) => {

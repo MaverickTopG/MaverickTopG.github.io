@@ -44,6 +44,11 @@ export type ChartPoint = {
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const isAdminLikeRole = (role: unknown) => {
+  const normalized = String(role || '').trim().toLowerCase();
+  return ['org-admin', 'admin', 'subadmin', 'sub-admin', 'owner', 'organization'].includes(normalized);
+};
+
 const resolveLogUserId = (log: ActivityLog) =>
   (log.user_id || log.userId || log.volunteer_id || log.volunteerId || '') as string;
 
@@ -77,12 +82,12 @@ export const buildLastNDaysSeries = (
   logs: ActivityLog[],
   days = 10,
 ) => {
-  const nonAdmin = volunteers.filter((v) => (v.role || 'volunteer') !== 'org-admin');
+  const nonAdmin = volunteers.filter((v) => !isAdminLikeRole(v.role));
   const lookup = buildVolunteerLookup(nonAdmin);
   const today = normalizeDateValue(new Date());
   if (!today) return { hours: [], volunteers: [] };
   const start = new Date(today);
-  start.setUTCDate(start.getUTCDate() - (days - 1));
+  start.setDate(start.getDate() - (days - 1));
 
   const hours = new Array(days).fill(0);
   const volunteerSets = new Array(days).fill(0).map(() => new Set<string>());
@@ -107,14 +112,15 @@ export const buildLastNDaysSeries = (
 
 export const getCurrentWeekBoundaries = (referenceDate: Date = new Date()) => {
   const now = new Date(referenceDate);
-  const dayOfWeek = now.getUTCDay();
-  const diff = now.getUTCDate() - dayOfWeek;
+  now.setHours(0, 0, 0, 0);
+  const dayOfWeek = now.getDay();
+  const diff = now.getDate() - dayOfWeek;
 
-  const startOfWeek = new Date(now.setUTCDate(diff));
-  startOfWeek.setUTCHours(0, 0, 0, 0);
+  const startOfWeek = new Date(now.setDate(diff));
+  startOfWeek.setHours(0, 0, 0, 0);
 
   const endOfWeek = new Date(startOfWeek.getTime());
-  endOfWeek.setUTCDate(startOfWeek.getUTCDate() + 7);
+  endOfWeek.setDate(startOfWeek.getDate() + 7);
 
   return { startOfWeek, endOfWeek };
 };
@@ -134,7 +140,14 @@ export const normalizeDateValue = (val: unknown): Date | null => {
       d = new Date(val as any);
     }
   } else {
-    d = new Date(val as string);
+    const raw = String(val).trim();
+    const localDateMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (localDateMatch) {
+      const [, year, month, day] = localDateMatch;
+      d = new Date(Number(year), Number(month) - 1, Number(day));
+    } else {
+      d = new Date(raw);
+    }
   }
 
   if (!Number.isNaN(d.getTime())) {
@@ -219,7 +232,7 @@ export const computeVolunteerHours = (volunteers: VolunteerRecord[], logs: Activ
 };
 
 export const computeDashboardMetrics = (volunteers: VolunteerRecord[], logs: ActivityLog[]): DashboardMetrics => {
-  const nonAdmin = volunteers.filter((v) => (v.role || 'volunteer') !== 'org-admin');
+  const nonAdmin = volunteers.filter((v) => !isAdminLikeRole(v.role));
   const lookup = buildVolunteerLookup(nonAdmin);
   const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
 
@@ -230,19 +243,19 @@ export const computeDashboardMetrics = (volunteers: VolunteerRecord[], logs: Act
   let monthlyHours = 0;
   const totalHours = nonAdmin.reduce((sum, volunteer) => sum + (volunteer.totalHours || 0), 0);
   const now = new Date();
-  const currentMonth = now.getUTCMonth();
-  const currentYear = now.getUTCFullYear();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
 
   approvedLogs.forEach((log) => {
     const date = normalizeDateValue(log.date);
     const userId = resolveLogVolunteerId(log, lookup);
     if (!date || !userId || !lookup.allowed.has(userId)) return;
-    if (date.getUTCFullYear() === currentYear && date.getUTCMonth() === currentMonth) {
+    if (date.getFullYear() === currentYear && date.getMonth() === currentMonth) {
       monthlyHours += parseFloat(String(log.hours_contributed ?? log.hours ?? 0)) || 0;
     }
     if (date >= startOfWeek && date < endOfWeek) {
       const hours = parseFloat(String(log.hours_contributed ?? log.hours ?? 0)) || 0;
-      const day = date.getUTCDay();
+      const day = date.getDay();
       weeklyHoursByDay[day] += hours;
       weeklyHours += hours;
       activeSet.add(userId);
@@ -309,13 +322,13 @@ export const buildWeeklySeries = (
   logs: ActivityLog[],
   weekOffset = 0,
 ): ChartPoint[] => {
-  const nonAdmin = volunteers.filter((v) => (v.role || 'volunteer') !== 'org-admin');
+  const nonAdmin = volunteers.filter((v) => !isAdminLikeRole(v.role));
   const lookup = buildVolunteerLookup(nonAdmin);
   const { startOfWeek, endOfWeek } = getCurrentWeekBoundaries();
   const weekStart = new Date(startOfWeek);
-  weekStart.setUTCDate(weekStart.getUTCDate() + weekOffset * 7);
+  weekStart.setDate(weekStart.getDate() + weekOffset * 7);
   const weekEnd = new Date(weekStart);
-  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
+  weekEnd.setDate(weekEnd.getDate() + 7);
   const hours = new Array(7).fill(0);
   const volunteerSets = new Array(7).fill(0).map(() => new Set<string>());
 
@@ -326,7 +339,7 @@ export const buildWeeklySeries = (
     if (status !== 'approved' && status !== 'accepted') return;
     const date = normalizeDateValue(log.date);
     if (!date || date < weekStart || date >= weekEnd) return;
-    const day = date.getUTCDay();
+    const day = date.getDay();
     const loggedHours = parseFloat(String(log.hours_contributed ?? log.hours ?? 0)) || 0;
     hours[day] += loggedHours;
     volunteerSets[day].add(userId);
@@ -336,8 +349,8 @@ export const buildWeeklySeries = (
   return buildSeries(DAY_LABELS, volunteersCount, hours);
 };
 
-export const buildMonthlySeries = (volunteers: VolunteerRecord[], logs: ActivityLog[], year = new Date().getUTCFullYear()): ChartPoint[] => {
-  const nonAdmin = volunteers.filter((v) => (v.role || 'volunteer') !== 'org-admin');
+export const buildMonthlySeries = (volunteers: VolunteerRecord[], logs: ActivityLog[], year = new Date().getFullYear()): ChartPoint[] => {
+  const nonAdmin = volunteers.filter((v) => !isAdminLikeRole(v.role));
   const lookup = buildVolunteerLookup(nonAdmin);
   const hours = new Array(12).fill(0);
   const volunteerSets = new Array(12).fill(0).map(() => new Set<string>());
@@ -348,8 +361,8 @@ export const buildMonthlySeries = (volunteers: VolunteerRecord[], logs: Activity
     const status = String(log.approve || 'pending').toLowerCase();
     if (status !== 'approved' && status !== 'accepted') return;
     const date = normalizeDateValue(log.date);
-    if (!date || date.getUTCFullYear() !== year) return;
-    const month = date.getUTCMonth();
+    if (!date || date.getFullYear() !== year) return;
+    const month = date.getMonth();
     const loggedHours = parseFloat(String(log.hours_contributed ?? log.hours ?? 0)) || 0;
     hours[month] += loggedHours;
     volunteerSets[month].add(userId);
@@ -360,9 +373,9 @@ export const buildMonthlySeries = (volunteers: VolunteerRecord[], logs: Activity
 };
 
 export const buildYearlySeries = (volunteers: VolunteerRecord[], logs: ActivityLog[], years = 5): ChartPoint[] => {
-  const nonAdmin = volunteers.filter((v) => (v.role || 'volunteer') !== 'org-admin');
+  const nonAdmin = volunteers.filter((v) => !isAdminLikeRole(v.role));
   const lookup = buildVolunteerLookup(nonAdmin);
-  const currentYear = new Date().getUTCFullYear();
+  const currentYear = new Date().getFullYear();
   const yearLabels = Array.from({ length: years }, (_, i) => String(currentYear - (years - 1 - i)));
   const hours = new Array(years).fill(0);
   const volunteerSets = new Array(years).fill(0).map(() => new Set<string>());
@@ -374,7 +387,7 @@ export const buildYearlySeries = (volunteers: VolunteerRecord[], logs: ActivityL
     if (status !== 'approved' && status !== 'accepted') return;
     const date = normalizeDateValue(log.date);
     if (!date) return;
-    const year = date.getUTCFullYear();
+    const year = date.getFullYear();
     const index = year - (currentYear - (years - 1));
     if (index < 0 || index >= years) return;
     const loggedHours = parseFloat(String(log.hours_contributed ?? log.hours ?? 0)) || 0;

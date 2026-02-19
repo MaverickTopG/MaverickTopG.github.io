@@ -34,9 +34,10 @@ interface HeaderProps {
   setIsKioskOpen: (open: boolean) => void;
   orgContext: { id: string; code: string; name: string };
   userProfile?: any;
+  planTier?: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, orgContext, userProfile }) => {
+export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, orgContext, userProfile, planTier }) => {
   const [copied, setCopied] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);

@@ -13,9 +13,11 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  const toastTimerRef = useRef<number | null>(null);
   
   const [columns, setColumns] = useState(20);
   const [rows, setRows] = useState(15);
+  const [toastVisible, setToastVisible] = useState(false);
 
   useEffect(() => {
     const updateGrid = () => {
@@ -128,8 +130,36 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
     }
   }, [columns, rows]);
 
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleWatchFilmClick = () => {
+    setToastVisible(true);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastVisible(false);
+    }, 2200);
+  };
+
   return (
     <div ref={containerRef} className="relative h-screen w-full bg-white overflow-hidden flex flex-col items-center justify-start pt-32 md:pt-0 md:justify-center">
+      {toastVisible && (
+        <div className="fixed bottom-8 right-8 z-[2147483647] rounded-2xl px-6 py-4 shadow-2xl border border-white/10 bg-charcoal text-white">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-4 w-4 items-center justify-center">
+              <span className="h-4 w-4 rounded-full border-2 border-neon/30 border-t-neon animate-spin"></span>
+            </span>
+            <span className="text-xs font-black uppercase tracking-widest">Coming Soon!</span>
+          </div>
+        </div>
+      )}
       
       <div 
         ref={gridRef}
@@ -182,7 +212,18 @@ const Hero: React.FC<HeroProps> = ({ onNavigate }) => {
                  <span className="relative z-10 font-bold text-lg tracking-widest uppercase group-hover:text-charcoal transition-colors">Start Project</span>
              </button>
              
-             <div className="flex items-center gap-4 group cursor-pointer">
+             <div
+                className="flex items-center gap-4 group cursor-pointer"
+                role="button"
+                tabIndex={0}
+                onClick={handleWatchFilmClick}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleWatchFilmClick();
+                  }
+                }}
+             >
                  <div className="w-12 h-12 border border-charcoal/20 rounded-full flex items-center justify-center group-hover:bg-charcoal group-hover:text-neon transition-colors duration-300">
                      <span className="text-xl">▶</span>
                  </div>

@@ -16,14 +16,23 @@ import { VolunteerRequestsPage } from './VolunteerRequestsPage';
 import { EventsPage } from './EventsPage';
 import { VolunteerEventsPage } from './VolunteerEventsPage';
 import { VolunteerActivityPage } from './VolunteerActivityPage';
+import { ClusterAIPage } from './ClusterAIPage';
 import { CreateEventPage } from './CreateEventPage';
 import { KioskModal } from './KioskModal';
 import { Users, Clock, Zap, Heart, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVolunteerMetrics } from '../hooks/useVolunteerMetrics';
 import { onAuthStateChanged } from 'firebase/auth';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { resolveOrgContext } from '../lib/orgContext';
+import {
+  extractVolunteerMembership,
+  hasPremiumAccessForMembership,
+  hydrateVolunteerMembershipPlans,
+  mergeVolunteerMemberships,
+  type VolunteerMembership,
+} from '../lib/membershipAccess';
 
 interface OrgContextState {
   id: string;
@@ -46,10 +55,52 @@ const item = {
   show: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 50 } }
 };
 
+const normalizeDashboardPath = (pathname: string) => {
+  const collapsed = pathname.replace(/\/{2,}/g, '/');
+  if (!collapsed) return '/';
+  if (collapsed.length > 1 && collapsed.endsWith('/')) {
+    return collapsed.slice(0, -1);
+  }
+  return collapsed;
+};
+
+const VOLUNTEER_VIEW_TO_PATH: Record<string, string> = {
+  impact: '/volunteer',
+  activity: '/volunteer/activity',
+  'cluster-ai': '/volunteer/cluster-ai',
+  events: '/volunteer/events',
+  'browse-events': '/volunteer/browse-events',
+  messaging: '/volunteer/messaging',
+};
+
+const VOLUNTEER_PATH_TO_VIEW: Record<string, string> = {
+  '/volunteer': 'impact',
+  '/volunteer/impact': 'impact',
+  '/volunteer/home': 'impact',
+  '/volunteer/activity': 'activity',
+  '/volunteer/cluster-ai': 'cluster-ai',
+  '/volunteer/cluster': 'cluster-ai',
+  '/volunteer/events': 'events',
+  '/volunteer/browse-events': 'browse-events',
+  '/volunteer/messaging': 'messaging',
+};
+
+const resolveVolunteerViewFromPath = (pathname: string) => {
+  const normalizedPath = normalizeDashboardPath(pathname.toLowerCase());
+  return VOLUNTEER_PATH_TO_VIEW[normalizedPath] || 'impact';
+};
+
 export const VolunteerApp: React.FC = () => {
-  const [currentView, setCurrentView] = useState('impact');
+  const [currentView, setCurrentView] = useState(() =>
+    typeof window === 'undefined' ? 'impact' : resolveVolunteerViewFromPath(window.location.pathname)
+  );
   const [isKioskOpen, setIsKioskOpen] = useState(false);
   const [orgContext, setOrgContext] = useState<OrgContextState>({ id: '', code: '', name: '' });
+  const [hasPremiumOrgAccess, setHasPremiumOrgAccess] = useState(false);
+  const [hasMessagingAccess, setHasMessagingAccess] = useState(false);
+  const hasEventAccess = true;
+  const [membershipAccessReady, setMembershipAccessReady] = useState(false);
+  const isSyncingFromPopStateRef = React.useRef(false);
   
   const {
     metrics,
@@ -57,11 +108,128 @@ export const VolunteerApp: React.FC = () => {
     weeklySeries,
     monthlySeries,
     yearlySeries,
+    allLogs,
     weekOffset,
     setWeekOffset,
     loading,
     userProfile
   } = useVolunteerMetrics();
+
+  const planTier = (userProfile?.plan_tier || userProfile?.planTier || 'orbit').toLowerCase();
+
+  React.useEffect(() => {
+    const handlePopState = () => {
+      isSyncingFromPopStateRef.current = true;
+      setCurrentView(resolveVolunteerViewFromPath(window.location.pathname));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (isSyncingFromPopStateRef.current) {
+      isSyncingFromPopStateRef.current = false;
+      return;
+    }
+    const targetPath = VOLUNTEER_VIEW_TO_PATH[currentView] || '/volunteer';
+    const currentPath = normalizeDashboardPath(window.location.pathname.toLowerCase());
+    if (currentPath !== targetPath) {
+      window.history.pushState({ view: currentView }, '', targetPath);
+    }
+  }, [currentView]);
+
+  React.useEffect(() => {
+    if (!membershipAccessReady) return;
+    if (currentView === 'messaging' && !hasMessagingAccess) {
+      setCurrentView('impact');
+    }
+  }, [currentView, hasMessagingAccess, membershipAccessReady]);
+
+  React.useEffect(() => {
+    const auth = getFirebaseAuth();
+    const db = getFirestoreDb();
+    let unsubscribeMembershipsA: (() => void) | null = null;
+    let unsubscribeMembershipsB: (() => void) | null = null;
+    let rowsA: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let rowsB: Array<{ id: string; data: Record<string, unknown> }> = [];
+
+    const clearMembershipListeners = () => {
+      if (unsubscribeMembershipsA) {
+        unsubscribeMembershipsA();
+        unsubscribeMembershipsA = null;
+      }
+      if (unsubscribeMembershipsB) {
+        unsubscribeMembershipsB();
+        unsubscribeMembershipsB = null;
+      }
+      rowsA = [];
+      rowsB = [];
+    };
+
+    let recomputeSeq = 0;
+    const recomputeAccess = async () => {
+      const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
+        Boolean(value);
+      const memberships = [
+        ...rowsA
+          .map((entry) => extractVolunteerMembership(entry.data, entry.id, 'user_organizations'))
+          .filter(isMembership),
+        ...rowsB
+          .map((entry) => extractVolunteerMembership(entry.data, entry.id, 'users'))
+          .filter(isMembership),
+      ];
+      const runId = ++recomputeSeq;
+      const mergedMemberships = mergeVolunteerMemberships(memberships);
+      const hydratedMemberships = await hydrateVolunteerMembershipPlans(db as any, mergedMemberships);
+      if (runId !== recomputeSeq) return;
+      const canAccessPremium = hydratedMemberships.some(hasPremiumAccessForMembership);
+      const canAccessMessaging = canAccessPremium;
+      setHasPremiumOrgAccess(canAccessPremium);
+      setHasMessagingAccess(canAccessMessaging);
+      setMembershipAccessReady(true);
+    };
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      clearMembershipListeners();
+      if (!user) {
+        setHasPremiumOrgAccess(false);
+        setHasMessagingAccess(false);
+        setMembershipAccessReady(true);
+        return;
+      }
+      setMembershipAccessReady(false);
+
+      unsubscribeMembershipsA = onSnapshot(
+        query(collection(db, 'user_organizations'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          rowsA = snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            data: (docSnap.data() || {}) as Record<string, unknown>,
+          }));
+          void recomputeAccess();
+        },
+      );
+
+      unsubscribeMembershipsB = onSnapshot(
+        query(collection(db, 'users'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          rowsB = snapshot.docs
+            .filter((docSnap) => docSnap.id !== user.uid)
+            .map((docSnap) => ({
+              id: docSnap.id,
+              data: (docSnap.data() || {}) as Record<string, unknown>,
+            }));
+          void recomputeAccess();
+        },
+      );
+    });
+
+    return () => {
+      clearMembershipListeners();
+      unsubscribeAuth();
+    };
+  }, []);
 
   React.useEffect(() => {
     const auth = getFirebaseAuth();
@@ -97,6 +265,13 @@ export const VolunteerApp: React.FC = () => {
       totalLogs: metrics.totalLogs.toString(),
     };
   }, [metrics]);
+  const isClusterView = currentView === 'cluster-ai';
+  const isMessagingView = currentView === 'messaging';
+  const isCalendarView = currentView === 'events';
+  const isBrowseEventsView = currentView === 'browse-events';
+  const isPremiumSectionView = isMessagingView || isCalendarView || isBrowseEventsView;
+  const shouldMountMessagingView = membershipAccessReady ? hasMessagingAccess : true;
+  const shouldMountEventViews = membershipAccessReady ? hasEventAccess : true;
 
   if (loading) {
     return (
@@ -112,19 +287,27 @@ export const VolunteerApp: React.FC = () => {
   return (
     <div className="flex w-full h-screen bg-[#F3F4F6] overflow-hidden">
       {/* Left Sidebar */}
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      <Sidebar
+        currentView={currentView}
+        onNavigate={setCurrentView}
+        hasPremiumOrgAccess={hasPremiumOrgAccess}
+        hasMessagingAccess={hasMessagingAccess}
+      />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <main className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-8">
-          <div className="max-w-[1600px] mx-auto">
+        <main className={`flex-1 overflow-y-auto no-scrollbar ${isClusterView ? 'p-0' : 'p-6 lg:p-8'}`}>
+          <div className={isClusterView ? 'w-full h-full' : 'max-w-[1600px] mx-auto'}>
             {/* Header Section */}
-            <Header 
-              isKioskOpen={false} 
-              setIsKioskOpen={() => {}} 
-              orgContext={orgContext}
-              userProfile={userProfile}
-            />
+            {!isClusterView && (
+              <Header 
+                isKioskOpen={false} 
+                setIsKioskOpen={() => {}} 
+                orgContext={orgContext}
+                userProfile={userProfile}
+                planTier={planTier}
+              />
+            )}
 
             <AnimatePresence mode="wait">
               {currentView === 'impact' ? (
@@ -167,7 +350,8 @@ export const VolunteerApp: React.FC = () => {
                       <motion.div variants={item} className="h-full">
                          <TopLogsCard logs={metrics.topLogs} />
                       </motion.div>
-                    </div>                    <motion.div variants={item} className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100/50 min-h-[450px]">
+                    </div>
+                    <motion.div variants={item} className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100/50 min-h-[450px]">
                        <AnalyticsChart 
                          weeklyData={weeklySeries}
                          monthlyData={monthlySeries}
@@ -193,46 +377,47 @@ export const VolunteerApp: React.FC = () => {
                 >
                   <VolunteerActivityPage />
                 </motion.div>
-              ) : currentView === 'messaging' ? (
+              ) : currentView === 'cluster-ai' ? (
                 <motion.div
-                  key="messaging"
+                  key="cluster-ai"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
                   transition={{ duration: 0.3 }}
+                  className="h-full"
                 >
-                  <MessagingPage />
+                  <ClusterAIPage allLogs={allLogs} />
                 </motion.div>
-              ) : currentView === 'events' ? (
-                <motion.div
-                  key="events"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <EventsPage 
-                    onNavigate={setCurrentView} 
-                    orgContext={orgContext}
-                    userProfile={userProfile}
-                  />
-                </motion.div>
-              ) : currentView === 'browse-events' ? (
-                <motion.div
-                  key="browse-events"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <VolunteerEventsPage userProfile={userProfile} />
-                </motion.div>
-              ) : (
+              ) : isPremiumSectionView ? null : (
                 <div key="empty" className="flex items-center justify-center h-[60vh] text-gray-400">
                   Coming Soon
                 </div>
               )}
             </AnimatePresence>
+
+            {(shouldMountMessagingView || shouldMountEventViews) && (
+              <>
+                {shouldMountMessagingView && (
+                  <div className={isMessagingView ? 'mt-10' : 'hidden'} aria-hidden={!isMessagingView}>
+                    <MessagingPage />
+                  </div>
+                )}
+                {shouldMountEventViews && (
+                  <>
+                    <div className={isCalendarView ? 'mt-10' : 'hidden'} aria-hidden={!isCalendarView}>
+                      <EventsPage
+                        onNavigate={setCurrentView}
+                        orgContext={orgContext}
+                        userProfile={userProfile}
+                      />
+                    </div>
+                    <div className={isBrowseEventsView ? 'mt-10' : 'hidden'} aria-hidden={!isBrowseEventsView}>
+                      <VolunteerEventsPage userProfile={userProfile} />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </main>
       </div>

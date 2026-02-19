@@ -9,65 +9,215 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.paid == true;
     }
 
+    function hasGrandfatheredAccess() {
+      return isSignedIn() && request.auth.token.grandfathered == true;
+    }
+
+    function hasFullAccess() {
+      return hasPaidAccess() || hasGrandfatheredAccess();
+    }
+
     function userOrgDoc() {
       return get(/databases/$(database)/documents/user_organizations/$(request.auth.uid));
     }
 
+    function userProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function orgDoc(orgId) {
+      return get(/databases/$(database)/documents/organizations/$(orgId));
+    }
+
+    function orgDocAlt(orgId) {
+      return get(/databases/$(database)/documents/orgs/$(orgId));
+    }
+
+    function orgDocVol(orgId) {
+      return get(/databases/$(database)/documents/volunteer_organizations/$(orgId));
+    }
+
+    function planTierForOrg(orgId) {
+      return orgDoc(orgId).exists() && orgDoc(orgId).data.plan_tier != null
+        ? orgDoc(orgId).data.plan_tier
+        : orgDocAlt(orgId).exists() && orgDocAlt(orgId).data.plan_tier != null
+          ? orgDocAlt(orgId).data.plan_tier
+          : orgDocVol(orgId).exists() && orgDocVol(orgId).data.plan_tier != null
+            ? orgDocVol(orgId).data.plan_tier
+            : 'nebula';
+    }
+
+    function planAllowsMessaging(orgId) {
+      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
+    }
+
+    function planAllowsAi(orgId) {
+      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
+    }
+
+    function planAllowsKiosk(orgId) {
+      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
+    }
+
+    function planAllowsEvents(orgId) {
+      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
+    }
+
+    function planAllowsAutoLogReview(orgId) {
+      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
+    }
+
+    function docOrgId(data) {
+      return data.orgId
+        || data.org_id
+        || data.organization_id
+        || data.organizationId
+        || data.linked_org_id
+        || data.linkedOrgId
+        || null;
+    }
+
+    function userOrgId() {
+      return (userOrgDoc().exists()
+        ? (
+          userOrgDoc().data.org_id
+          || userOrgDoc().data.orgId
+          || userOrgDoc().data.organization_id
+          || userOrgDoc().data.organizationId
+          || userOrgDoc().data.linked_org_id
+          || userOrgDoc().data.linkedOrgId
+        )
+        : null)
+        || (userProfile().exists()
+          ? (
+            userProfile().data.org_id
+            || userProfile().data.orgId
+            || userProfile().data.organization_id
+            || userProfile().data.organizationId
+            || userProfile().data.linked_org_id
+            || userProfile().data.linkedOrgId
+          )
+          : null);
+    }
+
     function isOrgMember(orgId) {
       return isSignedIn()
-        && userOrgDoc().exists()
         && (
-          userOrgDoc().data.org_id == orgId ||
-          userOrgDoc().data.orgId == orgId ||
-          userOrgDoc().data.organization_id == orgId ||
-          userOrgDoc().data.organizationId == orgId
+          (userOrgDoc().exists()
+            && (
+              userOrgDoc().data.org_id == orgId ||
+              userOrgDoc().data.orgId == orgId ||
+              userOrgDoc().data.organization_id == orgId ||
+              userOrgDoc().data.organizationId == orgId ||
+              userOrgDoc().data.linked_org_id == orgId ||
+              userOrgDoc().data.linkedOrgId == orgId
+            ))
+          || (userProfile().exists()
+            && (
+              userProfile().data.org_id == orgId ||
+              userProfile().data.orgId == orgId ||
+              userProfile().data.organization_id == orgId ||
+              userProfile().data.organizationId == orgId ||
+              userProfile().data.linked_org_id == orgId ||
+              userProfile().data.linkedOrgId == orgId
+            ))
         );
     }
 
     match /users/{userId} {
       allow create: if isSignedIn() && request.auth.uid == userId;
-      allow read: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
-      allow update: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
-      allow delete: if hasPaidAccess();
+      allow read: if isSignedIn() && (request.auth.uid == userId || hasFullAccess());
+      allow update: if isSignedIn() && (request.auth.uid == userId || hasFullAccess());
+      allow delete: if hasFullAccess();
     }
 
     match /user_organizations/{userId} {
       allow create: if isSignedIn() && request.auth.uid == userId;
-      allow read: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
-      allow update: if isSignedIn() && (request.auth.uid == userId || hasPaidAccess());
-      allow delete: if hasPaidAccess();
+      allow read: if isSignedIn() && (request.auth.uid == userId || hasFullAccess());
+      allow update: if isSignedIn() && (request.auth.uid == userId || hasFullAccess());
+      allow delete: if hasFullAccess();
     }
 
     match /user_organizations/{documentId} {
-      allow read: if isSignedIn() && (request.auth.uid == resource.data.user_id || hasPaidAccess());
-      allow create, update, delete: if hasPaidAccess();
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.user_id || hasFullAccess());
+      allow create, update, delete: if hasFullAccess();
     }
 
     match /volunteer_logs/{document=**} {
-      allow read, write: if hasPaidAccess();
+      allow read, write: if hasFullAccess();
     }
 
     match /program_templates/{document=**} {
-      allow read, write: if hasPaidAccess();
+      allow read, write: if hasFullAccess();
     }
 
     match /report_schedules/{document=**} {
-      allow read, write: if hasPaidAccess();
+      allow read, write: if hasFullAccess();
     }
 
     match /volunteer_organizations/{orgId} {
-      allow read, update: if hasPaidAccess() || isOrgMember(orgId);
-      allow create, delete: if hasPaidAccess();
+      allow read, update: if hasFullAccess() || isOrgMember(orgId);
+      allow create, delete: if hasFullAccess();
     }
 
     match /organizations/{orgId} {
-      allow read, update: if hasPaidAccess() || isOrgMember(orgId);
-      allow create, delete: if hasPaidAccess();
+      allow read: if hasFullAccess() || isOrgMember(orgId);
+      allow update: if (hasFullAccess() || isOrgMember(orgId))
+        && (!request.resource.data.keys().hasAny(['auto_process_logs']) || request.resource.data.auto_process_logs != true || planAllowsAutoLogReview(orgId));
+      allow create, delete: if hasFullAccess();
     }
 
     match /orgs/{orgId} {
-      allow read, update: if hasPaidAccess() || isOrgMember(orgId);
-      allow create, delete: if hasPaidAccess();
+      allow read: if hasFullAccess() || isOrgMember(orgId);
+      allow update: if (hasFullAccess() || isOrgMember(orgId))
+        && (!request.resource.data.keys().hasAny(['auto_process_logs']) || request.resource.data.auto_process_logs != true || planAllowsAutoLogReview(orgId));
+      allow create, delete: if hasFullAccess();
+    }
+
+    match /events/{eventId} {
+      allow read: if isSignedIn() && isOrgMember(docOrgId(resource.data));
+      allow create: if hasFullAccess()
+        && isOrgMember(docOrgId(request.resource.data))
+        && planAllowsEvents(docOrgId(request.resource.data));
+      allow update, delete: if hasFullAccess()
+        && isOrgMember(docOrgId(resource.data))
+        && planAllowsEvents(docOrgId(resource.data));
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn()
+        && isOrgMember(docOrgId(resource.data))
+        && planAllowsMessaging(docOrgId(resource.data));
+      allow create: if isSignedIn()
+        && isOrgMember(docOrgId(request.resource.data))
+        && planAllowsMessaging(docOrgId(request.resource.data));
+      allow update, delete: if isSignedIn()
+        && isOrgMember(docOrgId(resource.data))
+        && planAllowsMessaging(docOrgId(resource.data));
+    }
+
+    match /kiosk_sessions/{sessionId} {
+      allow read: if hasFullAccess()
+        && isOrgMember(docOrgId(resource.data))
+        && planAllowsKiosk(docOrgId(resource.data));
+      allow create: if hasFullAccess()
+        && isOrgMember(docOrgId(request.resource.data))
+        && planAllowsKiosk(docOrgId(request.resource.data));
+      allow update, delete: if hasFullAccess()
+        && isOrgMember(docOrgId(resource.data))
+        && planAllowsKiosk(docOrgId(resource.data));
+    }
+
+    match /nebulae_chats/{chatId} {
+      allow read: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && planAllowsAi(userOrgId());
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && planAllowsAi(userOrgId());
+      allow update, delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && planAllowsAi(userOrgId());
     }
 
     match /{document=**} {

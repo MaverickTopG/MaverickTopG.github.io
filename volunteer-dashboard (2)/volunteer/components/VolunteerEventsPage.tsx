@@ -5,6 +5,12 @@ import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTim
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { EventSignupModal } from './EventSignupModal';
+import {
+  extractVolunteerMembership,
+  hydrateVolunteerMembershipPlans,
+  mergeVolunteerMemberships,
+  type VolunteerMembership,
+} from '../lib/membershipAccess';
 
 interface Event {
   id: string;
@@ -35,6 +41,10 @@ interface Event {
   maxVolunteer?: number;
   max_volunteer?: number;
   timeSlots?: Array<{ id: string; capacity?: number | null }>;
+  matchedOrgName?: string;
+  matchedOrgCode?: string;
+  matchedOrgId?: string;
+  matchedOrgKey?: string;
 }
 
 interface Signup {
@@ -61,7 +71,12 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [hoveringOrganizations, setHoveringOrganizations] = useState(false);
   const [organizations, setOrganizations] = useState<string[]>([]);
+  const [eligibleOrgs, setEligibleOrgs] = useState<VolunteerMembership[]>([]);
   const orgHoverTimeoutRef = useRef<number | null>(null);
+  const isArchivedVolunteer = Boolean(
+    userProfile?.archived === true
+    || String(userProfile?.status || '').toLowerCase() === 'archived'
+  );
 
   const parseNumber = (value: unknown): number | null => {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -104,63 +119,82 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     
     let unsubEvents: (() => void) | null = null;
     let unsubSignups: (() => void) | null = null;
+    const stopSubscriptions = () => {
+      if (unsubEvents) {
+        unsubEvents();
+        unsubEvents = null;
+      }
+      if (unsubSignups) {
+        unsubSignups();
+        unsubSignups = null;
+      }
+    };
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (!user) {
+        stopSubscriptions();
         setEvents([]);
         setSignups({});
+        setEligibleOrgs([]);
+        setOrganizations([]);
         setLoading(false);
-        if (unsubEvents) unsubEvents();
-        if (unsubSignups) unsubSignups();
         return;
       }
 
-      // 1. Fetch User's Organizations
-      const userOrgsRef = collection(db, 'user_organizations');
-      const qUserOrgs = query(userOrgsRef, where('user_id', '==', user.uid));
-      
-      let myOrgCodes: Set<string> = new Set();
-      let myOrgIds: Set<string> = new Set();
-      let orgNames: Set<string> = new Set();
-
+      setLoading(true);
       try {
-        const orgSnaps = await getDocs(qUserOrgs);
-        orgSnaps.forEach(docSnap => {
-          const data = docSnap.data();
-          const status = String(data.status || '').toLowerCase();
-          const whitelist = ['active', 'accepted', 'approved', 'connected', 'granted', 'confirmed', ''];
-          if (!whitelist.some(v => status.includes(v))) return;
+        const [orgSnaps, membershipSnaps] = await Promise.all([
+          getDocs(query(collection(db, 'user_organizations'), where('user_id', '==', user.uid))),
+          getDocs(query(collection(db, 'users'), where('user_id', '==', user.uid))),
+        ]);
+        const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
+          Boolean(value);
+        const memberships = [
+          ...orgSnaps.docs
+            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'user_organizations'))
+            .filter(isMembership),
+          ...membershipSnaps.docs
+            .filter((docSnap) => docSnap.id !== user.uid)
+            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'users'))
+            .filter(isMembership),
+        ];
+        const resolvedMemberships = await hydrateVolunteerMembershipPlans(
+          db as any,
+          mergeVolunteerMemberships(memberships),
+        );
+        // Orbit, Nebula, and Cosmos all have volunteer events access.
+        const eligibleMemberships = resolvedMemberships;
+        setEligibleOrgs(eligibleMemberships);
+        setOrganizations(Array.from(new Set(eligibleMemberships.map((org) => org.name))).sort());
 
-          if (data.orgCode) myOrgCodes.add(String(data.orgCode).toUpperCase());
-          if (data.org_code) myOrgCodes.add(String(data.org_code).toUpperCase());
-          if (data.organizationCode) myOrgCodes.add(String(data.organizationCode).toUpperCase());
-          if (data.orgId) myOrgIds.add(String(data.orgId));
-          if (data.organizationId) myOrgIds.add(String(data.organizationId));
-          if (data.org_id) myOrgIds.add(String(data.org_id));
+        if (!eligibleMemberships.length) {
+          stopSubscriptions();
+          setEvents([]);
+          setSignups({});
+          setLoading(false);
+          return;
+        }
 
-          const name = data.orgName || data.organizationName || data.name || data.schoolName || '';
-          if (name) orgNames.add(String(name));
+        const orgByCode = new Map<string, VolunteerMembership>();
+        const orgById = new Map<string, VolunteerMembership>();
+        eligibleMemberships.forEach((membership) => {
+          if (membership.code) orgByCode.set(String(membership.code).toUpperCase(), membership);
+          if (membership.id) orgById.set(String(membership.id), membership);
         });
-        setOrganizations(Array.from(orgNames).sort());
-      } catch (err) {
-        console.error("Error fetching user orgs", err);
-      }
 
-      // 2. Subscribe to All Events
-      const eventsRef = collection(db, 'events');
-      const qEvents = query(eventsRef, where('status', '!=', 'draft'));
+        // 2. Subscribe to all events and keep only connected-org matches.
+        stopSubscriptions();
+        unsubEvents = onSnapshot(query(collection(db, 'events'), where('status', '!=', 'draft')), (snapshot) => {
+          const loaded: Event[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (String(data.status || '').toLowerCase() === 'archived') return;
 
-      if (unsubEvents) unsubEvents();
-      unsubEvents = onSnapshot(qEvents, (snapshot) => {
-        const loaded: Event[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data.status === 'archived') return;
-          const evtOrgCode = (data.orgCode || data.org_code || data.organizationCode || '').toString().toUpperCase();
-          const evtOrgId = (data.orgId || data.org_id || data.organizationId || '').toString();
-          
-          const isMatch = (evtOrgCode && myOrgCodes.has(evtOrgCode)) || (evtOrgId && myOrgIds.has(evtOrgId));
-          if (isMatch) {
+            const rawCode = String(data.orgCode || data.org_code || data.organizationCode || '').toUpperCase();
+            const rawId = String(data.orgId || data.org_id || data.organizationId || '');
+            const matchedOrg = (rawCode && orgByCode.get(rawCode)) || (rawId && orgById.get(rawId)) || null;
+            if (!matchedOrg) return;
+
             const coverImageUrl =
               data.coverImageUrl ||
               data.cover_image_url ||
@@ -168,38 +202,62 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
               data.imageUrl ||
               data.image_url ||
               undefined;
-            loaded.push({ id: docSnap.id, coverImageUrl, ...data } as Event);
-          }
+            loaded.push({
+              id: docSnap.id,
+              coverImageUrl,
+              ...data,
+              matchedOrgName: matchedOrg.name,
+              matchedOrgCode: matchedOrg.code,
+              matchedOrgId: matchedOrg.id,
+              matchedOrgKey: matchedOrg.key,
+            } as Event);
+          });
+          loaded.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+          setEvents(loaded);
+          setLoading(false);
+        }, (err) => {
+          console.error("Event subscription error", err);
+          setLoading(false);
         });
-        loaded.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-        setEvents(loaded);
-        setLoading(false);
-      }, (err) => {
-        console.error("Event subscription error", err);
-        setLoading(false);
-      });
 
-      // 3. Subscribe to Signups
-      const signupsRef = collection(db, 'event_signups');
-      const qSignups = query(signupsRef, where('volunteerEmail', '==', user.email));
-      
-      if (unsubSignups) unsubSignups();
-      unsubSignups = onSnapshot(qSignups, (snapshot) => {
-        const map: Record<string, Signup> = {};
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          map[data.eventId] = { id: docSnap.id, eventId: data.eventId, status: data.status };
-        });
-        setSignups(map);
-      });
+        // 3. Subscribe to current user's event signups.
+        if (user.email) {
+          unsubSignups = onSnapshot(
+            query(collection(db, 'event_signups'), where('volunteerEmail', '==', user.email)),
+            (snapshot) => {
+              const map: Record<string, Signup> = {};
+              snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                map[data.eventId] = { id: docSnap.id, eventId: data.eventId, status: data.status };
+              });
+              setSignups(map);
+            },
+          );
+        } else {
+          setSignups({});
+        }
+      } catch (err) {
+        console.error("Error fetching user orgs", err);
+        stopSubscriptions();
+        setEligibleOrgs([]);
+        setOrganizations([]);
+        setEvents([]);
+        setSignups({});
+        setLoading(false);
+      }
     });
 
     return () => {
       unsubscribeAuth();
-      if (unsubEvents) unsubEvents();
-      if (unsubSignups) unsubSignups();
+      stopSubscriptions();
     };
   }, []);
+
+  useEffect(() => {
+    if (isArchivedVolunteer) {
+      setSelectedEvent(null);
+    }
+  }, [isArchivedVolunteer]);
 
   useEffect(() => {
     const db = getFirestoreDb();
@@ -281,6 +339,10 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
   };
 
   const handleReserve = async (selection?: { selectedDates: string[]; selectedShifts: Array<{ id?: string; startTime?: string; endTime?: string }> }) => {
+    if (isArchivedVolunteer) {
+      window.alert('Your volunteer account is archived. Contact your admin to restore access.');
+      return;
+    }
     if (!selectedEvent) return;
     setIsReserving(true);
     try {
@@ -320,8 +382,16 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
         return;
       }
 
-      const resolvedOrgId = selectedEvent.orgId || selectedEvent.organizationId || selectedEvent.org_id;
-      const resolvedOrgCode = selectedEvent.orgCode || selectedEvent.organizationCode || selectedEvent.org_code;
+      const resolvedOrgId =
+        selectedEvent.matchedOrgId ||
+        selectedEvent.orgId ||
+        selectedEvent.organizationId ||
+        selectedEvent.org_id;
+      const resolvedOrgCode =
+        selectedEvent.matchedOrgCode ||
+        selectedEvent.orgCode ||
+        selectedEvent.organizationCode ||
+        selectedEvent.org_code;
 
       await addDoc(collection(db, 'event_signups'), {
         eventId: selectedEvent.id,
@@ -350,6 +420,7 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
   };
 
   const handleCancel = async (eventId: string) => {
+    if (isArchivedVolunteer) return;
     const signup = signups[eventId];
     if (!signup) return;
     
@@ -363,11 +434,12 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     }
   };
 
-  const filteredEvents = events.filter(ev => {
+  const filteredEvents = isArchivedVolunteer ? [] : events.filter(ev => {
     // 1. Search Filter
     const searchText = searchQuery.toLowerCase();
     const matchesSearch =
       ev.title.toLowerCase().includes(searchText) ||
+      (ev.matchedOrgName || '').toLowerCase().includes(searchText) ||
       (ev.city || '').toLowerCase().includes(searchText) ||
       (ev.location || '').toLowerCase().includes(searchText) ||
       (ev.venue || '').toLowerCase().includes(searchText) ||
@@ -378,7 +450,13 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
 
     // 2. Organization Filter
     if (activeFilter !== 'All Events') {
-       const orgName = (ev as any).orgName || (ev as any).organizationName || (ev as any).name || (ev as any).schoolName || '';
+       const orgName =
+         ev.matchedOrgName ||
+         (ev as any).orgName ||
+         (ev as any).organizationName ||
+         (ev as any).name ||
+         (ev as any).schoolName ||
+         '';
        if (String(orgName) !== activeFilter) return false;
     }
     
@@ -574,6 +652,24 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                 <div className="animate-spin w-8 h-8 border-4 border-gray-200 border-t-lime-500 rounded-full mx-auto mb-4"/>
                 <p className="text-gray-400 font-bold">Loading events...</p>
              </div>
+           ) : eligibleOrgs.length === 0 ? (
+             <div className="text-center py-20 bg-white rounded-[2.5rem] shadow-sm flex flex-col items-center">
+                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-6">
+                    <Calendar className="w-8 h-8 text-gray-300" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">No connected organizations yet</h3>
+                <p className="text-gray-500 mt-2">Connect to an organization to see their upcoming events.</p>
+                <p className="text-gray-500">Orbit, Nebula, and Cosmos organizations can all publish volunteer events.</p>
+             </div>
+           ) : isArchivedVolunteer ? (
+             <div className="text-center py-20 bg-white rounded-[2.5rem] shadow-sm flex flex-col items-center">
+                <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mb-6">
+                    <Clock className="w-8 h-8 text-amber-500" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">Account Archived</h3>
+                <p className="text-gray-500 mt-2">You can&apos;t view event opportunities while archived.</p>
+                <p className="text-gray-500">Once unarchived, all live opportunities will appear again.</p>
+             </div>
            ) : filteredEvents.length === 0 ? (
              <div className="text-center py-20 bg-white rounded-[2.5rem] shadow-sm flex flex-col items-center">
                 <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-6">
@@ -635,6 +731,11 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                              <h3 className="text-2xl font-bold text-gray-900 group-hover:text-lime-600 transition-colors mb-2">
                                 {event.title}
                              </h3>
+                             {event.matchedOrgName ? (
+                               <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
+                                 {event.matchedOrgName}
+                               </p>
+                             ) : null}
                              <div className="flex flex-wrap gap-4 text-sm font-medium text-gray-500">
                                 <div className="flex items-center gap-1.5">
                                    <Clock className="w-4 h-4" />

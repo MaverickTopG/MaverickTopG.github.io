@@ -6,6 +6,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   setPersistence,
   browserLocalPersistence,
   browserSessionPersistence
@@ -14,6 +15,8 @@ import {
 interface LoginPageProps {
   onNavigate?: (page: 'home' | 'app' | 'pricing' | 'blog' | 'story' | 'opinion' | 'login' | 'create' | 'privacy' | 'terms') => void;
 }
+
+const SUBADMIN_SESSION_STORAGE_KEY = 'nexolink_active_sub_admin_session';
 
 const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -187,6 +190,8 @@ const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                       rememberMe ? browserLocalPersistence : browserSessionPersistence
                     );
                     await signInWithEmailAndPassword(auth, email.trim(), password);
+                    // Ensure we don't carry over a previous sub-admin session into a super-admin login.
+                    localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
                     if (rememberMe) {
                       localStorage.setItem('nexolink_admin_email', email.trim());
                       localStorage.setItem('nexolink_admin_remember', 'true');
@@ -195,7 +200,75 @@ const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                     }
                     window.location.href = '/admin';
                   } catch (err: any) {
-                    setError(err?.message || "Unable to sign in.");
+                    const code = String(err?.code || '');
+                    const shouldTrySubAdmin = code.startsWith('auth/');
+
+                    if (shouldTrySubAdmin) {
+                      try {
+                        const resp = await fetch('/api/subAdminLogin', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ email: email.trim(), password }),
+                        });
+
+                        const payload = await resp.json().catch(() => ({}));
+                        if (!resp.ok) {
+                          setError(String(payload?.error || 'Invalid email or password.'));
+                          return;
+                        }
+
+                        const customToken = String(payload?.customToken || '').trim();
+                        if (!customToken) {
+                          setError('Unable to sign in.');
+                          return;
+                        }
+
+                        const session = payload?.session || null;
+                        if (session?.groupId) {
+                          try {
+                            localStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(session));
+                          } catch (_storageError) {
+                            // Ignore.
+                          }
+                          try {
+                            window.dispatchEvent(new CustomEvent('nexolink:subadmin-session', { detail: session }));
+                          } catch (_error) {
+                            // Ignore.
+                          }
+                        } else {
+                          localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+                        }
+
+                        const auth = getAuth();
+                        await setPersistence(
+                          auth,
+                          rememberMe ? browserLocalPersistence : browserSessionPersistence
+                        );
+                        await signInWithCustomToken(auth, customToken);
+
+                        if (rememberMe) {
+                          localStorage.setItem('nexolink_admin_email', email.trim());
+                          localStorage.setItem('nexolink_admin_remember', 'true');
+                        } else {
+                          localStorage.removeItem('nexolink_admin_remember');
+                        }
+
+                        window.location.href = '/admin';
+                        return;
+                      } catch (fallbackError) {
+                        console.error('Sub-admin login fallback failed', fallbackError);
+                      }
+                    }
+
+                    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
+                      setError('Invalid email or password.');
+                      return;
+                    }
+                    if (code === 'auth/too-many-requests') {
+                      setError('Too many failed attempts. Please try again later.');
+                      return;
+                    }
+                    setError("Unable to sign in.");
                   } finally {
                     setIsLoading(false);
                   }
