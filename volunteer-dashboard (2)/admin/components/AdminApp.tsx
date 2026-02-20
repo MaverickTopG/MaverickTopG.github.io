@@ -18,6 +18,7 @@ import { NebulaePage } from './NebulaePage';
 import { KioskModal } from './KioskModal';
 import { AiInsightWidget } from './AiInsightWidget';
 import { SignInPage } from './SignInPage';
+import { Toast } from './Toast';
 import { useGeminiInsight } from '../hooks/useGeminiInsight';
 import { useNebulaeOpsCenter } from '../hooks/useNebulaeOpsCenter';
 import { Users, Clock, Loader2 } from 'lucide-react';
@@ -26,6 +27,7 @@ import { useDashboardMetrics } from '../hooks/useDashboardMetrics';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { resolveOrgContext } from '../lib/orgContext';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface OrgContextState {
   id: string;
@@ -33,6 +35,7 @@ interface OrgContextState {
   name: string;
   planTier: string | null;
 }
+type NebulaeContextScope = 'superadmin-only' | 'include-subadmins';
 
 interface ActiveSubAdminSession {
   subAdminId: string;
@@ -58,7 +61,7 @@ const DEFAULT_COSMOS_PRICE_ORG_YEARLY = 'price_1SykJaHbGg7F5Ky7HI8bt66o';
 const DEFAULT_COSMOS_PRICE_SCHOOL_MONTHLY = 'price_1SykJaHbGg7F5Ky7AlBLBDns';
 const DEFAULT_COSMOS_PRICE_SCHOOL_YEARLY = 'price_1SykJaHbGg7F5Ky7VOTb79OH';
 
-const container = {
+const container: any = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
@@ -68,7 +71,7 @@ const container = {
   }
 };
 
-const item = {
+const item: any = {
   hidden: { y: 20, opacity: 0 },
   show: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 50 } }
 };
@@ -125,7 +128,7 @@ const resolveAdminViewFromPath = (pathname: string) => {
 const readStoredSubAdminSession = (): ActiveSubAdminSession | null => {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(SUBADMIN_SESSION_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(SUBADMIN_SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ActiveSubAdminSession;
     if (!parsed || typeof parsed !== 'object') return null;
@@ -145,10 +148,17 @@ export const AdminApp: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [orgContext, setOrgContext] = useState<OrgContextState>({ id: '', code: '', name: '', planTier: null });
   const [activeSubAdminSession, setActiveSubAdminSession] = useState<ActiveSubAdminSession | null>(() => readStoredSubAdminSession());
+  const [isSubAdmin, setIsSubAdmin] = useState(false);
   const [planTier, setPlanTier] = useState<string>('orbit');
+  const [showOrganizationImpactMode, setShowOrganizationImpactMode] = useState(false);
+  const [impactModeToast, setImpactModeToast] = useState<{ isVisible: boolean; message: string }>({
+    isVisible: false,
+    message: '',
+  });
+  const [nebulaeContextScope, setNebulaeContextScope] = useState<NebulaeContextScope>('superadmin-only');
   const aiEnabled = planTier === 'nebula' || planTier === 'cosmos';
   const [insightUpdatedAt, setInsightUpdatedAt] = useState(() => Date.now());
-  const isSubAdminPortal = Boolean(activeSubAdminSession?.groupId);
+  const isSubAdminPortal = isSubAdmin || Boolean(activeSubAdminSession?.groupId);
   const showVolunteers = currentView === 'volunteers';
   const showEvents = currentView === 'events';
   const showRequests = currentView === 'requests';
@@ -180,7 +190,9 @@ export const AdminApp: React.FC = () => {
     setWeekOffset,
     retentionRate,
     topVolunteerMonthLabel,
-  } = useDashboardMetrics();
+  } = useDashboardMetrics({
+    includeAllScopes: showOrganizationImpactMode && !isSubAdminPortal,
+  });
   const nebulaeOps = useNebulaeOpsCenter({
     enabled: aiEnabled,
     planTier,
@@ -188,6 +200,7 @@ export const AdminApp: React.FC = () => {
     orgId: metricsOrgId,
     volunteers,
     activityLogs,
+    contextScope: nebulaeContextScope,
   });
 
   const stripePriceIds = useMemo(() => {
@@ -274,28 +287,23 @@ export const AdminApp: React.FC = () => {
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    const syncFromStorage = () => {
-      setActiveSubAdminSession(readStoredSubAdminSession());
-    };
     const handleSessionEvent = (event: Event) => {
       const detail = (event as CustomEvent).detail || null;
       if (!detail) {
-        localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+        window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
         setActiveSubAdminSession(null);
         return;
       }
       try {
-        localStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(detail));
+        window.sessionStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(detail));
       } catch (_error) {
         // Ignore storage failures.
       }
       setActiveSubAdminSession(detail as ActiveSubAdminSession);
     };
-    window.addEventListener('storage', syncFromStorage);
     window.addEventListener('nexolink:subadmin-session', handleSessionEvent as EventListener);
-    syncFromStorage();
+    setActiveSubAdminSession(readStoredSubAdminSession());
     return () => {
-      window.removeEventListener('storage', syncFromStorage);
       window.removeEventListener('nexolink:subadmin-session', handleSessionEvent as EventListener);
     };
   }, []);
@@ -369,21 +377,49 @@ export const AdminApp: React.FC = () => {
         setOrgContext({ id: '', code: '', name: '', planTier: null });
         setPlanTier('orbit');
         setActiveSubAdminSession(null);
-        localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+        window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
         if (refreshTimer) window.clearInterval(refreshTimer);
         setAuthLoading(false);
         return;
       }
+
       try {
+        const idTokenResult = await u.getIdTokenResult();
+        const isSubAdminClaim = !!(idTokenResult.claims.sub_admin || idTokenResult.claims.isSubAdmin);
+        setIsSubAdmin(isSubAdminClaim);
+        
         await refreshOrgContext(u);
         await refreshPlanTier(u);
+
+        // Robust subadmin session detection
+        if (isSubAdminClaim) {
+          const stored = readStoredSubAdminSession();
+          if (!stored) {
+            // Synthesize from user doc if storage is lost but we have the claim
+            const userSnap = await getDoc(doc(db, 'users', u.uid));
+            const userData = userSnap.data() || {};
+            if (userData.activeSubAdminId) {
+              const synthesized: ActiveSubAdminSession = {
+                subAdminId: String(userData.activeSubAdminId),
+                email: String(userData.activeSubAdminEmail || u.email || ''),
+                displayName: String(userData.activeSubAdminDisplayName || ''),
+                groupId: String(userData.activeSubAdminGroupId || ''),
+                groupName: String(userData.activeSubAdminGroupName || ''),
+                startedAt: userData.activeSubAdminStartedAt || Date.now(),
+              };
+              window.sessionStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(synthesized));
+              setActiveSubAdminSession(synthesized);
+            }
+          }
+        }
+
         if (refreshTimer) window.clearInterval(refreshTimer);
         refreshTimer = window.setInterval(() => {
           refreshPlanTier(u);
           refreshOrgContext(u);
         }, 30000);
       } catch (error) {
-        console.error('Failed to resolve org context', error);
+        console.error('Failed to resolve auth context', error);
       } finally {
         setAuthLoading(false);
       }
@@ -422,10 +458,9 @@ export const AdminApp: React.FC = () => {
     if (currentView === 'billing' || currentView === 'account' || currentView === 'create-subadmin') {
       setCurrentView('impact');
     }
-    if (isKioskOpen) {
-      setIsKioskOpen(false);
-    }
-  }, [currentView, isKioskOpen, isSubAdminPortal]);
+    setShowOrganizationImpactMode(false);
+    setNebulaeContextScope('superadmin-only');
+  }, [currentView, isSubAdminPortal]);
 
   React.useEffect(() => {
     if (showVolunteers) {
@@ -584,7 +619,7 @@ export const AdminApp: React.FC = () => {
     planTier,
     pageKey: 'impact',
     sourceData: impactSource,
-    fallback: impactFallback,
+    fallback: impactFallback as any,
   });
 
   React.useEffect(() => {
@@ -602,6 +637,24 @@ export const AdminApp: React.FC = () => {
     const time = new Date(insightUpdatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return `Live refresh · ${time}`;
   }, [insightUpdatedAt]);
+
+  const openImpactOverview = () => {
+    setCurrentView('impact');
+    setShowOrganizationImpactMode((prev) => {
+      const next = !prev;
+      setImpactModeToast({
+        isVisible: true,
+        message: next ? 'Organization Impact Mode Enabled' : 'Organization Impact Mode Disabled',
+      });
+      return next;
+    });
+  };
+
+  React.useEffect(() => {
+    if (isSubAdminPortal) {
+      setShowOrganizationImpactMode(false);
+    }
+  }, [isSubAdminPortal]);
 
   if (authLoading) {
     return (
@@ -667,6 +720,9 @@ export const AdminApp: React.FC = () => {
                 orgContext={orgContext}
                 planTier={planTier}
                 isSubAdminPortal={isSubAdminPortal}
+                onOpenImpactOverview={openImpactOverview}
+                showImpactOverviewButton={!isSubAdminPortal}
+                impactOverviewActive={showOrganizationImpactMode}
               />
             )}
 
@@ -749,7 +805,7 @@ export const AdminApp: React.FC = () => {
                       summary={impactAiInsight.summary}
                       pillLabel={`Retention ${impactInsights.retentionSignal}%`}
                       updatedLabel={insightUpdatedLabel}
-                      sections={impactAiInsight.sections}
+                      sections={impactAiInsight.sections as any}
                       onOpenCopilot={() => setCurrentView('nebulae')}
                       copilotPrompt="Explain this impact summary in detail and suggest 3 next actions to improve volunteer engagement and grant readiness."
                     />
@@ -778,6 +834,9 @@ export const AdminApp: React.FC = () => {
                     planTier={planTier}
                     aiEnabled={aiEnabled}
                     opsCenter={aiEnabled ? nebulaeOps : null}
+                    contextScope={nebulaeContextScope}
+                    onContextScopeChange={setNebulaeContextScope}
+                    isSubAdminPortal={isSubAdminPortal}
                   />
                 </motion.div>
               ) : currentView === 'support' ? (
@@ -888,13 +947,19 @@ export const AdminApp: React.FC = () => {
         </main>
       </div>
       {/* Kiosk Modal */}
-      {isKioskOpen && (
+      {!isSubAdminPortal && isKioskOpen && (
         <KioskModal 
           isOpen={isKioskOpen} 
           onClose={() => setIsKioskOpen(false)} 
           orgContext={orgContext}
         />
       )}
+      <Toast
+        isVisible={impactModeToast.isVisible}
+        message={impactModeToast.message}
+        type="success"
+        onClose={() => setImpactModeToast({ isVisible: false, message: '' })}
+      />
     </div>
   );
 };

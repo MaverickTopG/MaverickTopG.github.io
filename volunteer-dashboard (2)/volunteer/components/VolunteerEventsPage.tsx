@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MapPin, Calendar, Clock, ArrowRight, Filter, Search, Check, ChevronRight } from 'lucide-react';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { EventSignupModal } from './EventSignupModal';
 import {
   extractVolunteerMembership,
-  hydrateVolunteerMembershipPlans,
   mergeVolunteerMemberships,
   type VolunteerMembership,
 } from '../lib/membershipAccess';
@@ -45,6 +44,11 @@ interface Event {
   matchedOrgCode?: string;
   matchedOrgId?: string;
   matchedOrgKey?: string;
+  matchedScopeId?: string;
+  matchedScopeName?: string;
+  recurrenceType?: 'one-time' | 'weekly' | 'biweekly' | 'monthly';
+  recurrenceParentId?: string;
+  recurrenceOccurrenceDate?: string;
 }
 
 interface Signup {
@@ -57,7 +61,133 @@ interface VolunteerEventsPageProps {
   userProfile?: any;
 }
 
+const resolveCoverImageUrl = (data: Record<string, unknown>) => {
+  const coverObject = (typeof data.coverImage === 'object' && data.coverImage !== null)
+    ? (data.coverImage as Record<string, unknown>)
+    : null;
+  const legacyCoverObject = (typeof (data as Record<string, unknown>).cover_image === 'object' && (data as Record<string, unknown>).cover_image !== null)
+    ? ((data as Record<string, unknown>).cover_image as Record<string, unknown>)
+    : null;
+  const raw =
+    data.coverImageUrl ||
+    data.cover_image_url ||
+    (coverObject?.url as unknown) ||
+    (legacyCoverObject?.url as unknown) ||
+    data.coverImage ||
+    data.imageUrl ||
+    data.image_url ||
+    '';
+  const text = String(raw || '').trim();
+  return text || undefined;
+};
+
 export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userProfile }) => {
+  const RECURRING_TYPES = new Set(['weekly', 'biweekly', 'monthly']);
+  const UPCOMING_LOOKAHEAD_DAYS = 42;
+  const toDateKey = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+  const parseDateOnly = (value: unknown) => {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (dateOnlyMatch) {
+      const year = Number(dateOnlyMatch[1]);
+      const monthIndex = Number(dateOnlyMatch[2]) - 1;
+      const day = Number(dateOnlyMatch[3]);
+      const date = new Date(year, monthIndex, day, 0, 0, 0, 0);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 0, 0, 0, 0);
+  };
+  const addRecurrenceStep = (date: Date, recurrenceType: string) => {
+    const next = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+    if (recurrenceType === 'weekly') {
+      next.setDate(next.getDate() + 7);
+      return next;
+    }
+    if (recurrenceType === 'biweekly') {
+      next.setDate(next.getDate() + 14);
+      return next;
+    }
+    next.setMonth(next.getMonth() + 1);
+    return next;
+  };
+  const materializeRecurringEvents = async (rows: Array<{ id: string; data: Record<string, unknown> }>) => {
+    const db = getFirestoreDb();
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const horizonDate = new Date(startOfToday);
+    horizonDate.setDate(horizonDate.getDate() + UPCOMING_LOOKAHEAD_DAYS);
+    const datesByParent = new Map<string, string[]>();
+
+    rows.forEach((row) => {
+      const parentId = String((row.data || {}).recurrenceParentId || '').trim();
+      if (!parentId) return;
+      const list = datesByParent.get(parentId) || [];
+      const startDate = String((row.data || {}).startDate || '').trim();
+      if (startDate) list.push(startDate);
+      datesByParent.set(parentId, list);
+    });
+
+    const tasks = rows.map(async (row) => {
+      const data = row.data || {};
+      const recurrenceParentId = String(data.recurrenceParentId || '').trim();
+      if (recurrenceParentId) return;
+      const recurrenceType = String(data.recurrenceType || 'one-time').toLowerCase();
+      if (!RECURRING_TYPES.has(recurrenceType)) return;
+
+      const templateStart = parseDateOnly(data.startDate);
+      if (!templateStart) return;
+
+      const templateEnd = parseDateOnly(data.endDate || data.startDate);
+      const durationDays = templateEnd
+        ? Math.max(0, Math.round((templateEnd.getTime() - templateStart.getTime()) / 86400000))
+        : 0;
+      const knownDates = new Set<string>(
+        [
+          String(data.startDate || '').trim(),
+          ...(datesByParent.get(row.id) || []),
+        ].filter(Boolean),
+      );
+
+      let nextDate = new Date(templateStart);
+      while (nextDate.getTime() < startOfToday.getTime()) {
+        nextDate = addRecurrenceStep(nextDate, recurrenceType);
+      }
+
+      while (nextDate.getTime() <= horizonDate.getTime()) {
+        const nextStartDate = toDateKey(nextDate);
+        if (!knownDates.has(nextStartDate)) {
+          const nextEndObj = new Date(nextDate);
+          nextEndObj.setDate(nextEndObj.getDate() + durationDays);
+          const nextEndDate = toDateKey(nextEndObj);
+          const occurrenceId = `${row.id}__${nextStartDate}`;
+
+          await setDoc(doc(db, 'events', occurrenceId), {
+            ...data,
+            startDate: nextStartDate,
+            endDate: nextEndDate,
+            status: 'published',
+            recurrenceType,
+            recurrenceParentId: row.id,
+            recurrenceOccurrenceDate: nextStartDate,
+            updatedAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+          }, { merge: true });
+          knownDates.add(nextStartDate);
+        }
+        nextDate = addRecurrenceStep(nextDate, recurrenceType);
+      }
+    });
+    await Promise.all(tasks);
+  };
+
   const [events, setEvents] = useState<Event[]>([]);
   const [signups, setSignups] = useState<Record<string, Signup>>({}); // Map eventId -> Signup
   const [signupCounts, setSignupCounts] = useState<Record<string, number>>({});
@@ -91,6 +221,55 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     return null;
   };
 
+  const normalizeScopeId = (value: unknown) => String(value || '').trim();
+  const normalizeScopeName = (value: unknown) => String(value || '').trim();
+  const resolveRecordScopeId = (record: Record<string, unknown>) =>
+    normalizeScopeId(
+      record.target_group_id ||
+        record.targetGroupId ||
+        record.sub_admin_group_id ||
+        record.subAdminGroupId ||
+        record.group_scope_id ||
+        record.groupScopeId ||
+        record.group_id ||
+        record.groupId,
+    );
+  const resolveRecordScopeName = (record: Record<string, unknown>) =>
+    normalizeScopeName(
+      record.target_group_name ||
+        record.targetGroupName ||
+        record.sub_admin_group_name ||
+        record.subAdminGroupName ||
+        record.group_scope_name ||
+        record.groupScopeName ||
+        record.group_name ||
+        record.groupName,
+    );
+  const resolveRecordOrgCode = (record: Record<string, unknown>) =>
+    String(
+      record.orgCode ||
+        record.org_code ||
+        record.organizationCode ||
+        record.access_code ||
+        '',
+    )
+      .trim()
+      .toUpperCase();
+  const resolveRecordOrgId = (record: Record<string, unknown>) =>
+    String(
+      record.orgId ||
+        record.org_id ||
+        record.organizationId ||
+        record.organization_id ||
+        record.linked_org_id ||
+        '',
+    ).trim();
+  const membershipMatchesScope = (membership: VolunteerMembership, scopeId: string) => {
+    const membershipScope = normalizeScopeId(membership.scopeId);
+    if (membershipScope) return membershipScope === scopeId;
+    return !scopeId;
+  };
+
   const resolveEventCapacity = (event: Event) => {
     const capacity = parseNumber(event.capacity ?? (event as any).capacity_value ?? (event as any).maxCapacity ?? (event as any).max_capacity);
     if (Number.isFinite(capacity ?? NaN) && (capacity ?? 0) > 0) {
@@ -119,6 +298,14 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     
     let unsubEvents: (() => void) | null = null;
     let unsubSignups: (() => void) | null = null;
+    let unsubMembershipsA: (() => void) | null = null;
+    let unsubMembershipsB: (() => void) | null = null;
+    let unsubJoinRequestsA: (() => void) | null = null;
+    let unsubJoinRequestsB: (() => void) | null = null;
+    let membershipRowsA: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let membershipRowsB: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let joinRowsA: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let joinRowsB: Array<{ id: string; data: Record<string, unknown> }> = [];
     const stopSubscriptions = () => {
       if (unsubEvents) {
         unsubEvents();
@@ -129,8 +316,188 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
         unsubSignups = null;
       }
     };
+    const stopMembershipSubscriptions = () => {
+      if (unsubMembershipsA) {
+        unsubMembershipsA();
+        unsubMembershipsA = null;
+      }
+      if (unsubMembershipsB) {
+        unsubMembershipsB();
+        unsubMembershipsB = null;
+      }
+      if (unsubJoinRequestsA) {
+        unsubJoinRequestsA();
+        unsubJoinRequestsA = null;
+      }
+      if (unsubJoinRequestsB) {
+        unsubJoinRequestsB();
+        unsubJoinRequestsB = null;
+      }
+      membershipRowsA = [];
+      membershipRowsB = [];
+      joinRowsA = [];
+      joinRowsB = [];
+    };
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    let membershipSyncSeq = 0;
+    const syncMembershipAccess = (user: { uid: string; email?: string | null }) => {
+      const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
+        Boolean(value);
+      const memberships = [
+        ...membershipRowsA
+          .map((entry) => extractVolunteerMembership(entry.data as Record<string, unknown>, entry.id, 'user_organizations'))
+          .filter(isMembership),
+        ...membershipRowsB
+          .map((entry) => extractVolunteerMembership(entry.data as Record<string, unknown>, entry.id, 'users'))
+          .filter(isMembership),
+      ];
+      const runId = ++membershipSyncSeq;
+      const resolvedMemberships = mergeVolunteerMemberships(memberships);
+      if (runId !== membershipSyncSeq) return;
+
+      // Orbit, Nebula, and Cosmos all have volunteer events access.
+      const eligibleMemberships = resolvedMemberships;
+      setEligibleOrgs(eligibleMemberships);
+      setOrganizations(
+        Array.from(
+          new Set(
+            eligibleMemberships.map((org) => {
+              const scopeLabel = String(org.scopeName || org.scopeId || '').trim();
+              return scopeLabel || org.name;
+            }),
+          ),
+        ).sort(),
+      );
+
+      if (!eligibleMemberships.length) {
+        stopSubscriptions();
+        setEvents([]);
+        setSignups({});
+        setLoading(false);
+        return;
+      }
+      // Stop showing blocking spinner as soon as membership context is ready.
+      setLoading(false);
+
+      const membershipsByOrgCode = new Map<string, VolunteerMembership[]>();
+      const membershipsByOrgId = new Map<string, VolunteerMembership[]>();
+      eligibleMemberships.forEach((membership) => {
+        if (membership.code) {
+          const key = String(membership.code).toUpperCase();
+          const rows = membershipsByOrgCode.get(key) || [];
+          rows.push(membership);
+          membershipsByOrgCode.set(key, rows);
+        }
+        if (membership.id) {
+          const key = String(membership.id);
+          const rows = membershipsByOrgId.get(key) || [];
+          rows.push(membership);
+          membershipsByOrgId.set(key, rows);
+        }
+      });
+      const acceptedJoinRows = [...joinRowsA, ...joinRowsB].filter((row) => {
+        const status = String(row.data?.status || '').toLowerCase();
+        return status === 'accepted' || status === 'approved' || status === 'active' || status === 'connected';
+      });
+      const scopeHintsByOrgCode = new Map<string, Set<string>>();
+      const scopeHintsByOrgId = new Map<string, Set<string>>();
+      acceptedJoinRows.forEach((row) => {
+        const data = row.data || {};
+        const scopeId = resolveRecordScopeId(data);
+        if (!scopeId) return;
+        const code = resolveRecordOrgCode(data);
+        const id = resolveRecordOrgId(data);
+        if (code) {
+          const set = scopeHintsByOrgCode.get(code) || new Set<string>();
+          set.add(scopeId);
+          scopeHintsByOrgCode.set(code, set);
+        }
+        if (id) {
+          const set = scopeHintsByOrgId.get(id) || new Set<string>();
+          set.add(scopeId);
+          scopeHintsByOrgId.set(id, set);
+        }
+      });
+
+      // Subscribe to all events and keep only connected-org matches.
+      stopSubscriptions();
+      unsubEvents = onSnapshot(collection(db, 'events'), (snapshot) => {
+        const allRows = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          data: (docSnap.data() || {}) as Record<string, unknown>,
+        }));
+        void materializeRecurringEvents(allRows);
+
+        const loaded: Event[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (String(data.status || '').toLowerCase() === 'archived') return;
+
+          const rawCode = String(data.orgCode || data.org_code || data.organizationCode || '').toUpperCase();
+          const rawId = String(data.orgId || data.org_id || data.organizationId || '');
+          const eventScopeId = resolveRecordScopeId(data as Record<string, unknown>);
+          const eventScopeName = resolveRecordScopeName(data as Record<string, unknown>);
+          const possibleMemberships = [
+            ...(rawCode ? membershipsByOrgCode.get(rawCode) || [] : []),
+            ...(rawId ? membershipsByOrgId.get(rawId) || [] : []),
+          ];
+          const matchedOrgByScope =
+            possibleMemberships.find((membership) => membershipMatchesScope(membership, eventScopeId)) || null;
+          const joinScopeHints = new Set<string>([
+            ...(rawCode ? Array.from(scopeHintsByOrgCode.get(rawCode) || []) : []),
+            ...(rawId ? Array.from(scopeHintsByOrgId.get(rawId) || []) : []),
+          ]);
+          const matchesByJoinScope = eventScopeId ? joinScopeHints.has(eventScopeId) : joinScopeHints.size === 0;
+          const matchedOrg =
+            matchedOrgByScope ||
+            (matchesByJoinScope ? possibleMemberships[0] || null : null);
+          if (!matchedOrg) return;
+
+          const coverImageUrl = resolveCoverImageUrl(data as Record<string, unknown>);
+          loaded.push({
+            id: docSnap.id,
+            coverImageUrl,
+            ...data,
+            matchedOrgName: matchedOrg.name,
+            matchedOrgCode: matchedOrg.code,
+            matchedOrgId: matchedOrg.id,
+            matchedOrgKey: matchedOrg.key,
+            matchedScopeId: eventScopeId,
+            matchedScopeName: eventScopeName || matchedOrg.scopeName || matchedOrg.scopeId || eventScopeId || '',
+          } as Event);
+        });
+        loaded.sort((a, b) => {
+          const aTime = parseDateOnly(a.startDate)?.getTime() || 0;
+          const bTime = parseDateOnly(b.startDate)?.getTime() || 0;
+          return aTime - bTime;
+        });
+        setEvents(loaded);
+        setLoading(false);
+      }, (err) => {
+        console.error("Event subscription error", err);
+        setLoading(false);
+      });
+
+      // Subscribe to current user's event signups.
+      if (user.email) {
+        unsubSignups = onSnapshot(
+          query(collection(db, 'event_signups'), where('volunteerEmail', '==', user.email)),
+          (snapshot) => {
+            const map: Record<string, Signup> = {};
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data();
+              map[data.eventId] = { id: docSnap.id, eventId: data.eventId, status: data.status };
+            });
+            setSignups(map);
+          },
+        );
+      } else {
+        setSignups({});
+      }
+    };
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      stopMembershipSubscriptions();
       if (!user) {
         stopSubscriptions();
         setEvents([]);
@@ -142,112 +509,55 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
       }
 
       setLoading(true);
-      try {
-        const [orgSnaps, membershipSnaps] = await Promise.all([
-          getDocs(query(collection(db, 'user_organizations'), where('user_id', '==', user.uid))),
-          getDocs(query(collection(db, 'users'), where('user_id', '==', user.uid))),
-        ]);
-        const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
-          Boolean(value);
-        const memberships = [
-          ...orgSnaps.docs
-            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'user_organizations'))
-            .filter(isMembership),
-          ...membershipSnaps.docs
+      unsubMembershipsA = onSnapshot(
+        query(collection(db, 'user_organizations'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          membershipRowsA = snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            data: (docSnap.data() || {}) as Record<string, unknown>,
+          }));
+          void syncMembershipAccess({ uid: user.uid, email: user.email });
+        },
+      );
+
+      unsubMembershipsB = onSnapshot(
+        query(collection(db, 'users'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          membershipRowsB = snapshot.docs
             .filter((docSnap) => docSnap.id !== user.uid)
-            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'users'))
-            .filter(isMembership),
-        ];
-        const resolvedMemberships = await hydrateVolunteerMembershipPlans(
-          db as any,
-          mergeVolunteerMemberships(memberships),
-        );
-        // Orbit, Nebula, and Cosmos all have volunteer events access.
-        const eligibleMemberships = resolvedMemberships;
-        setEligibleOrgs(eligibleMemberships);
-        setOrganizations(Array.from(new Set(eligibleMemberships.map((org) => org.name))).sort());
-
-        if (!eligibleMemberships.length) {
-          stopSubscriptions();
-          setEvents([]);
-          setSignups({});
-          setLoading(false);
-          return;
-        }
-
-        const orgByCode = new Map<string, VolunteerMembership>();
-        const orgById = new Map<string, VolunteerMembership>();
-        eligibleMemberships.forEach((membership) => {
-          if (membership.code) orgByCode.set(String(membership.code).toUpperCase(), membership);
-          if (membership.id) orgById.set(String(membership.id), membership);
-        });
-
-        // 2. Subscribe to all events and keep only connected-org matches.
-        stopSubscriptions();
-        unsubEvents = onSnapshot(query(collection(db, 'events'), where('status', '!=', 'draft')), (snapshot) => {
-          const loaded: Event[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            if (String(data.status || '').toLowerCase() === 'archived') return;
-
-            const rawCode = String(data.orgCode || data.org_code || data.organizationCode || '').toUpperCase();
-            const rawId = String(data.orgId || data.org_id || data.organizationId || '');
-            const matchedOrg = (rawCode && orgByCode.get(rawCode)) || (rawId && orgById.get(rawId)) || null;
-            if (!matchedOrg) return;
-
-            const coverImageUrl =
-              data.coverImageUrl ||
-              data.cover_image_url ||
-              data.coverImage ||
-              data.imageUrl ||
-              data.image_url ||
-              undefined;
-            loaded.push({
+            .map((docSnap) => ({
               id: docSnap.id,
-              coverImageUrl,
-              ...data,
-              matchedOrgName: matchedOrg.name,
-              matchedOrgCode: matchedOrg.code,
-              matchedOrgId: matchedOrg.id,
-              matchedOrgKey: matchedOrg.key,
-            } as Event);
-          });
-          loaded.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-          setEvents(loaded);
-          setLoading(false);
-        }, (err) => {
-          console.error("Event subscription error", err);
-          setLoading(false);
-        });
-
-        // 3. Subscribe to current user's event signups.
-        if (user.email) {
-          unsubSignups = onSnapshot(
-            query(collection(db, 'event_signups'), where('volunteerEmail', '==', user.email)),
-            (snapshot) => {
-              const map: Record<string, Signup> = {};
-              snapshot.forEach((docSnap) => {
-                const data = docSnap.data();
-                map[data.eventId] = { id: docSnap.id, eventId: data.eventId, status: data.status };
-              });
-              setSignups(map);
-            },
-          );
-        } else {
-          setSignups({});
-        }
-      } catch (err) {
-        console.error("Error fetching user orgs", err);
-        stopSubscriptions();
-        setEligibleOrgs([]);
-        setOrganizations([]);
-        setEvents([]);
-        setSignups({});
-        setLoading(false);
+              data: (docSnap.data() || {}) as Record<string, unknown>,
+            }));
+          void syncMembershipAccess({ uid: user.uid, email: user.email });
+        },
+      );
+      unsubJoinRequestsA = onSnapshot(
+        query(collection(db, 'organization_join_requests'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          joinRowsA = snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            data: (docSnap.data() || {}) as Record<string, unknown>,
+          }));
+          void syncMembershipAccess({ uid: user.uid, email: user.email });
+        },
+      );
+      if (user.email) {
+        unsubJoinRequestsB = onSnapshot(
+          query(collection(db, 'organization_join_requests'), where('user_email', '==', user.email)),
+          (snapshot) => {
+            joinRowsB = snapshot.docs.map((docSnap) => ({
+              id: docSnap.id,
+              data: (docSnap.data() || {}) as Record<string, unknown>,
+            }));
+            void syncMembershipAccess({ uid: user.uid, email: user.email });
+          },
+        );
       }
     });
 
     return () => {
+      stopMembershipSubscriptions();
       unsubscribeAuth();
       stopSubscriptions();
     };
@@ -392,6 +702,22 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
         selectedEvent.orgCode ||
         selectedEvent.organizationCode ||
         selectedEvent.org_code;
+      const resolvedScopeId = String(
+        selectedEvent.matchedScopeId ||
+          (selectedEvent as any).target_group_id ||
+          (selectedEvent as any).targetGroupId ||
+          (selectedEvent as any).sub_admin_group_id ||
+          (selectedEvent as any).subAdminGroupId ||
+          '',
+      ).trim();
+      const resolvedScopeName = String(
+        selectedEvent.matchedScopeName ||
+          (selectedEvent as any).target_group_name ||
+          (selectedEvent as any).targetGroupName ||
+          (selectedEvent as any).sub_admin_group_name ||
+          (selectedEvent as any).subAdminGroupName ||
+          '',
+      ).trim();
 
       await addDoc(collection(db, 'event_signups'), {
         eventId: selectedEvent.id,
@@ -405,6 +731,14 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
         selectedShifts: resolvedShifts,
         orgId: resolvedOrgId || null,
         orgCode: resolvedOrgCode || null,
+        target_group_id: resolvedScopeId || null,
+        targetGroupId: resolvedScopeId || null,
+        sub_admin_group_id: resolvedScopeId || null,
+        subAdminGroupId: resolvedScopeId || null,
+        target_group_name: resolvedScopeName || null,
+        targetGroupName: resolvedScopeName || null,
+        sub_admin_group_name: resolvedScopeName || null,
+        subAdminGroupName: resolvedScopeName || null,
         createdAt: serverTimestamp(),
         // Add minimal event details for easy querying if needed
         eventTitle: selectedEvent.title,
@@ -434,12 +768,52 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
     }
   };
 
+  const parseLocalDate = (value?: string) => {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (dateOnlyMatch) {
+      const year = Number(dateOnlyMatch[1]);
+      const monthIndex = Number(dateOnlyMatch[2]) - 1;
+      const day = Number(dateOnlyMatch[3]);
+      const date = new Date(year, monthIndex, day, 0, 0, 0, 0);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 0, 0, 0, 0);
+  };
+
+  const getEventTemporalStatus = (event: Event): 'upcoming' | 'live' | 'past' => {
+    const start = parseLocalDate(event.startDate);
+    const end = parseLocalDate(event.endDate || event.startDate) || start;
+    if (!start || !end) return 'upcoming';
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    if (startOfToday.getTime() < start.getTime()) return 'upcoming';
+    if (startOfToday.getTime() > end.getTime()) return 'past';
+    return 'live';
+  };
+
   const filteredEvents = isArchivedVolunteer ? [] : events.filter(ev => {
+    // 0. Volunteer portal should only show live + upcoming events.
+    const temporalStatus = getEventTemporalStatus(ev);
+    if (temporalStatus !== 'live' && temporalStatus !== 'upcoming') return false;
+    if (temporalStatus === 'upcoming') {
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const horizonDate = new Date(startOfToday);
+      horizonDate.setDate(horizonDate.getDate() + UPCOMING_LOOKAHEAD_DAYS);
+      const start = parseLocalDate(ev.startDate);
+      if (!start || start.getTime() > horizonDate.getTime()) return false;
+    }
+
     // 1. Search Filter
     const searchText = searchQuery.toLowerCase();
     const matchesSearch =
       ev.title.toLowerCase().includes(searchText) ||
       (ev.matchedOrgName || '').toLowerCase().includes(searchText) ||
+      (ev.matchedScopeName || '').toLowerCase().includes(searchText) ||
       (ev.city || '').toLowerCase().includes(searchText) ||
       (ev.location || '').toLowerCase().includes(searchText) ||
       (ev.venue || '').toLowerCase().includes(searchText) ||
@@ -450,13 +824,15 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
 
     // 2. Organization Filter
     if (activeFilter !== 'All Events') {
-       const orgName =
+       const baseName =
          ev.matchedOrgName ||
          (ev as any).orgName ||
          (ev as any).organizationName ||
          (ev as any).name ||
          (ev as any).schoolName ||
          '';
+       const scopeLabel = String(ev.matchedScopeName || ev.matchedScopeId || '').trim();
+       const orgName = scopeLabel || baseName;
        if (String(orgName) !== activeFilter) return false;
     }
     
@@ -464,7 +840,14 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
   });
 
   const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
+    const d = parseLocalDate(dateStr);
+    if (!d) {
+      return {
+        month: '—',
+        day: '—',
+        full: 'Date TBA',
+      };
+    }
     return {
       month: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
       day: d.getDate(),
@@ -685,6 +1068,8 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                 const totalSignups = signupCounts[event.id] || 0;
                 const capacity = resolveEventCapacity(event);
                 const isFull = capacity > 0 && totalSignups >= capacity;
+                const temporalStatus = getEventTemporalStatus(event);
+                const temporalStatusLabel = temporalStatus === 'live' ? 'Live' : 'Upcoming';
                 
                 return (
                   <motion.div 
@@ -697,7 +1082,11 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                       {/* Date / Image */}
                       <div className="relative w-full sm:w-64 md:w-52 aspect-square shrink-0 bg-gray-100 rounded-3xl overflow-hidden self-start">
                           {event.coverImageUrl ? (
-                             <img src={event.coverImageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                             <img
+                               src={event.coverImageUrl}
+                               alt={`${event.title} cover`}
+                               className="absolute inset-0 block w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                             />
                           ) : (
                              <div className="w-full h-full flex items-center justify-center bg-gray-50">
                                 <Calendar className="w-10 h-10 text-gray-300" />
@@ -720,7 +1109,7 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                                       ? 'bg-red-100 text-red-600 border-red-200'
                                       : 'bg-gray-100 text-gray-600 border-gray-200'
                                 }`}>
-                                   {isSignedUp ? 'Registered' : (isFull ? 'Full' : (event.status || 'Open'))}
+                                   {isSignedUp ? 'Registered' : (isFull ? 'Full' : temporalStatusLabel)}
                                 </span>
                                 {event.shifts && event.shifts.length > 0 && (
                                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wide bg-lime-50 text-lime-700 border border-lime-200">
@@ -733,7 +1122,10 @@ export const VolunteerEventsPage: React.FC<VolunteerEventsPageProps> = ({ userPr
                              </h3>
                              {event.matchedOrgName ? (
                                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
-                                 {event.matchedOrgName}
+                                 {(() => {
+                                   const scopeLabel = String(event.matchedScopeName || event.matchedScopeId || '').trim();
+                                   return scopeLabel || event.matchedOrgName;
+                                 })()}
                                </p>
                              ) : null}
                              <div className="flex flex-wrap gap-4 text-sm font-medium text-gray-500">

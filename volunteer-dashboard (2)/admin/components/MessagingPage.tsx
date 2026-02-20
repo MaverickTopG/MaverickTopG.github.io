@@ -71,6 +71,61 @@ const normalizeScopeToken = (value?: string) => {
   if (!raw) return 'super-admin';
   return raw.replace(/[^a-zA-Z0-9_-]/g, '_');
 };
+const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
+  String(
+    data.target_group_id
+    || data.targetGroupId
+    || data.sub_admin_group_id
+    || data.subAdminGroupId
+    || data.group_scope_id
+    || data.groupScopeId
+    || data.groupId
+    || data.group_id
+    || '',
+  ).trim();
+const normalizeNameValue = (value: unknown) => String(value || '').trim();
+const normalizeRoleValue = (value: unknown) => String(value || '').trim().toLowerCase();
+const isAdminLikeRole = (value: unknown) => {
+  const role = normalizeRoleValue(value);
+  if (!role) return false;
+  return (
+    role.includes('admin')
+    || role.includes('owner')
+    || role.includes('super')
+    || role.includes('organization')
+  );
+};
+
+const resolvePersonNameFromRecord = (record: Record<string, unknown> = {}) => {
+  const first = normalizeNameValue(record.firstName || record.first_name);
+  const last = normalizeNameValue(record.lastName || record.last_name);
+  const firstLast = [first, last].filter(Boolean).join(' ').trim();
+  if (firstLast) return firstLast;
+
+  const displayLike =
+    normalizeNameValue(record.displayName) ||
+    normalizeNameValue(record.user_name) ||
+    normalizeNameValue(record.userName) ||
+    normalizeNameValue(record.fullName);
+  if (displayLike) return displayLike;
+
+  const genericName = normalizeNameValue(record.name);
+  if (!genericName) return '';
+
+  const orgLikeNames = [
+    record.organizationName,
+    record.organization_name,
+    record.orgName,
+    record.org_name,
+    record.orgDisplayName,
+  ]
+    .map((value) => normalizeNameValue(value).toLowerCase())
+    .filter(Boolean);
+
+  if (!orgLikeNames.includes(genericName.toLowerCase())) return genericName;
+  return '';
+};
+
 const ALL_VOLUNTEERS_THREAD = (orgCode: string, scopeToken: string) => `org-${orgCode}-scope-${scopeToken}-all`;
 const DIRECT_VOLUNTEER_THREAD = (orgCode: string, scopeToken: string, volunteerId: string) =>
   `org-${orgCode}-scope-${scopeToken}-user-${volunteerId}`;
@@ -154,9 +209,12 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
 
       const snapshot = await getDoc(doc(db, 'users', user.uid));
       const data = snapshot.data() || {};
-      const first = String(data.firstName || data.name || '').trim();
-      const last = String(data.lastName || data.last_name || '').trim();
-      setSenderName([first, last].filter(Boolean).join(' ').trim() || user.email || 'Coordinator');
+      setSenderName(
+        resolvePersonNameFromRecord(data as Record<string, unknown>)
+          || user.displayName
+          || user.email
+          || 'Coordinator',
+      );
       setLoading(false);
     });
     return () => unsubscribe();
@@ -249,18 +307,9 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
     const keyByEmail = new Map<string, string>();
     const keyByName = new Map<string, string>();
     const scopedJoinRequests = joinRequests.filter((row) => {
-      if (!subAdminScopeKey) return true;
-      const data = row.data || {};
-      const scope = String(
-        data.target_group_id
-        || data.targetGroupId
-        || data.sub_admin_group_id
-        || data.subAdminGroupId
-        || data.groupId
-        || data.group_id
-        || '',
-      ).trim();
-      return scope === subAdminScopeKey;
+      const scope = resolveRecordScopeId(row.data || {});
+      if (subAdminScopeKey) return scope === subAdminScopeKey;
+      return !scope;
     });
     const allowedUserIds = new Set<string>();
     const allowedEmails = new Set<string>();
@@ -271,7 +320,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
       if (status !== 'accepted') return;
       const userId = String(data.user_id || data.userId || '').trim();
       const email = String(data.user_email || data.email || '').trim().toLowerCase();
-      const name = String(data.user_name || data.name || '').trim().toLowerCase();
+      const name = resolvePersonNameFromRecord(data).toLowerCase();
       if (userId) allowedUserIds.add(userId);
       if (email) allowedEmails.add(email);
       if (name) allowedNames.add(name);
@@ -280,23 +329,21 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
     // First pass: Users collection (Primary source)
     users.forEach((row) => {
       const data = row.data || {};
-      const first = String(data.firstName || data.name || '').trim();
-      const last = String(data.lastName || data.last_name || '').trim();
       const email = String(data.email || '').trim();
-      const name = [first, last].filter(Boolean).join(' ').trim() || email || 'Volunteer';
+      const name = resolvePersonNameFromRecord(data) || email || 'Volunteer';
+      const isOrgAdmin =
+        orgAdminIds.includes(row.id) || orgAdminEmails.includes(email.toLowerCase());
       
       // Strict filters for organizations and admins
       if (orgId && row.id === orgId) return;
       if (adminUid && row.id === adminUid) return;
       if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      if (orgAdminIds.includes(row.id)) return;
-      if (orgAdminEmails.includes(email.toLowerCase())) return;
-      if (subAdminScopeKey) {
-        const userEmail = email.toLowerCase();
-        const userName = name.toLowerCase();
-        const isAllowed = allowedUserIds.has(row.id) || (userEmail ? allowedEmails.has(userEmail) : false) || (userName ? allowedNames.has(userName) : false);
-        if (!isAllowed) return;
-      }
+      const userEmail = email.toLowerCase();
+      const userName = name.toLowerCase();
+      const isAllowed = allowedUserIds.has(row.id)
+        || (userEmail ? allowedEmails.has(userEmail) : false)
+        || (userName ? allowedNames.has(userName) : false);
+      if (!isAllowed && !isOrgAdmin) return;
 
       const key = buildVolunteerKey(email, name, row.id);
       keyByUserId.set(row.id, key);
@@ -307,7 +354,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
         id: row.id,
         name,
         email,
-        role: String(data.role || 'Volunteer'),
+        role: isOrgAdmin || isAdminLikeRole(data.role) ? 'Admin' : String(data.role || 'Volunteer'),
       });
     });
 
@@ -319,7 +366,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
 
       const userId = String(data.user_id || data.userId || '').trim();
       const email = String(data.user_email || data.email || '').trim();
-      const name = String(data.user_name || data.name || '').trim() || email || 'Volunteer';
+      const name = resolvePersonNameFromRecord(data) || email || 'Volunteer';
       
       if (orgId && userId === orgId) return;
       if (adminUid && userId === adminUid) return;
@@ -337,7 +384,9 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
         id: userId || key,
         name,
         email,
-        role: String(data.requested_role || data.role || 'Volunteer'),
+        role: isAdminLikeRole(data.requested_role) || isAdminLikeRole(data.role)
+          ? 'Admin'
+          : String(data.requested_role || data.role || 'Volunteer'),
       });
     });
 
@@ -361,15 +410,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
           processedIds.add(docSnap.id);
 
           const data = docSnap.data || {};
-          const messageScope = String(
-            data.target_group_id
-            || data.targetGroupId
-            || data.sub_admin_group_id
-            || data.subAdminGroupId
-            || data.groupId
-            || data.group_id
-            || '',
-          ).trim();
+          const messageScope = resolveRecordScopeId(data);
           const rawCreated = data.createdAt || data.created_at || null;
           let createdAt = new Date();
           
@@ -390,6 +431,10 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
             const matchesScopeField = messageScope === subAdminScopeKey;
             const matchesScopedThread = threadId.includes(`scope-${threadScopeToken}-`);
             if (!matchesScopeField && !matchesScopedThread) return;
+          } else {
+            const hasScopedThread =
+              threadId.includes('scope-') && !threadId.includes(`scope-${threadScopeToken}-`);
+            if (messageScope || hasScopedThread) return;
           }
           const entry: Message = {
             id: docSnap.id,

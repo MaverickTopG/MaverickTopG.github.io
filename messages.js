@@ -21,6 +21,8 @@ import {
   Linking,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
+import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
 import { Button as SwiftUIButton, ContextMenu, Host } from "@expo/ui/swift-ui";
 import * as ImagePicker from "expo-image-picker";
@@ -70,6 +72,7 @@ import {
   where,
   onSnapshot,
   getDocs,
+  limit,
   doc,
   getDoc,
   addDoc,
@@ -179,10 +182,22 @@ const sanitizeScopeToken = (scopeId) =>
     .replace(/[^a-zA-Z0-9_-]/g, "_")
     .slice(0, 64);
 
+const buildLegacyGroupThreadId = (orgCode) => {
+  const normalizedCode = normalizeOrgCode(orgCode);
+  if (!normalizedCode) return "";
+  return `org-${normalizedCode}-all`;
+};
+
+const buildLegacyDirectThreadId = (orgCode, participantId = "") => {
+  const normalizedCode = normalizeOrgCode(orgCode);
+  const normalizedParticipantId = String(participantId || "").trim();
+  if (!normalizedCode || !normalizedParticipantId) return "";
+  return `org-${normalizedCode}-user-${normalizedParticipantId}`;
+};
+
 const buildScopedGroupThreadId = (orgCode, scopeId = null) => {
   const normalizedCode = normalizeOrgCode(orgCode);
   if (!normalizedCode) return "";
-  if (!scopeId) return `org-${normalizedCode}-all`;
   return `org-${normalizedCode}-scope-${sanitizeScopeToken(scopeId)}-all`;
 };
 
@@ -194,8 +209,54 @@ const buildScopedDirectThreadId = (
   const normalizedCode = normalizeOrgCode(orgCode);
   const normalizedParticipantId = String(participantId || "").trim();
   if (!normalizedCode || !normalizedParticipantId) return "";
-  if (!scopeId) return `org-${normalizedCode}-user-${normalizedParticipantId}`;
   return `org-${normalizedCode}-scope-${sanitizeScopeToken(scopeId)}-user-${normalizedParticipantId}`;
+};
+
+const buildDirectThreadCandidates = (
+  orgCode,
+  scopeId = null,
+  participantId = "",
+) => {
+  const normalizedCode = normalizeOrgCode(orgCode);
+  const normalizedParticipantId = String(participantId || "").trim();
+  if (!normalizedCode || !normalizedParticipantId) return [];
+  const ids = new Set();
+  ids.add(
+    buildScopedDirectThreadId(
+      normalizedCode,
+      scopeId || null,
+      normalizedParticipantId,
+    ),
+  );
+  ids.add(
+    buildScopedDirectThreadId(normalizedCode, null, normalizedParticipantId),
+  );
+  // Legacy direct-thread formats used by earlier builds.
+  ids.add(buildLegacyDirectThreadId(normalizedCode, normalizedParticipantId));
+  ids.add(`org-${normalizedCode}-${normalizedParticipantId}`);
+  ids.add(`${normalizedCode}-${normalizedParticipantId}`);
+  return Array.from(ids).filter(Boolean);
+};
+
+const buildGroupThreadCandidates = (orgCode, scopeId = null) => {
+  const normalizedCode = normalizeOrgCode(orgCode);
+  if (!normalizedCode) return [];
+  const ids = new Set();
+  ids.add(buildScopedGroupThreadId(normalizedCode, scopeId || null));
+  ids.add(buildScopedGroupThreadId(normalizedCode, null));
+  // Legacy group-thread format used by earlier builds.
+  ids.add(buildLegacyGroupThreadId(normalizedCode));
+  ids.add(`org-${normalizedCode}`);
+  return Array.from(ids).filter(Boolean);
+};
+
+const messageMatchesThread = (message = {}, thread = null) => {
+  const threadId = String(message.threadId || "").trim();
+  if (!threadId || !thread) return false;
+  if (thread.threadIds && Array.isArray(thread.threadIds)) {
+    return thread.threadIds.includes(threadId);
+  }
+  return threadId === String(thread.threadId || thread.id || "").trim();
 };
 
 const scopedSelectionMatchesRecord = (record = {}, selectedScopeId = null) => {
@@ -227,6 +288,80 @@ const initialsFromName = (name) => {
   const first = parts[0]?.[0] || "";
   const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
   return (first + last).toUpperCase();
+};
+
+const normalizeNameValue = (value) => String(value || "").trim();
+
+const resolvePersonNameFromRecord = (record = {}) => {
+  const first = normalizeNameValue(record.firstName || record.first_name);
+  const last = normalizeNameValue(record.lastName || record.last_name);
+  const firstLast = `${first} ${last}`.trim();
+  if (firstLast) return firstLast;
+
+  const displayLike =
+    normalizeNameValue(record.displayName) ||
+    normalizeNameValue(record.user_name) ||
+    normalizeNameValue(record.userName) ||
+    normalizeNameValue(record.fullName);
+  if (displayLike) return displayLike;
+
+  const genericName = normalizeNameValue(record.name);
+  if (!genericName) return "";
+
+  const orgLikeNames = [
+    record.organizationName,
+    record.organization_name,
+    record.orgName,
+    record.org_name,
+    record.orgDisplayName,
+  ]
+    .map((value) => normalizeNameValue(value).toLowerCase())
+    .filter(Boolean);
+
+  if (!orgLikeNames.includes(genericName.toLowerCase())) return genericName;
+  return "";
+};
+
+const ADMIN_ROLE_TOKENS = [
+  "admin",
+  "org-admin",
+  "organization",
+  "owner",
+  "super admin",
+  "super-admin",
+  "subadmin",
+  "sub-admin",
+];
+
+const isAdminLikeRole = (role = "") => {
+  const normalized = String(role || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return ADMIN_ROLE_TOKENS.some((token) => normalized.includes(token));
+};
+
+const resolveStrictPersonNameFromRecord = (record = {}) => {
+  const first = normalizeNameValue(record.firstName || record.first_name);
+  const last = normalizeNameValue(record.lastName || record.last_name);
+  const firstLast = `${first} ${last}`.trim();
+  if (firstLast) return firstLast;
+  return (
+    normalizeNameValue(record.displayName) ||
+    normalizeNameValue(record.user_name) ||
+    normalizeNameValue(record.userName) ||
+    normalizeNameValue(record.fullName) ||
+    ""
+  );
+};
+
+const resolveChatParticipantName = (
+  record = {},
+  role = "",
+  fallbackName = "Volunteer",
+) => {
+  if (isAdminLikeRole(role)) {
+    return resolveStrictPersonNameFromRecord(record) || fallbackName;
+  }
+  return resolvePersonNameFromRecord(record) || fallbackName;
 };
 
 const DEFAULT_THREAD_PREVIEWS = [
@@ -291,6 +426,251 @@ const isAcceptedMembershipStatus = (status = "") => {
   );
 };
 
+const MESSAGE_ALLOWED_PLAN_TOKENS = ["nebula", "cosmos"];
+const MESSAGE_ORBIT_PLAN_TOKENS = ["orbit"];
+
+const normalizePlanKey = (value) => {
+  if (value == null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized || null;
+};
+
+const extractPlanKeyFromRecord = (record = {}) =>
+  normalizePlanKey(
+    record.planKey ||
+      record.plan_key ||
+      record.plan ||
+      record.planType ||
+      record.plan_type ||
+      record.subscription_plan_key ||
+      record.subscriptionPlanKey ||
+      record.metadata?.plan_key ||
+      null,
+  );
+
+const hasPlanAccessToken = (planKey, tokens = []) => {
+  const normalizedPlanKey = normalizePlanKey(planKey);
+  if (!normalizedPlanKey) return false;
+  return tokens.some((token) => {
+    const normalizedToken = normalizePlanKey(token);
+    if (!normalizedToken) return false;
+    return (
+      normalizedPlanKey === normalizedToken ||
+      normalizedPlanKey.includes(normalizedToken)
+    );
+  });
+};
+
+const isMessagesPlanEligibleMembership = (record = {}) =>
+  hasPlanAccessToken(
+    extractPlanKeyFromRecord(record),
+    MESSAGE_ALLOWED_PLAN_TOKENS,
+  );
+
+const isOrbitPlanMembership = (record = {}) =>
+  hasPlanAccessToken(
+    extractPlanKeyFromRecord(record),
+    MESSAGE_ORBIT_PLAN_TOKENS,
+  );
+
+const normalizeRecordId = (value) => {
+  const text = String(value || "").trim();
+  return text || null;
+};
+
+const normalizeEmailValue = (value) => {
+  const text = String(value || "").trim().toLowerCase();
+  return text || null;
+};
+
+const extractOrgCodeFromRecord = (record = {}) =>
+  normalizeOrgCode(
+    record.access_code ||
+      record.orgCode ||
+      record.org_code ||
+      record.organizationCode ||
+      record.org_access_code ||
+      null,
+  );
+
+const extractOrgIdFromRecord = (record = {}) =>
+  normalizeRecordId(
+    record.linked_org_id ||
+      record.orgId ||
+      record.org_id ||
+      record.organization_id ||
+      record.organizationId ||
+      record.id ||
+      null,
+  );
+
+const extractOrgNameFromRecord = (record = {}) =>
+  record.name ||
+  record.orgName ||
+  record.organizationName ||
+  record.org_name ||
+  null;
+
+const extractPotentialAdminUserIds = (record = {}) => {
+  const candidates = [
+    record.owner_uid,
+    record.ownerUid,
+    record.owner_id,
+    record.ownerId,
+    record.admin_uid,
+    record.adminUid,
+    record.admin_id,
+    record.adminId,
+    record.created_by,
+    record.createdBy,
+    record.user_id,
+    record.userId,
+  ];
+  return Array.from(
+    new Set(candidates.map((value) => normalizeRecordId(value)).filter(Boolean)),
+  );
+};
+
+const extractPotentialAdminEmails = (record = {}) => {
+  const candidates = [
+    record.owner_email,
+    record.ownerEmail,
+    record.admin_email,
+    record.adminEmail,
+    record.created_by_email,
+    record.createdByEmail,
+    record.email,
+  ];
+  return Array.from(
+    new Set(candidates.map((value) => normalizeEmailValue(value)).filter(Boolean)),
+  );
+};
+
+const withEffectivePlanKey = (membershipRecord = {}, orgRecord = null) => {
+  const effectivePlanKey =
+    extractPlanKeyFromRecord(orgRecord || {}) ||
+    extractPlanKeyFromRecord(membershipRecord);
+  if (!effectivePlanKey) return membershipRecord;
+  return {
+    ...membershipRecord,
+    planKey: effectivePlanKey,
+    plan_key: effectivePlanKey,
+    plan: effectivePlanKey,
+    planType: effectivePlanKey,
+    plan_type: effectivePlanKey,
+    subscription_plan_key: effectivePlanKey,
+    subscriptionPlanKey: effectivePlanKey,
+    metadata: {
+      ...(orgRecord?.metadata || {}),
+      ...(membershipRecord.metadata || {}),
+      plan_key: effectivePlanKey,
+    },
+  };
+};
+
+const toDocRecord = (snap) => ({ id: snap.id, ...(snap.data() || {}) });
+
+const pickBestPlanRecord = (records = []) => {
+  const available = records.filter(Boolean);
+  if (!available.length) return null;
+  return (
+    available.find((record) => extractPlanKeyFromRecord(record)) || available[0]
+  );
+};
+
+const createMembershipOrgResolver = (db) => {
+  const cacheByCode = new Map();
+  const cacheById = new Map();
+
+  const remember = (record) => {
+    if (!record) return null;
+    const normalizedCode = extractOrgCodeFromRecord(record);
+    const normalizedId = extractOrgIdFromRecord(record);
+    if (normalizedCode) cacheByCode.set(normalizedCode, record);
+    if (normalizedId) cacheById.set(normalizedId, record);
+    return record;
+  };
+
+  return async (membershipRecord = {}) => {
+    const membershipCode = extractOrgCodeFromRecord(membershipRecord);
+    const membershipId = extractOrgIdFromRecord(membershipRecord);
+
+    const cachedMatches = [];
+    if (membershipId && cacheById.has(membershipId)) {
+      cachedMatches.push(cacheById.get(membershipId));
+    }
+    if (membershipCode && cacheByCode.has(membershipCode)) {
+      cachedMatches.push(cacheByCode.get(membershipCode));
+    }
+    const cachedBest = pickBestPlanRecord(cachedMatches);
+    if (cachedBest && extractPlanKeyFromRecord(cachedBest)) return cachedBest;
+
+    let linkedRecord = cachedBest || null;
+    if (membershipId) {
+      try {
+        const [linkedUserSnap, linkedOrgSnap] = await Promise.all([
+          getDoc(doc(db, "users", membershipId)),
+          getDoc(doc(db, "organizations", membershipId)),
+        ]);
+        const linkedCandidates = [];
+        if (linkedUserSnap.exists())
+          linkedCandidates.push(toDocRecord(linkedUserSnap));
+        if (linkedOrgSnap.exists())
+          linkedCandidates.push(toDocRecord(linkedOrgSnap));
+        const bestLinkedRecord = pickBestPlanRecord(linkedCandidates);
+        if (bestLinkedRecord) {
+          linkedRecord = remember(bestLinkedRecord);
+          if (extractPlanKeyFromRecord(linkedRecord)) return linkedRecord;
+        }
+      } catch {
+        // Ignore and continue fallback lookup by access code.
+      }
+    }
+
+    if (membershipCode) {
+      try {
+        const [usersByAccess, usersByOrgCode, orgByAccessCode] =
+          await Promise.all([
+            getDocs(
+              query(
+                collection(db, "users"),
+                where("access_code", "==", membershipCode),
+                limit(1),
+              ),
+            ),
+            getDocs(
+              query(
+                collection(db, "users"),
+                where("organizationCode", "==", membershipCode),
+                limit(1),
+              ),
+            ),
+            getDocs(
+              query(
+                collection(db, "organizations"),
+                where("access_code", "==", membershipCode),
+                limit(1),
+              ),
+            ),
+          ]);
+        const codeCandidates = [];
+        if (!usersByAccess.empty)
+          codeCandidates.push(toDocRecord(usersByAccess.docs[0]));
+        if (!usersByOrgCode.empty)
+          codeCandidates.push(toDocRecord(usersByOrgCode.docs[0]));
+        if (!orgByAccessCode.empty)
+          codeCandidates.push(toDocRecord(orgByAccessCode.docs[0]));
+        const bestCodeRecord = pickBestPlanRecord(codeCandidates);
+        if (bestCodeRecord) return remember(bestCodeRecord);
+      } catch {
+        // Ignore and fall back to linked/cached records.
+      }
+    }
+
+    return linkedRecord;
+  };
+};
+
 // --- Safe Haptics ---
 let Haptics;
 try {
@@ -348,6 +728,8 @@ function FadeUpView({ children, delay = 0 }) {
 
 export default function UnifiedMessagingScreen({ route } = {}) {
   const navigation = useNavigation();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [activeThread, setActiveThread] = useState(null);
 
   const targetUserId = route?.params?.targetUserId;
@@ -373,6 +755,7 @@ export default function UnifiedMessagingScreen({ route } = {}) {
   const [currentUser, setCurrentUser] = useState(null);
   const [senderName, setSenderName] = useState("Volunteer");
   const [userOrgs, setUserOrgs] = useState([]);
+  const [hasOrbitPlanMembership, setHasOrbitPlanMembership] = useState(false);
   const [currentOrg, setCurrentOrg] = useState(null);
   const [showOrgPicker, setShowOrgPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -422,16 +805,32 @@ export default function UnifiedMessagingScreen({ route } = {}) {
       const auth = getFirebaseAuth();
       authUnsub = onAuthStateChanged(auth, async (user) => {
         setCurrentUser(user);
-        if (!user) return setLoading(false);
+        if (!user) {
+          setSenderName("Volunteer");
+          setUserOrgs([]);
+          setHasOrbitPlanMembership(false);
+          setCurrentOrg(null);
+          setShowOrgPicker(false);
+          setShowAttachMenu(false);
+          setRawMessages([]);
+          setVolunteers([]);
+          setActiveThread(null);
+          setActiveMessages([]);
+          setInputText("");
+          setSendingAttachment(false);
+          hasSeededMessageSnapshotRef.current = false;
+          notifiedMessageIdsRef.current = new Set();
+          return setLoading(false);
+        }
         setLoading(true);
         try {
           const db = getFirestoreDb();
+          const resolveMembershipOrgRecord = createMembershipOrgResolver(db);
           const userDoc = await getDoc(doc(db, "users", user.uid));
           if (userDoc.exists()) {
             const data = userDoc.data();
             setSenderName(
-              `${data.firstName || ""} ${data.lastName || ""}`.trim() ||
-                data.name ||
+              resolvePersonNameFromRecord(data) ||
                 user.displayName ||
                 "Volunteer",
             );
@@ -448,7 +847,8 @@ export default function UnifiedMessagingScreen({ route } = {}) {
             ),
           ]);
           const loadedOrgs = [];
-          const processDoc = (d) => {
+          let orbitMembershipDetected = false;
+          const processDoc = async (d) => {
             const data = d.data() || {};
             const membershipStatus =
               data.status ||
@@ -464,16 +864,26 @@ export default function UnifiedMessagingScreen({ route } = {}) {
               !!data.archived_at ||
               !!data.archived_by_user;
             if (isArchived) return;
-            const code = normalizeOrgCode(
-              data.access_code || data.orgCode || data.org_code,
-            );
-            const linkedId = String(
-              data.linked_org_id || data.orgId || data.org_id || "",
-            ).trim();
+            const resolvedOrgRecord = await resolveMembershipOrgRecord(data);
+            const planRecord = withEffectivePlanKey(data, resolvedOrgRecord);
+            if (isOrbitPlanMembership(planRecord))
+              orbitMembershipDetected = true;
+            if (!isMessagesPlanEligibleMembership(planRecord)) return;
+            const code =
+              extractOrgCodeFromRecord(data) ||
+              extractOrgCodeFromRecord(resolvedOrgRecord || {});
+            const linkedId =
+              extractOrgIdFromRecord(data) ||
+              extractOrgIdFromRecord(resolvedOrgRecord || {}) ||
+              "";
             const scopeId = extractGroupScopeIdFromRecord(data);
             const scopeName = resolveGroupScopeNameFromRecord(data, scopeId);
             const scopeKey = toScopeKey(scopeId);
-            const orgName = data.name || data.orgName || code || "Organization";
+            const orgName =
+              extractOrgNameFromRecord(data) ||
+              extractOrgNameFromRecord(resolvedOrgRecord || {}) ||
+              code ||
+              "Organization";
             const scopedName = scopeId ? `${orgName} (${scopeName})` : orgName;
             const orgIdentity = linkedId || code || String(d.id || "");
             const id = `${scopeKey}::${orgIdentity}`;
@@ -494,12 +904,18 @@ export default function UnifiedMessagingScreen({ route } = {}) {
                 scopeKey,
               });
           };
-          orgMembershipSnaps.forEach(processDoc);
-          userMembershipSnaps.forEach(processDoc);
+          await Promise.all([
+            ...orgMembershipSnaps.docs.map(processDoc),
+            ...userMembershipSnaps.docs.map(processDoc),
+          ]);
+          setHasOrbitPlanMembership(orbitMembershipDetected);
           const uniqueOrgs = loadedOrgs.filter(
             (v, i, a) =>
               a.findIndex(
-                (t) => t.membershipKey && v.membershipKey && t.membershipKey === v.membershipKey,
+                (t) =>
+                  t.membershipKey &&
+                  v.membershipKey &&
+                  t.membershipKey === v.membershipKey,
               ) === i,
           );
           setUserOrgs(uniqueOrgs);
@@ -507,7 +923,8 @@ export default function UnifiedMessagingScreen({ route } = {}) {
             if (!prev) return uniqueOrgs[0] || null;
             const matched =
               uniqueOrgs.find(
-                (org) => org.membershipKey && org.membershipKey === prev.membershipKey,
+                (org) =>
+                  org.membershipKey && org.membershipKey === prev.membershipKey,
               ) ||
               uniqueOrgs.find(
                 (org) =>
@@ -518,6 +935,7 @@ export default function UnifiedMessagingScreen({ route } = {}) {
           });
         } catch (e) {
           console.error(e);
+          setHasOrbitPlanMembership(false);
         } finally {
           setLoading(false);
         }
@@ -562,18 +980,18 @@ export default function UnifiedMessagingScreen({ route } = {}) {
   }, []);
 
   const sendUnreadNotification = async (message) => {
-    if (!ExpoNotifications || !notificationsEnabledRef.current || !message) return;
+    if (!ExpoNotifications || !notificationsEnabledRef.current || !message)
+      return;
     try {
-      const activeThreadId = activeThread?.threadId || activeThread?.id || null;
-      if (activeThreadId && message.threadId === activeThreadId) return;
+      if (activeThread && messageMatchesThread(message, activeThread)) return;
 
       const threadId = String(message.threadId || "");
-      const groupThreadId = buildScopedGroupThreadId(
+      const groupThreadIds = buildGroupThreadCandidates(
         currentOrg?.code,
         currentOrg?.scopeId || null,
       );
       let title = "New message";
-      if (threadId && groupThreadId && threadId === groupThreadId) {
+      if (threadId && groupThreadIds.includes(threadId)) {
         title = currentOrg?.name
           ? `${currentOrg.displayName || currentOrg.name} • All Volunteers`
           : "All Volunteers";
@@ -581,13 +999,12 @@ export default function UnifiedMessagingScreen({ route } = {}) {
         const matchedVolunteer =
           volunteers.find(
             (v) =>
-              buildScopedDirectThreadId(
+              buildDirectThreadCandidates(
                 currentOrg?.code,
                 currentOrg?.scopeId || null,
                 v.id,
-              ) === threadId,
-          ) ||
-          volunteers.find((v) => v.id === message.senderId);
+              ).includes(threadId),
+          ) || volunteers.find((v) => v.id === message.senderId);
         title = matchedVolunteer?.name || message.senderName || "New message";
       }
 
@@ -627,7 +1044,28 @@ export default function UnifiedMessagingScreen({ route } = {}) {
     if (!currentOrg) return;
     const db = getFirestoreDb();
     const volunteerMap = new Map();
+    const profileCache = new Map();
     const unsubList = [];
+    const commitVolunteers = () => {
+      setVolunteers(
+        Array.from(volunteerMap.values()).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ),
+      );
+    };
+    const upsertParticipant = (participantId, payload = {}) => {
+      if (!participantId || participantId === currentUser?.uid) return;
+      const existing = volunteerMap.get(participantId) || {};
+      volunteerMap.set(participantId, {
+        id: participantId,
+        name:
+          payload.name ||
+          existing.name ||
+          `${payload.firstName || ""} ${payload.lastName || ""}`.trim() ||
+          "Volunteer",
+        role: payload.role || existing.role || "Volunteer",
+      });
+    };
     const subscribe = (col, field, val) => {
       const q = query(collection(db, col), where(field, "==", val));
       const unsub = onSnapshot(q, (snap) => {
@@ -643,32 +1081,217 @@ export default function UnifiedMessagingScreen({ route } = {}) {
           ) {
             return;
           }
+          const resolvedRole = String(data.role || "Volunteer");
           if (data.user_id !== currentUser?.uid && d.id !== currentUser?.uid) {
-            volunteerMap.set(participantId, {
-              id: participantId,
-              name:
-                `${data.firstName || ""} ${data.lastName || ""}`.trim() ||
-                data.name ||
-                "Volunteer",
-              role: data.role || "Volunteer",
+            upsertParticipant(participantId, {
+              name: resolveChatParticipantName(data, resolvedRole, "Volunteer"),
+              role: resolvedRole,
+              firstName: data.firstName,
+              lastName: data.lastName,
             });
           }
         });
-        setVolunteers(
-          Array.from(volunteerMap.values()).sort((a, b) =>
-            a.name.localeCompare(b.name),
-          ),
-        );
+        commitVolunteers();
       });
       unsubList.push(unsub);
     };
+    const subscribeMemberships = (field, value) => {
+      const q = query(
+        collection(db, "user_organizations"),
+        where(field, "==", value),
+      );
+      const unsub = onSnapshot(q, async (snap) => {
+        const tasks = [];
+        snap.forEach((d) => {
+          const data = d.data() || {};
+          const membershipStatus =
+            data.status ||
+            data.join_status ||
+            data.request_status ||
+            data.membership_status ||
+            data.approval_status;
+          if (!isAcceptedMembershipStatus(membershipStatus)) return;
+          const isArchived =
+            String(data.status || "").toLowerCase() === "archived" ||
+            String(data.status || "").toLowerCase() === "inactive" ||
+            String(data.status || "").toLowerCase() === "revoked" ||
+            !!data.archived_at ||
+            !!data.archived_by_user;
+          if (isArchived) return;
+          if (
+            !scopedSelectionMatchesRecord(data, currentOrg?.scopeId || null)
+          ) {
+            return;
+          }
+          const participantId = String(
+            data.user_id ||
+              data.userId ||
+              data.member_uid ||
+              data.memberId ||
+              "",
+          ).trim();
+          if (!participantId || participantId === currentUser?.uid) return;
+
+          tasks.push(
+            (async () => {
+              let profile = profileCache.get(participantId);
+              if (profile === undefined) {
+                try {
+                  const profileSnap = await getDoc(
+                    doc(db, "users", participantId),
+                  );
+                  profile = profileSnap.exists()
+                    ? profileSnap.data() || {}
+                    : null;
+                } catch {
+                  profile = null;
+                }
+                profileCache.set(participantId, profile);
+              }
+              const resolvedRole = String(
+                profile?.role ||
+                  data.role ||
+                  data.membership_role ||
+                  data.member_role ||
+                  "Volunteer",
+              );
+              upsertParticipant(participantId, {
+                name: resolveChatParticipantName(
+                  profile || data,
+                  resolvedRole,
+                  resolveChatParticipantName(data, resolvedRole, "Volunteer"),
+                ),
+                role: resolvedRole,
+                firstName: profile?.firstName || data.firstName,
+                lastName: profile?.lastName || data.lastName,
+              });
+            })(),
+          );
+        });
+        if (tasks.length) await Promise.all(tasks);
+        commitVolunteers();
+      });
+      unsubList.push(unsub);
+    };
+
+    const hydrateAdminParticipants = async () => {
+      const adminIds = new Set();
+      const adminEmails = new Set();
+
+      const absorbOrgRecord = (data = {}) => {
+        extractPotentialAdminUserIds(data).forEach((id) => adminIds.add(id));
+        extractPotentialAdminEmails(data).forEach((email) =>
+          adminEmails.add(email),
+        );
+      };
+
+      const loadOrgDocById = async (collectionName, id) => {
+        if (!id) return;
+        try {
+          const snap = await getDoc(doc(db, collectionName, id));
+          if (snap.exists()) absorbOrgRecord(snap.data() || {});
+        } catch {
+          // ignore lookup failure
+        }
+      };
+
+      if (currentOrg?.orgId) {
+        await Promise.all([
+          loadOrgDocById("organizations", currentOrg.orgId),
+          loadOrgDocById("orgs", currentOrg.orgId),
+          loadOrgDocById("volunteer_organizations", currentOrg.orgId),
+        ]);
+      }
+
+      if (currentOrg?.code) {
+        const orgCodeQueries = await Promise.all([
+          getDocs(
+            query(
+              collection(db, "organizations"),
+              where("access_code", "==", currentOrg.code),
+              limit(1),
+            ),
+          ),
+          getDocs(
+            query(
+              collection(db, "orgs"),
+              where("access_code", "==", currentOrg.code),
+              limit(1),
+            ),
+          ),
+          getDocs(
+            query(
+              collection(db, "volunteer_organizations"),
+              where("access_code", "==", currentOrg.code),
+              limit(1),
+            ),
+          ),
+        ]).catch(() => []);
+
+        orgCodeQueries.forEach((snap) => {
+          if (!snap || snap.empty) return;
+          absorbOrgRecord(snap.docs[0]?.data() || {});
+        });
+      }
+
+      const adminRecords = [];
+      for (const adminId of adminIds) {
+        try {
+          const adminSnap = await getDoc(doc(db, "users", adminId));
+          if (adminSnap.exists()) {
+            adminRecords.push({ id: adminId, ...(adminSnap.data() || {}) });
+          }
+        } catch {
+          // ignore profile lookup failure
+        }
+      }
+
+      for (const adminEmail of adminEmails) {
+        try {
+          const snap = await getDocs(
+            query(collection(db, "users"), where("email", "==", adminEmail), limit(1)),
+          );
+          if (!snap.empty) {
+            const row = snap.docs[0];
+            adminRecords.push({ id: row.id, ...(row.data() || {}) });
+          }
+        } catch {
+          // ignore profile lookup failure
+        }
+      }
+
+      adminRecords.forEach((record) => {
+        const adminId = normalizeRecordId(
+          record.id || record.user_id || record.userId || null,
+        );
+        if (!adminId || adminId === currentUser?.uid) return;
+        upsertParticipant(adminId, {
+          name: resolveChatParticipantName(record, "admin", "Admin"),
+          role: "Admin",
+          firstName: record.firstName,
+          lastName: record.lastName,
+        });
+      });
+      commitVolunteers();
+    };
+
     if (currentOrg.code) subscribe("users", "access_code", currentOrg.code);
+    if (currentOrg.code) subscribe("users", "organizationCode", currentOrg.code);
+    if (currentOrg.code) subscribe("users", "org_code", currentOrg.code);
+    if (currentOrg.code) subscribe("users", "orgAccessCode", currentOrg.code);
     if (currentOrg.orgId) {
       subscribe("users", "orgId", currentOrg.orgId);
       subscribe("users", "org_id", currentOrg.orgId);
       subscribe("users", "linked_org_id", currentOrg.orgId);
       subscribe("users", "organization_id", currentOrg.orgId);
     }
+    if (currentOrg.code) subscribeMemberships("access_code", currentOrg.code);
+    if (currentOrg.orgId) {
+      subscribeMemberships("linked_org_id", currentOrg.orgId);
+      subscribeMemberships("org_id", currentOrg.orgId);
+      subscribeMemberships("organization_id", currentOrg.orgId);
+    }
+    void hydrateAdminParticipants();
     return () => unsubList.forEach((u) => u());
   }, [currentOrg, currentUser]);
 
@@ -679,7 +1302,10 @@ export default function UnifiedMessagingScreen({ route } = {}) {
     notifiedMessageIdsRef.current = new Set();
     const db = getFirestoreDb();
     const q = currentOrg.code
-      ? query(collection(db, "messages"), where("orgCode", "==", currentOrg.code))
+      ? query(
+          collection(db, "messages"),
+          where("orgCode", "==", currentOrg.code),
+        )
       : query(
           collection(db, "messages"),
           where("orgId", "==", currentOrg.orgId),
@@ -699,8 +1325,7 @@ export default function UnifiedMessagingScreen({ route } = {}) {
             return;
           }
           if (msg.senderId === currentUser?.uid) return;
-          const activeThreadId = activeThread?.threadId || activeThread?.id || null;
-          const isUnread = !activeThreadId || msg.threadId !== activeThreadId;
+          const isUnread = !activeThread || !messageMatchesThread(msg, activeThread);
           if (!isUnread) return;
           pendingUnread.push(msg);
         });
@@ -728,33 +1353,28 @@ export default function UnifiedMessagingScreen({ route } = {}) {
   // Component Specific Messages Sync (for Chat Interior)
   useEffect(() => {
     if (!activeThread) return;
-    const db = getFirestoreDb();
-    const q = query(
-      collection(db, "messages"),
-      where("threadId", "==", activeThread.threadId || activeThread.id),
-    );
-    return onSnapshot(q, (snap) => {
-      const msgs = [];
-      snap.forEach((d) => msgs.push({ id: d.id, ...d.data() }));
-      setActiveMessages(
-        msgs.sort(
-          (a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0),
-        ),
-      );
-    });
-  }, [activeThread]);
+    const msgs = rawMessages
+      .filter((msg) => messageMatchesThread(msg, activeThread))
+      .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+    setActiveMessages(msgs);
+  }, [activeThread, rawMessages]);
 
   const conversations = useMemo(() => {
     const list = [];
     if (currentOrg?.code) {
-      const gId = buildScopedGroupThreadId(
+      const gIds = buildGroupThreadCandidates(
         currentOrg.code,
         currentOrg.scopeId || null,
       );
-      const gMsgs = rawMessages.filter((m) => m.threadId === gId);
+      const gMsgs = rawMessages.filter((m) =>
+        gIds.includes(String(m.threadId || "").trim()),
+      );
+      const preferredGroupId =
+        String(gMsgs[0]?.threadId || "").trim() || gIds[0] || "";
       list.push({
-        id: gId,
-        threadId: gId,
+        id: preferredGroupId || gIds[0] || "all-volunteers",
+        threadId: preferredGroupId || gIds[0] || "all-volunteers",
+        threadIds: gIds,
         name: "All Volunteers",
         type: "group",
         role: "Broadcast Channel",
@@ -764,15 +1384,20 @@ export default function UnifiedMessagingScreen({ route } = {}) {
       });
     }
     volunteers.forEach((v) => {
-      const tId = buildScopedDirectThreadId(
+      const tIds = buildDirectThreadCandidates(
         currentOrg?.code,
         currentOrg?.scopeId || null,
         v.id,
       );
-      const vMsgs = rawMessages.filter((m) => m.threadId === tId);
+      const vMsgs = rawMessages.filter((m) =>
+        tIds.includes(String(m.threadId || "").trim()),
+      );
+      const preferredDirectId =
+        String(vMsgs[0]?.threadId || "").trim() || tIds[0] || "";
       list.push({
         id: v.id,
-        threadId: tId,
+        threadId: preferredDirectId || tIds[0] || v.id,
+        threadIds: tIds,
         name: v.name,
         type: "direct",
         role: v.role,
@@ -808,7 +1433,14 @@ export default function UnifiedMessagingScreen({ route } = {}) {
     setCurrentOrg(matchedOrg);
     setActiveThread(null);
     setActiveMessages([]);
-  }, [targetUserId, targetOrgCode, targetOrgId, targetGroupId, userOrgs, currentOrg]);
+  }, [
+    targetUserId,
+    targetOrgCode,
+    targetOrgId,
+    targetGroupId,
+    userOrgs,
+    currentOrg,
+  ]);
 
   // Deep Link Handling
   useEffect(() => {
@@ -826,7 +1458,7 @@ export default function UnifiedMessagingScreen({ route } = {}) {
         // For now, let's just create a temporary thread object if we can find the user in volunteers
         const volunteer = volunteers.find((v) => v.id === targetUserId);
         if (volunteer) {
-          const tId = buildScopedDirectThreadId(
+          const tIds = buildDirectThreadCandidates(
             currentOrg?.code,
             currentOrg?.scopeId || null,
             volunteer.id,
@@ -834,7 +1466,8 @@ export default function UnifiedMessagingScreen({ route } = {}) {
           handledTargetRef.current = deepLinkKey;
           setActiveThread({
             id: volunteer.id,
-            threadId: tId,
+            threadId: tIds[0] || volunteer.id,
+            threadIds: tIds,
             name: volunteer.name,
             type: "direct",
             role: volunteer.role,
@@ -1047,6 +1680,13 @@ export default function UnifiedMessagingScreen({ route } = {}) {
     setActiveThread(thread);
   };
 
+  const handleFastLogPress = () => {
+    router.push({
+      pathname: "/logs",
+      params: { fastLogNonce: String(Date.now()) },
+    });
+  };
+
   const bgStyle1 = useAnimatedStyle(() => ({
     transform: [
       { translateX: blob1Pos.value },
@@ -1067,6 +1707,50 @@ export default function UnifiedMessagingScreen({ route } = {}) {
       },
     ],
   }));
+
+  const showSignedOutState = !loading && !currentUser;
+  const showNoEligibleOrgState =
+    !loading && !!currentUser && userOrgs.length === 0;
+
+  if (showSignedOutState) {
+    return (
+      <View style={styles.container}>
+        <StatusBar
+          barStyle="dark-content"
+          translucent
+          backgroundColor="transparent"
+        />
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <View style={[styles.loginBlob, styles.loginBlobTop]} />
+          <View style={[styles.loginBlob, styles.loginBlobBottom]} />
+        </View>
+        <View style={styles.loginStateContent}>
+          <View style={styles.loginStateIconCircle}>
+            <ChatCircleDots size={34} color={COLORS.secondary} weight="bold" />
+          </View>
+          <Text style={styles.loginStateTitle}>Login Required</Text>
+          <Text style={styles.loginStateBody}>
+            Login to use these features.
+          </Text>
+        </View>
+        {currentUser ? (
+          <TouchableOpacity
+            style={[
+              styles.fastLogButton,
+              {
+                right: wp(6),
+                bottom: Math.max(insets.bottom + 16, 28) + hp(4),
+              },
+            ]}
+            activeOpacity={0.9}
+            onPress={handleFastLogPress}
+          >
+            <Plus size={24} color={COLORS.secondary} weight="bold" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -1120,7 +1804,10 @@ export default function UnifiedMessagingScreen({ route } = {}) {
                                   )()
                                 }
                               >
-                                {org.displayName || org.name || org.code || "Organization"}
+                                {org.displayName ||
+                                  org.name ||
+                                  org.code ||
+                                  "Organization"}
                               </SwiftUIButton>
                             ))}
                           </ContextMenu.Items>
@@ -1168,6 +1855,28 @@ export default function UnifiedMessagingScreen({ route } = {}) {
                   color={COLORS.secondary}
                   style={{ marginTop: 40 }}
                 />
+              ) : showNoEligibleOrgState ? (
+                <View style={styles.emptyState}>
+                  <Sparkle size={40} color={COLORS.gray} />
+                  <Text style={styles.emptyStateTitle}>
+                    {hasOrbitPlanMembership
+                      ? "Messaging Not Included"
+                      : "Messaging Locked By Plan"}
+                  </Text>
+                  <Text style={styles.emptyStateBody}>
+                    {hasOrbitPlanMembership
+                      ? "Your organization is on the Orbit plan, which does not include Messages access."
+                      : "Messages are available for organizations on Nebula or Cosmos plans."}
+                  </Text>
+                </View>
+              ) : conversations.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <ChatCircleDots size={40} color={COLORS.gray} />
+                  <Text style={styles.emptyStateTitle}>No Messages Yet</Text>
+                  <Text style={styles.emptyStateBody}>
+                    Conversations for this organization will appear here.
+                  </Text>
+                </View>
               ) : (
                 conversations.map((item, i) => (
                   <FadeUpView key={item.id} delay={200 + i * 80}>
@@ -1437,7 +2146,11 @@ export default function UnifiedMessagingScreen({ route } = {}) {
       )}
 
       {/* Org Selection Modal */}
-      <Modal visible={showOrgPicker} transparent animationType="fade">
+      <Modal
+        visible={showOrgPicker && !showSignedOutState}
+        transparent
+        animationType="fade"
+      >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
@@ -1485,7 +2198,11 @@ export default function UnifiedMessagingScreen({ route } = {}) {
         </TouchableOpacity>
       </Modal>
 
-      <Modal visible={showAttachMenu} transparent animationType="fade">
+      <Modal
+        visible={showAttachMenu && !showSignedOutState}
+        transparent
+        animationType="fade"
+      >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
@@ -1544,12 +2261,87 @@ export default function UnifiedMessagingScreen({ route } = {}) {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {currentUser && !activeThread ? (
+        <TouchableOpacity
+          style={[
+            styles.fastLogButton,
+            { right: wp(6), bottom: Math.max(insets.bottom + 16, 28) + hp(4) },
+          ]}
+          activeOpacity={0.9}
+          onPress={handleFastLogPress}
+        >
+          <Plus size={24} color={COLORS.secondary} weight="bold" />
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
+  loginStateContent: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 26,
+  },
+  loginStateIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(210, 246, 119, 0.16)",
+    marginBottom: 16,
+  },
+  loginStateTitle: {
+    fontSize: 56,
+    fontWeight: "900",
+    color: COLORS.secondary,
+    textAlign: "center",
+    letterSpacing: -1.4,
+  },
+  loginStateBody: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.gray,
+    textAlign: "center",
+  },
+  loginBlob: {
+    position: "absolute",
+    borderRadius: 999,
+    backgroundColor: "rgba(210, 246, 119, 0.14)",
+  },
+  loginBlobTop: {
+    width: wp(96),
+    height: wp(96),
+    top: -wp(46),
+    right: -wp(26),
+  },
+  loginBlobBottom: {
+    width: wp(78),
+    height: wp(78),
+    bottom: -wp(34),
+    left: -wp(32),
+  },
+  fastLogButton: {
+    position: "absolute",
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.05)",
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    zIndex: 120,
+  },
   scrollContent: {
     paddingHorizontal: wp(6),
     paddingTop: hp(8),
@@ -1634,6 +2426,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   bentoGrid: { gap: 16 },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 42,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  emptyStateTitle: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: "800",
+    color: COLORS.secondary,
+    textAlign: "center",
+  },
+  emptyStateBody: {
+    fontSize: 13,
+    color: COLORS.gray,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 18,
+  },
   featuredCard: {
     backgroundColor: COLORS.primary,
     padding: 32,

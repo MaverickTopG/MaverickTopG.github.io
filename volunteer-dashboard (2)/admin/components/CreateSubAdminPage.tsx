@@ -21,6 +21,8 @@ const item = {
 
 export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, onCreated }) => {
   const [title, setTitle] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,7 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || !email.trim() || !password.trim()) return;
+    if (!title.trim() || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim()) return;
     setLoading(true);
     setError(null);
     setNotice(null);
@@ -38,11 +40,15 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
       const call = httpsCallable(functions, 'createSubAdminPortal');
       await call({
         title: title.trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         email: email.trim(),
         password,
       });
       setNotice('Subadmin portal created successfully.');
       setTitle('');
+      setFirstName('');
+      setLastName('');
       setEmail('');
       setPassword('');
       onCreated?.();
@@ -100,6 +106,20 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
           onChange={(event) => setTitle(event.target.value)}
           className="md:col-span-2 rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
           placeholder="Subadmin title (e.g. Book Shelving)"
+          required
+        />
+        <input
+          value={firstName}
+          onChange={(event) => setFirstName(event.target.value)}
+          className="rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
+          placeholder="First name"
+          required
+        />
+        <input
+          value={lastName}
+          onChange={(event) => setLastName(event.target.value)}
+          className="rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
+          placeholder="Last name"
           required
         />
         <input

@@ -98,7 +98,7 @@ const normalizeGroupScope = (value: unknown) => String(value || '').trim();
 export const getActiveSubAdminSession = (): ActiveSubAdminSession | null => {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(SUBADMIN_SESSION_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(SUBADMIN_SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ActiveSubAdminSession;
     if (!parsed?.groupId) return null;

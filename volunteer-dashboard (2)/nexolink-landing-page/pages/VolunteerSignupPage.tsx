@@ -6,7 +6,9 @@ import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth,
   createUserWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  setPersistence,
+  browserSessionPersistence,
 } from 'firebase/auth';
 import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -107,6 +109,7 @@ const VolunteerSignupPage: React.FC<VolunteerSignupPageProps> = ({ onNavigate })
 
     try {
       const auth = getAuth();
+      await setPersistence(auth, browserSessionPersistence);
       const db = getFirestore();
       
       const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);

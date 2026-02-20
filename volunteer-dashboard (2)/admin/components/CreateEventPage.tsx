@@ -19,7 +19,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
-import { resolveOrgContext } from '../lib/orgContext';
+import { getActiveSubAdminSession, resolveOrgContext } from '../lib/orgContext';
 
 interface CreateEventPageProps {
   onBack: () => void;
@@ -32,6 +32,15 @@ interface Shift {
 }
 
 const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
+const EVENT_REROLL_PREFILL_KEY = 'nexolink:event-reroll-prefill';
+const RECURRENCE_OPTIONS = [
+  { key: 'one-time', label: 'One-Time' },
+  { key: 'weekly', label: 'Weekly' },
+  { key: 'biweekly', label: 'Biweekly' },
+  { key: 'monthly', label: 'Monthly' },
+] as const;
+
+type RecurrenceType = (typeof RECURRENCE_OPTIONS)[number]['key'];
 
 const normalizeShifts = (rawShifts: unknown, startTime: unknown, endTime: unknown): Shift[] => {
   const fallback = [{ id: '1', startTime: '', endTime: '' }];
@@ -63,13 +72,21 @@ const normalizeShifts = (rawShifts: unknown, startTime: unknown, endTime: unknow
   return fallback;
 };
 
+const sanitizePathToken = (value: string) =>
+  value.replace(/[^a-zA-Z0-9._-]/g, '_');
+
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [activeCategory, setActiveCategory] = useState('Community');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isLoadingDraft, setIsLoadingDraft] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
-  const [orgData, setOrgData] = useState<{ orgId: string; orgCode: string } | null>(null);
+  const [orgData, setOrgData] = useState<{
+    orgId: string;
+    orgCode: string;
+    groupId: string;
+    groupName: string;
+  } | null>(null);
   
   // Form State
   const [title, setTitle] = useState('');
@@ -79,6 +96,7 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [coverImageUrl, setCoverImageUrl] = useState('');
   const [coverImagePreview, setCoverImagePreview] = useState('');
   const [isDateRange, setIsDateRange] = useState(false);
+  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('one-time');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [shifts, setShifts] = useState<Shift[]>([{ id: '1', startTime: '', endTime: '' }]);
@@ -93,7 +111,15 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const context = await resolveOrgContext(db, user.uid, user.email || null);
-        setOrgData({ orgId: context.orgId || '', orgCode: context.orgCode || '' });
+        const activeSubAdmin = getActiveSubAdminSession();
+        const scopeId = String(activeSubAdmin?.groupId || '').trim();
+        const scopeName = String(activeSubAdmin?.groupName || scopeId || '').trim();
+        setOrgData({
+          orgId: context.orgId || '',
+          orgCode: context.orgCode || '',
+          groupId: scopeId,
+          groupName: scopeName,
+        });
       }
     });
     return () => unsubscribe();
@@ -101,8 +127,35 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
 
   useEffect(() => {
     const draftId = sessionStorage.getItem(EVENT_DRAFT_EDIT_KEY)?.trim() || '';
+    const rerollRaw = sessionStorage.getItem(EVENT_REROLL_PREFILL_KEY) || '';
+    sessionStorage.removeItem(EVENT_REROLL_PREFILL_KEY);
     sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
     if (!draftId) {
+      if (rerollRaw) {
+        try {
+          const data = JSON.parse(rerollRaw) as Record<string, unknown>;
+          setEditingEventId(null);
+          setTitle(String(data.title || ''));
+          setDescription(String(data.description || ''));
+          setActiveCategory(String(data.category || 'Community') || 'Community');
+          setLocation(String(data.location || ''));
+          setMaxVolunteers(String(data.maxVolunteers || ''));
+          const nextCoverUrl = String(data.coverImageUrl || '');
+          setCoverImageUrl(nextCoverUrl);
+          setCoverImagePreview(nextCoverUrl);
+          const rawRecurrence = String(data.recurrenceType || data.recurrence || 'one-time').toLowerCase();
+          const normalizedRecurrence = RECURRENCE_OPTIONS.some((option) => option.key === rawRecurrence)
+            ? (rawRecurrence as RecurrenceType)
+            : 'one-time';
+          setRecurrenceType(normalizedRecurrence);
+          setIsDateRange(false);
+          setStartDate('');
+          setEndDate('');
+          setShifts(normalizeShifts(data.shifts, null, null));
+        } catch (error) {
+          console.error('Failed to load reroll event payload:', error);
+        }
+      }
       setEditingEventId(null);
       return;
     }
@@ -139,6 +192,11 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
         setMaxVolunteers(nextMaxVolunteers);
         setCoverImageUrl(nextCoverUrl);
         setCoverImagePreview(nextCoverUrl);
+        const rawRecurrence = String(data.recurrenceType || data.recurrence || 'one-time').toLowerCase();
+        const normalizedRecurrence = RECURRENCE_OPTIONS.some((option) => option.key === rawRecurrence)
+          ? (rawRecurrence as RecurrenceType)
+          : 'one-time';
+        setRecurrenceType(normalizedRecurrence);
         setIsDateRange(hasDateRange);
         setStartDate(nextStartDate);
         setEndDate(nextEndDate);
@@ -176,16 +234,64 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
     previewUrlRef.current = localUrl;
     setCoverImagePreview(localUrl);
 
-    if (!orgData) {
-      console.warn('Org data not ready yet. Skipping cover upload.');
-      return;
-    }
-
     setIsUploading(true);
     try {
       const storage = getFirebaseStorage();
-      const storageRef = ref(storage, `events/${orgData.orgId}/cover_${Date.now()}_${file.name}`);
-      const snapshot = await uploadBytes(storageRef, file);
+      const auth = getFirebaseAuth();
+      const userId = String(auth.currentUser?.uid || 'anonymous');
+      let tokenOrgId = '';
+      let tokenOrgCode = '';
+      try {
+        const tokenResult = await auth.currentUser?.getIdTokenResult();
+        tokenOrgId = String(
+          tokenResult?.claims?.orgId ||
+            tokenResult?.claims?.organizationId ||
+            tokenResult?.claims?.org_id ||
+            tokenResult?.claims?.organization_id ||
+            '',
+        ).trim();
+        tokenOrgCode = String(
+          tokenResult?.claims?.orgCode ||
+            tokenResult?.claims?.organizationCode ||
+            tokenResult?.claims?.linked_org_id ||
+            tokenResult?.claims?.linkedOrgId ||
+            tokenResult?.claims?.access_code ||
+            tokenResult?.claims?.accessCode ||
+            '',
+        ).trim();
+      } catch {
+        // Ignore claim lookup failures and continue with known orgData values.
+      }
+      const safeFileName = sanitizePathToken(String(file.name || `cover_${Date.now()}.jpg`));
+      const now = Date.now();
+      const candidateBuckets = Array.from(
+        new Set(
+          [
+            tokenOrgId,
+            tokenOrgCode,
+            String(orgData?.orgId || '').trim(),
+            String(orgData?.orgCode || '').trim(),
+            userId,
+          ]
+            .map((value) => sanitizePathToken(String(value || '').trim()))
+            .filter(Boolean),
+        ),
+      );
+
+      let snapshot: Awaited<ReturnType<typeof uploadBytes>> | null = null;
+      let lastError: unknown = null;
+      for (const bucket of candidateBuckets) {
+        try {
+          const storageRef = ref(storage, `events/${bucket}/cover_${now}_${safeFileName}`);
+          snapshot = await uploadBytes(storageRef, file);
+          break;
+        } catch (err) {
+          lastError = err;
+          const code = String((err as any)?.code || '');
+          if (code !== 'storage/unauthorized') break;
+        }
+      }
+      if (!snapshot) throw lastError || new Error('Upload failed for all org bucket candidates.');
       const url = await getDownloadURL(snapshot.ref);
       setCoverImageUrl(url);
       setCoverImagePreview(url);
@@ -238,9 +344,20 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
         startDate,
         endDate: isDateRange ? endDate : startDate,
         shifts,
+        recurrenceType,
         status,
         orgId: orgData.orgId,
         orgCode: orgData.orgCode,
+        target_group_id: orgData.groupId || null,
+        targetGroupId: orgData.groupId || null,
+        sub_admin_group_id: orgData.groupId || null,
+        subAdminGroupId: orgData.groupId || null,
+        group_scope_id: orgData.groupId || null,
+        target_group_name: orgData.groupName || orgData.groupId || null,
+        targetGroupName: orgData.groupName || orgData.groupId || null,
+        sub_admin_group_name: orgData.groupName || orgData.groupId || null,
+        subAdminGroupName: orgData.groupName || orgData.groupId || null,
+        group_scope_name: orgData.groupName || orgData.groupId || null,
       };
 
       if (editingEventId) {
@@ -541,6 +658,38 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
                               />
                           </div>
                       </div>
+                  </div>
+              </div>
+
+              {/* Recurrence */}
+              <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-gray-100">
+                  <h3 className="text-lg font-bold text-gray-900 mb-4 ml-1">Recurrence</h3>
+                  <div className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                          {RECURRENCE_OPTIONS.map((option) => (
+                              <button
+                                  key={option.key}
+                                  type="button"
+                                  onClick={() => setRecurrenceType(option.key)}
+                                  className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
+                                      recurrenceType === option.key
+                                        ? 'bg-lime-100 text-lime-800 border-lime-300'
+                                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                                  }`}
+                              >
+                                  {option.label}
+                              </button>
+                          ))}
+                      </div>
+                      <p className="text-xs font-medium text-gray-500 ml-1">
+                          {recurrenceType === 'one-time'
+                            ? 'This event runs once and then ends.'
+                            : recurrenceType === 'weekly'
+                              ? 'A new event instance will auto-create every 7 days.'
+                              : recurrenceType === 'biweekly'
+                                ? 'A new event instance will auto-create every 14 days.'
+                                : 'A new event instance will auto-create each month.'}
+                      </p>
                   </div>
               </div>
 

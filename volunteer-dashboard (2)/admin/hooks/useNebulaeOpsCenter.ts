@@ -113,6 +113,7 @@ type UseNebulaeOpsCenterArgs = {
   orgId: string;
   volunteers: VolunteerRecord[];
   activityLogs: ActivityLog[];
+  contextScope?: 'superadmin-only' | 'include-subadmins';
 };
 
 type UseNebulaeOpsCenterResult = {
@@ -211,6 +212,28 @@ const normalizeScopeToken = (value?: string) => {
   if (!raw) return 'super-admin';
   return raw.replace(/[^a-zA-Z0-9_-]/g, '_');
 };
+const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
+  String(
+    data.target_group_id
+    || data.targetGroupId
+    || data.sub_admin_group_id
+    || data.subAdminGroupId
+    || data.group_scope_id
+    || data.groupScopeId
+    || data.groupId
+    || data.group_id
+    || '',
+  ).trim();
+const matchesScopeContext = (
+  data: Record<string, unknown> = {},
+  activeSubAdminScopeId = '',
+  contextScope: 'superadmin-only' | 'include-subadmins' = 'superadmin-only',
+) => {
+  const scopeId = resolveRecordScopeId(data);
+  if (activeSubAdminScopeId) return scopeId === activeSubAdminScopeId;
+  if (contextScope === 'include-subadmins') return true;
+  return !scopeId;
+};
 
 const resolveDate = (value: unknown): Date | null => normalizeDateValue(value);
 
@@ -298,6 +321,7 @@ export const useNebulaeOpsCenter = ({
   orgId,
   volunteers,
   activityLogs,
+  contextScope = 'superadmin-only',
 }: UseNebulaeOpsCenterArgs): UseNebulaeOpsCenterResult => {
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [signups, setSignups] = useState<SignupRecord[]>([]);
@@ -377,7 +401,11 @@ export const useNebulaeOpsCenter = ({
       orgCode,
       orgId,
       onData: (rows) => {
-        const nextEvents = rows
+        const activeSubAdminScopeId = String(getActiveSubAdminSession()?.groupId || '').trim();
+        const scopedRows = rows.filter((row) =>
+          matchesScopeContext(row.data || {}, activeSubAdminScopeId, contextScope),
+        );
+        const nextEvents = scopedRows
           .map((row) => {
             const data = row.data || {};
             return {
@@ -409,8 +437,8 @@ export const useNebulaeOpsCenter = ({
             } as EventRecord;
           })
           .filter((event) => {
-            const status = String((rows.find((row) => row.id === event.id)?.data?.status) || 'published').toLowerCase();
-            return status !== 'draft' && status !== 'archived';
+              const status = String((scopedRows.find((row) => row.id === event.id)?.data?.status) || 'published').toLowerCase();
+              return status !== 'draft' && status !== 'archived';
           });
         setEvents(nextEvents);
         eventsReady = true;
@@ -428,7 +456,10 @@ export const useNebulaeOpsCenter = ({
       orgCode,
       orgId,
       onData: (rows) => {
-        const nextSignups = rows.map((row) => {
+        const activeSubAdminScopeId = String(getActiveSubAdminSession()?.groupId || '').trim();
+        const nextSignups = rows
+          .filter((row) => matchesScopeContext(row.data || {}, activeSubAdminScopeId, contextScope))
+          .map((row) => {
           const data = row.data || {};
           return {
             id: row.id,
@@ -453,7 +484,14 @@ export const useNebulaeOpsCenter = ({
       unsubEvents();
       unsubSignups();
     };
-  }, [enabled, orgCode, orgId]);
+  }, [contextScope, enabled, orgCode, orgId]);
+
+  const scopedActivityLogs = useMemo(() => {
+    const activeSubAdminScopeId = String(getActiveSubAdminSession()?.groupId || '').trim();
+    return activityLogs.filter((log) =>
+      matchesScopeContext(log as Record<string, unknown>, activeSubAdminScopeId, contextScope),
+    );
+  }, [activityLogs, contextScope]);
 
   const volunteerStats = useMemo(() => {
     const volunteerIdByEmail = new Map<string, string>();
@@ -510,7 +548,7 @@ export const useNebulaeOpsCenter = ({
       }
     });
 
-    activityLogs.forEach((log) => {
+    scopedActivityLogs.forEach((log) => {
       const logUserId = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
       const logRecord = log as Record<string, unknown>;
       const logEmail = String(logRecord.volunteer_email || logRecord.email || '').trim();
@@ -601,7 +639,7 @@ export const useNebulaeOpsCenter = ({
       inactive,
       lastApprovedByVolunteer,
     };
-  }, [activityLogs, learning.actions.invite_reliable.manualAccepts, signups, volunteers]);
+  }, [learning.actions.invite_reliable.manualAccepts, scopedActivityLogs, signups, volunteers]);
 
   const eventInsights = useMemo(() => {
     const today = new Date();
@@ -669,7 +707,7 @@ export const useNebulaeOpsCenter = ({
     let pendingOlderThan3Days = 0;
     let pendingTotal = 0;
 
-    activityLogs.forEach((log) => {
+    scopedActivityLogs.forEach((log) => {
       const status = String(log.approve || 'pending').toLowerCase();
       if (APPROVED_STATUSES.has(status)) return;
       pendingTotal += 1;
@@ -685,13 +723,13 @@ export const useNebulaeOpsCenter = ({
       pendingTotal,
       pendingOlderThan3Days,
     };
-  }, [activityLogs]);
+  }, [scopedActivityLogs]);
 
   const activityTrend = useMemo(() => {
     const current = getMonthBounds(0);
     const previous = getMonthBounds(-1);
-    const currentHours = sumHoursInRange(activityLogs, current.start, current.end);
-    const previousHours = sumHoursInRange(activityLogs, previous.start, previous.end);
+    const currentHours = sumHoursInRange(scopedActivityLogs, current.start, current.end);
+    const previousHours = sumHoursInRange(scopedActivityLogs, previous.start, previous.end);
 
     let delta = 0;
     if (previousHours > 0) {
@@ -705,7 +743,7 @@ export const useNebulaeOpsCenter = ({
       previousHours,
       delta,
     };
-  }, [activityLogs]);
+  }, [scopedActivityLogs]);
 
   const priorities = useMemo<NebulaePriority[]>(() => {
     const staffingPriority: NebulaePriority = eventInsights.staffingRisk

@@ -117,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
       if (format === 'pdf') {
         const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
         pdf.setFontSize(16);
-        pdf.text('Volunteer Service Report', 40, 50);
+        pdf.text('NexoLink Volunteer Export', 40, 50);
         pdf.setFontSize(10);
         let y = 80;
         const lineHeight = 18;
@@ -147,6 +147,9 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
 
   return (
     <header className="relative z-40 flex flex-col md:flex-row md:items-start md:justify-between gap-6 mb-12">
+      {activeDropdown && (
+        <div className="fixed inset-0 z-30 bg-transparent" onClick={closeDropdowns} />
+      )}
       <div className="max-w-2xl">
         <h1 className="text-5xl md:text-[3.5rem] leading-[1.1] font-medium tracking-tight text-gray-900">
           Volunteer
@@ -207,9 +210,9 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
                 exit="exit"
                 className="absolute top-14 right-0 w-64 bg-white rounded-[2rem] shadow-2xl border border-gray-100 p-2 overflow-hidden"
               >
-                 <div className="px-4 py-3">
+                  <div className="px-4 py-3">
                       <h3 className="font-semibold text-gray-900">Export Data</h3>
-                      <p className="text-xs text-gray-500">Download your personal logs.</p>
+                      <p className="text-xs text-gray-500">Download report for current view.</p>
                       {exportStatus && (
                         <p className="text-[11px] text-gray-400 mt-1">{exportStatus}</p>
                       )}
@@ -228,18 +231,6 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
                           </div>
                       </button>
                       <button
-                        onClick={() => handleExport('csv')}
-                        className="flex items-center gap-3 p-3 rounded-2xl hover:bg-gray-50 transition-colors text-left group"
-                      >
-                          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
-                              <FileSpreadsheet className="w-5 h-5" />
-                          </div>
-                          <div>
-                              <span className="block text-sm font-bold text-gray-900">CSV</span>
-                              <span className="block text-[10px] text-gray-400">.csv spreadsheet</span>
-                          </div>
-                      </button>
-                      <button
                         onClick={() => handleExport('pdf')}
                         className="flex items-center gap-3 p-3 rounded-2xl hover:bg-gray-50 transition-colors text-left group"
                       >
@@ -249,6 +240,18 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
                           <div>
                               <span className="block text-sm font-bold text-gray-900">PDF Report</span>
                               <span className="block text-[10px] text-gray-400">.pdf document</span>
+                          </div>
+                      </button>
+                      <button
+                        onClick={() => handleExport('csv')}
+                        className="flex items-center gap-3 p-3 rounded-2xl hover:bg-gray-50 transition-colors text-left group"
+                      >
+                          <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
+                              <Copy className="w-5 h-5" />
+                          </div>
+                          <div>
+                              <span className="block text-sm font-bold text-gray-900">CSV</span>
+                              <span className="block text-[10px] text-gray-400">Raw data format</span>
                           </div>
                       </button>
                   </div>

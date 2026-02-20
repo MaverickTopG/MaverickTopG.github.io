@@ -6,6 +6,7 @@
     "rules": "storage.rules"
   },
   "hosting": {
+    "site": "nexolink-b8eb5",
     "public": "volunteer-dashboard (2)/nexolink-landing-page/dist",
     "cleanUrls": true,
     "predeploy": [

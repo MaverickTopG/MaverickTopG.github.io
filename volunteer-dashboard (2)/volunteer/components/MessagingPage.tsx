@@ -28,7 +28,7 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
+  onSnapshot,
   query,
   where,
   serverTimestamp,
@@ -39,7 +39,7 @@ import {
   uploadBytes,
 } from 'firebase/storage';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
-import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { subscribeToOrgCollection } from '../lib/orgContext';
 import {
   extractVolunteerMembership,
   hasPremiumAccessForMembership,
@@ -86,7 +86,11 @@ const DIRECT_VOLUNTEER_THREAD = (orgCode: string, volunteerId: string, scopeToke
 const LEGACY_ALL_VOLUNTEERS_THREAD = (orgCode: string) => `org-${orgCode}-all`;
 const LEGACY_DIRECT_VOLUNTEER_THREAD_PREFIX = (orgCode: string) => `org-${orgCode}-user-`;
 
-const normalizeThreadIdForOrg = (threadId: string, orgCode: string) => {
+const normalizeThreadIdForOrg = (
+  threadId: string,
+  orgCode: string,
+  scopeToken = DEFAULT_THREAD_SCOPE_TOKEN,
+) => {
   const normalizedCode = normalizeOrgCode(orgCode);
   if (!threadId || !normalizedCode) return threadId;
 
@@ -96,14 +100,14 @@ const normalizeThreadIdForOrg = (threadId: string, orgCode: string) => {
 
   for (const code of codeCandidates) {
     if (threadId === LEGACY_ALL_VOLUNTEERS_THREAD(code)) {
-      return ALL_VOLUNTEERS_THREAD(normalizedCode);
+      return ALL_VOLUNTEERS_THREAD(normalizedCode, scopeToken);
     }
 
     const legacyDirectPrefix = LEGACY_DIRECT_VOLUNTEER_THREAD_PREFIX(code);
     if (threadId.startsWith(legacyDirectPrefix)) {
       const volunteerId = threadId.slice(legacyDirectPrefix.length);
       if (volunteerId) {
-        return DIRECT_VOLUNTEER_THREAD(normalizedCode, volunteerId);
+        return DIRECT_VOLUNTEER_THREAD(normalizedCode, volunteerId, scopeToken);
       }
     }
   }
@@ -115,6 +119,51 @@ const normalizeOrgCode = (value: unknown) => {
   if (value == null) return '';
   const text = String(value).trim().toUpperCase();
   return text || '';
+};
+const normalizeScopeId = (value: unknown) => String(value || '').trim();
+const normalizeScopeName = (value: unknown) => String(value || '').trim();
+
+const normalizeNameValue = (value: unknown) => String(value || '').trim();
+const normalizeRoleValue = (value: unknown) => String(value || '').trim().toLowerCase();
+const isAdminLikeRole = (value: unknown) => {
+  const role = normalizeRoleValue(value);
+  if (!role) return false;
+  return (
+    role.includes('admin')
+    || role.includes('owner')
+    || role.includes('super')
+    || role.includes('organization')
+  );
+};
+
+const resolvePersonNameFromRecord = (record: Record<string, unknown> = {}) => {
+  const first = normalizeNameValue(record.firstName || record.first_name);
+  const last = normalizeNameValue(record.lastName || record.last_name);
+  const firstLast = [first, last].filter(Boolean).join(' ').trim();
+  if (firstLast) return firstLast;
+
+  const displayLike =
+    normalizeNameValue(record.displayName) ||
+    normalizeNameValue(record.user_name) ||
+    normalizeNameValue(record.userName) ||
+    normalizeNameValue(record.fullName);
+  if (displayLike) return displayLike;
+
+  const genericName = normalizeNameValue(record.name);
+  if (!genericName) return '';
+
+  const orgLikeNames = [
+    record.organizationName,
+    record.organization_name,
+    record.orgName,
+    record.org_name,
+    record.orgDisplayName,
+  ]
+    .map((value) => normalizeNameValue(value).toLowerCase())
+    .filter(Boolean);
+
+  if (!orgLikeNames.includes(genericName.toLowerCase())) return genericName;
+  return '';
 };
 
 export const MessagingPage: React.FC = () => {
@@ -160,11 +209,100 @@ export const MessagingPage: React.FC = () => {
   const [userOrgs, setUserOrgs] = useState<VolunteerMembership[]>([]);
   const [showOrgFilter, setShowOrgFilter] = useState(false);
   const hasPremiumOrgAccess = userOrgs.length > 0;
+  const [selectedMembershipKey, setSelectedMembershipKey] = useState('');
+  const selectedOrgCodeRef = useRef('');
+  const selectedOrgIdRef = useRef('');
+  const selectedMembershipKeyRef = useRef('');
+
+  useEffect(() => {
+    selectedOrgCodeRef.current = orgCode;
+    selectedOrgIdRef.current = orgId;
+    selectedMembershipKeyRef.current = selectedMembershipKey;
+  }, [orgCode, orgId, selectedMembershipKey]);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeMembershipsA: (() => void) | null = null;
+    let unsubscribeMembershipsB: (() => void) | null = null;
+    let rowsA: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let rowsB: Array<{ id: string; data: Record<string, unknown> }> = [];
+
+    const clearMembershipListeners = () => {
+      if (unsubscribeMembershipsA) {
+        unsubscribeMembershipsA();
+        unsubscribeMembershipsA = null;
+      }
+      if (unsubscribeMembershipsB) {
+        unsubscribeMembershipsB();
+        unsubscribeMembershipsB = null;
+      }
+      rowsA = [];
+      rowsB = [];
+    };
+
+    let recomputeSeq = 0;
+    const recomputeMembershipOrgs = async () => {
+      const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
+        Boolean(value);
+      const allMemberships = [
+        ...rowsA
+          .map((entry) => extractVolunteerMembership(entry.data, entry.id, 'user_organizations'))
+          .filter(isMembership),
+        ...rowsB
+          .map((entry) => extractVolunteerMembership(entry.data, entry.id, 'users'))
+          .filter(isMembership),
+      ];
+      const runId = ++recomputeSeq;
+      const resolvedMemberships = await hydrateVolunteerMembershipPlans(
+        db as any,
+        mergeVolunteerMemberships(allMemberships),
+      );
+      if (runId !== recomputeSeq) return;
+      const premiumMemberships = resolvedMemberships.filter(hasPremiumAccessForMembership);
+
+      const currentCode = selectedOrgCodeRef.current;
+      const currentId = selectedOrgIdRef.current;
+      const currentMembershipKey = selectedMembershipKeyRef.current;
+      const matchedOrg = premiumMemberships.find(
+        (membership) =>
+          currentMembershipKey && membership.key === currentMembershipKey,
+      ) || premiumMemberships.find(
+        (membership) =>
+          (currentCode && membership.code === currentCode) ||
+          (currentId && membership.id === currentId),
+      );
+      const selectedOrg = matchedOrg || premiumMemberships[0] || null;
+      const selectedCode = selectedOrg?.code || '';
+      const selectedId = selectedOrg?.id || '';
+
+      premiumMemberships.sort((a, b) => {
+        const aIsCurrent =
+          (selectedCode && a.code === selectedCode) ||
+          (selectedId && a.id === selectedId);
+        const bIsCurrent =
+          (selectedCode && b.code === selectedCode) ||
+          (selectedId && b.id === selectedId);
+        if (aIsCurrent && !bIsCurrent) return -1;
+        if (!aIsCurrent && bIsCurrent) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      setUserOrgs(premiumMemberships);
+      setOrgCode(selectedCode);
+      setOrgId(selectedId);
+      setSelectedMembershipKey(selectedOrg?.key || '');
+      if (!selectedOrg) {
+        setThreads([]);
+        setMessagesByThread({});
+        setUsers([]);
+        setJoinRequests([]);
+      }
+      setLoading(false);
+    };
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      clearMembershipListeners();
       if (!user) {
         setOrgCode('');
         setOrgId('');
@@ -174,77 +312,57 @@ export const MessagingPage: React.FC = () => {
         setMessagesByThread({});
         setAdminUid('');
         setAdminEmail('');
-        setUserOrgs([]); // Clear orgs
+        setUserOrgs([]);
+        setSelectedMembershipKey('');
+        setLoading(false);
         return;
       }
+      setLoading(true);
       setAdminUid(user.uid);
       setAdminEmail(user.email || '');
 
-      // Fetch user's memberships from both dashboard and mobile sources.
-      try {
-        const [orgSnaps, membershipSnaps] = await Promise.all([
-          getDocs(query(collection(db, 'user_organizations'), where('user_id', '==', user.uid))),
-          getDocs(query(collection(db, 'users'), where('user_id', '==', user.uid)))
-        ]);
-        const isMembership = (value: VolunteerMembership | null): value is VolunteerMembership =>
-          Boolean(value);
-        const allMemberships = [
-          ...orgSnaps.docs
-            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'user_organizations'))
-            .filter(isMembership),
-          ...membershipSnaps.docs
+      unsubscribeMembershipsA = onSnapshot(
+        query(collection(db, 'user_organizations'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          rowsA = snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            data: (docSnap.data() || {}) as Record<string, unknown>,
+          }));
+          void recomputeMembershipOrgs();
+        },
+      );
+
+      unsubscribeMembershipsB = onSnapshot(
+        query(collection(db, 'users'), where('user_id', '==', user.uid)),
+        (snapshot) => {
+          rowsB = snapshot.docs
             .filter((docSnap) => docSnap.id !== user.uid)
-            .map((docSnap) => extractVolunteerMembership(docSnap.data() as Record<string, unknown>, docSnap.id, 'users'))
-            .filter(isMembership),
-        ];
-        const resolvedMemberships = await hydrateVolunteerMembershipPlans(
-          db as any,
-          mergeVolunteerMemberships(allMemberships),
+            .map((docSnap) => ({
+              id: docSnap.id,
+              data: (docSnap.data() || {}) as Record<string, unknown>,
+            }));
+          void recomputeMembershipOrgs();
+        },
+      );
+
+      try {
+        const snapshot = await getDoc(doc(db, 'users', user.uid));
+        const data = snapshot.data() || {};
+        setSenderName(
+          resolvePersonNameFromRecord(data as Record<string, unknown>)
+            || user.displayName
+            || user.email
+            || 'Coordinator',
         );
-        const premiumMemberships = resolvedMemberships.filter(hasPremiumAccessForMembership);
-
-        const context = await resolveOrgContext(db, user.uid);
-        const contextCode = normalizeOrgCode(context.orgCode);
-        const contextId = String(context.orgId || '');
-
-        const matchedOrg = premiumMemberships.find((o) => (contextCode && o.code === contextCode) || (contextId && o.id === contextId));
-        const fallbackOrg = premiumMemberships[0] || null;
-        const selectedOrg = matchedOrg || fallbackOrg || null;
-        const selectedCode = selectedOrg?.code || '';
-        const selectedId = selectedOrg?.id || '';
-
-        premiumMemberships.sort((a, b) => {
-          const aIsCurrent = (selectedCode && a.code === selectedCode) || (selectedId && a.id === selectedId);
-          const bIsCurrent = (selectedCode && b.code === selectedCode) || (selectedId && b.id === selectedId);
-          if (aIsCurrent && !bIsCurrent) return -1;
-          if (!aIsCurrent && bIsCurrent) return 1;
-          return a.name.localeCompare(b.name);
-        });
-
-        setUserOrgs(premiumMemberships);
-        setOrgCode(selectedCode);
-        setOrgId(selectedId);
-        if (!selectedOrg) {
-          setThreads([]);
-          setMessagesByThread({});
-          setUsers([]);
-          setJoinRequests([]);
-        }
-
-      } catch (err) {
-        console.error("Error fetching user orgs", err);
-        setUserOrgs([]);
-        setOrgCode('');
-        setOrgId('');
+      } catch {
+        setSenderName(user.displayName || user.email || 'Coordinator');
       }
-      const snapshot = await getDoc(doc(db, 'users', user.uid));
-      const data = snapshot.data() || {};
-      const first = String(data.firstName || data.name || '').trim();
-      const last = String(data.lastName || data.last_name || '').trim();
-      setSenderName([first, last].filter(Boolean).join(' ').trim() || user.email || 'Coordinator');
-      setLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => {
+      clearMembershipListeners();
+      unsubscribeAuth();
+    };
   }, []);
 
   // Effect to update admin status when Org Changes
@@ -266,6 +384,22 @@ export const MessagingPage: React.FC = () => {
   }, [orgCode, orgId]);
 
   const [emojiSearch, setEmojiSearch] = useState('');
+  const selectedMembership = useMemo(
+    () =>
+      userOrgs.find((membership) => membership.key === selectedMembershipKey) ||
+      userOrgs.find(
+        (membership) =>
+          (orgCode && membership.code === orgCode) ||
+          (orgId && membership.id === orgId),
+      ) ||
+      null,
+    [userOrgs, selectedMembershipKey, orgCode, orgId],
+  );
+  const threadScopeToken = useMemo(() => {
+    const rawScopeId = normalizeScopeId(selectedMembership?.scopeId);
+    if (!rawScopeId) return DEFAULT_THREAD_SCOPE_TOKEN;
+    return rawScopeId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  }, [selectedMembership]);
 
   // Helper to map emojis to searchable tags
   const getEmojiTags = (emoji: string) => {
@@ -344,21 +478,61 @@ export const MessagingPage: React.FC = () => {
     const keyByUserId = new Map<string, string>();
     const keyByEmail = new Map<string, string>();
     const keyByName = new Map<string, string>();
+    const selectedScopeId = normalizeScopeId(selectedMembership?.scopeId);
+    const scopedJoinRequests = joinRequests.filter((row) => {
+      const data = row.data || {};
+      const scopeId = normalizeScopeId(
+        data.target_group_id ||
+          data.targetGroupId ||
+          data.sub_admin_group_id ||
+          data.subAdminGroupId ||
+          data.group_scope_id ||
+          data.groupScopeId ||
+          data.group_id ||
+          data.groupId,
+      );
+      if (selectedScopeId) return scopeId === selectedScopeId;
+      return !scopeId;
+    });
+    const allowedUserIds = new Set<string>();
+    const allowedEmails = new Set<string>();
+    const allowedNames = new Set<string>();
+
+    scopedJoinRequests.forEach((row) => {
+      const data = row.data || {};
+      const status = String(data.status || '').toLowerCase();
+      if (status !== 'accepted') return;
+      const userId = String(data.user_id || data.userId || '').trim();
+      const email = String(data.user_email || data.email || '').trim().toLowerCase();
+      const name = resolvePersonNameFromRecord(data).toLowerCase();
+      if (userId) allowedUserIds.add(userId);
+      if (email) allowedEmails.add(email);
+      if (name) allowedNames.add(name);
+    });
 
     // First pass: Users collection (Primary source)
     users.forEach((row) => {
       const data = row.data || {};
-      const first = String(data.firstName || data.name || '').trim();
-      const last = String(data.lastName || data.last_name || '').trim();
       const email = String(data.email || '').trim();
-      const name = [first, last].filter(Boolean).join(' ').trim() || email || 'Volunteer';
+      const name = resolvePersonNameFromRecord(data) || email || 'Volunteer';
+      const isOrgAdmin =
+        orgAdminIds.includes(row.id) || orgAdminEmails.includes(email.toLowerCase());
       
       // Strict filters for organizations and admins
       if (orgId && row.id === orgId) return;
       if (adminUid && row.id === adminUid) return;
       if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      if (orgAdminIds.includes(row.id)) return;
-      if (orgAdminEmails.includes(email.toLowerCase())) return;
+      const hasAllowedSet =
+        allowedUserIds.size > 0 || allowedEmails.size > 0 || allowedNames.size > 0;
+      if (selectedScopeId || hasAllowedSet) {
+        const emailKey = email.toLowerCase();
+        const nameKey = name.toLowerCase();
+        const isAllowed =
+          allowedUserIds.has(row.id) ||
+          (emailKey ? allowedEmails.has(emailKey) : false) ||
+          (nameKey ? allowedNames.has(nameKey) : false);
+        if (!isAllowed && !isOrgAdmin) return;
+      }
 
       const key = buildVolunteerKey(email, name, row.id);
       keyByUserId.set(row.id, key);
@@ -369,19 +543,19 @@ export const MessagingPage: React.FC = () => {
         id: row.id,
         name,
         email,
-        role: String(data.role || 'Volunteer'),
+        role: isOrgAdmin || isAdminLikeRole(data.role) ? 'Admin' : String(data.role || 'Volunteer'),
       });
     });
 
     // Second pass: Join Requests (Fallback source for pairing)
-    joinRequests.forEach((row) => {
+    scopedJoinRequests.forEach((row) => {
       const data = row.data || {};
       const status = String(data.status || '').toLowerCase();
       if (status !== 'accepted') return;
 
       const userId = String(data.user_id || data.userId || '').trim();
       const email = String(data.user_email || data.email || '').trim();
-      const name = String(data.user_name || data.name || '').trim() || email || 'Volunteer';
+      const name = resolvePersonNameFromRecord(data) || email || 'Volunteer';
       
       if (orgId && userId === orgId) return;
       if (adminUid && userId === adminUid) return;
@@ -399,12 +573,14 @@ export const MessagingPage: React.FC = () => {
         id: userId || key,
         name,
         email,
-        role: String(data.requested_role || data.role || 'Volunteer'),
+        role: isAdminLikeRole(data.requested_role) || isAdminLikeRole(data.role)
+          ? 'Admin'
+          : String(data.requested_role || data.role || 'Volunteer'),
       });
     });
 
     return Array.from(volunteerMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, joinRequests, orgId, adminUid, adminEmail, orgAdminIds, orgAdminEmails]);
+  }, [users, joinRequests, orgId, adminUid, adminEmail, orgAdminIds, orgAdminEmails, selectedMembership]);
 
   useEffect(() => {
     if ((!orgCode && !orgId) || !hasPremiumOrgAccess) {
@@ -426,6 +602,17 @@ export const MessagingPage: React.FC = () => {
           processedIds.add(docSnap.id);
 
           const data = docSnap.data || {};
+          const messageScopeId = normalizeScopeId(
+            data.target_group_id ||
+              data.targetGroupId ||
+              data.sub_admin_group_id ||
+              data.subAdminGroupId ||
+              data.group_scope_id ||
+              data.groupScopeId ||
+              data.group_id ||
+              data.groupId,
+          );
+          const selectedScopeId = normalizeScopeId(selectedMembership?.scopeId);
           const rawCreated = data.createdAt || data.created_at || null;
           let createdAt = new Date();
           
@@ -442,7 +629,16 @@ export const MessagingPage: React.FC = () => {
 
           const threadId = String(data.threadId || '');
           if (!threadId) return;
-          const normalizedThreadId = normalizeThreadIdForOrg(threadId, orgCode);
+          if (selectedScopeId) {
+            const matchesScopeField = messageScopeId === selectedScopeId;
+            const matchesScopedThread = threadId.includes(`scope-${threadScopeToken}-`);
+            if (!matchesScopeField && !matchesScopedThread) return;
+          } else {
+            const hasScopedField = Boolean(messageScopeId);
+            const hasScopedThread = threadId.includes('scope-') && !threadId.includes(`scope-${DEFAULT_THREAD_SCOPE_TOKEN}-`);
+            if (hasScopedField || hasScopedThread) return;
+          }
+          const normalizedThreadId = normalizeThreadIdForOrg(threadId, orgCode, threadScopeToken);
           const entry: Message = {
             id: docSnap.id,
             threadId: normalizedThreadId,
@@ -460,7 +656,7 @@ export const MessagingPage: React.FC = () => {
       },
     });
     return () => unsubscribe();
-  }, [orgCode, orgId, hasPremiumOrgAccess]);
+  }, [orgCode, orgId, hasPremiumOrgAccess, selectedMembership, threadScopeToken]);
 
   useEffect(() => {
     if (!orgCode || !hasPremiumOrgAccess) {
@@ -469,25 +665,25 @@ export const MessagingPage: React.FC = () => {
       return;
     }
     const allThread: ThreadMeta = {
-      id: ALL_VOLUNTEERS_THREAD(orgCode),
+      id: ALL_VOLUNTEERS_THREAD(orgCode, threadScopeToken),
       name: 'All Volunteers',
       type: 'group',
     };
     const directThreads = volunteers.map((v) => ({
-      id: DIRECT_VOLUNTEER_THREAD(orgCode, v.id),
+      id: DIRECT_VOLUNTEER_THREAD(orgCode, v.id, threadScopeToken),
       name: v.name,
       type: 'direct' as const,
       recipientId: v.id,
     }));
     const nextThreads = [allThread, ...directThreads];
     setThreads(nextThreads);
-    const normalizedActiveThreadId = normalizeThreadIdForOrg(activeThreadId, orgCode);
+    const normalizedActiveThreadId = normalizeThreadIdForOrg(activeThreadId, orgCode, threadScopeToken);
     if (!normalizedActiveThreadId || !nextThreads.some((thread) => thread.id === normalizedActiveThreadId)) {
       setActiveThreadId(allThread.id);
     } else if (normalizedActiveThreadId !== activeThreadId) {
       setActiveThreadId(normalizedActiveThreadId);
     }
-  }, [orgCode, volunteers, activeThreadId, hasPremiumOrgAccess]);
+  }, [orgCode, volunteers, activeThreadId, hasPremiumOrgAccess, threadScopeToken]);
 
   const filteredThreads = useMemo(() => {
     if (!search.trim()) return threads;
@@ -684,6 +880,20 @@ export const MessagingPage: React.FC = () => {
         text: inputValue.trim(),
         createdAt: serverTimestamp(),
       };
+      const selectedScopeId = normalizeScopeId(selectedMembership?.scopeId);
+      const selectedScopeName = normalizeScopeName(selectedMembership?.scopeName);
+      messageData.target_group_id = selectedScopeId || null;
+      messageData.targetGroupId = selectedScopeId || null;
+      messageData.sub_admin_group_id = selectedScopeId || null;
+      messageData.subAdminGroupId = selectedScopeId || null;
+      messageData.group_scope_id = selectedScopeId || null;
+      if (selectedScopeName) {
+        messageData.target_group_name = selectedScopeName;
+        messageData.targetGroupName = selectedScopeName;
+        messageData.sub_admin_group_name = selectedScopeName;
+        messageData.subAdminGroupName = selectedScopeName;
+        messageData.group_scope_name = selectedScopeName;
+      }
 
       if (uploadedAttachments.length > 0) {
         // Just take the first one for this specific message document
@@ -705,7 +915,7 @@ export const MessagingPage: React.FC = () => {
 
   const openThread = (threadId: string) => {
     if (!orgCode || !hasPremiumOrgAccess) return;
-    setActiveThreadId(normalizeThreadIdForOrg(threadId, orgCode));
+    setActiveThreadId(normalizeThreadIdForOrg(threadId, orgCode, threadScopeToken));
     setShowNewChat(false);
   };
 
@@ -725,7 +935,16 @@ export const MessagingPage: React.FC = () => {
                   disabled={!hasPremiumOrgAccess}
                   className="w-full flex items-center justify-between px-4 py-3 bg-gray-900 text-white rounded-2xl font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-45 disabled:cursor-not-allowed"
                 >
-                   <span className="truncate">{userOrgs.find(o => o.code === orgCode || o.id === orgId)?.name || 'Select Organization'}</span>
+                   <span className="truncate">
+                    {selectedMembership
+                      ? (() => {
+                          const scopeLabel = String(
+                            selectedMembership.scopeName || selectedMembership.scopeId || '',
+                          ).trim();
+                          return scopeLabel || selectedMembership.name;
+                        })()
+                      : 'Select Organization'}
+                   </span>
                    <Filter className="w-4 h-4 ml-2 opacity-70" />
                 </button>
                 
@@ -740,19 +959,23 @@ export const MessagingPage: React.FC = () => {
                        {userOrgs.length > 0 ? (
                          userOrgs.map(org => (
                            <button
-                             key={org.id || org.code}
+                             key={org.key}
                              onClick={() => {
                                setOrgCode(org.code);
                                setOrgId(org.id);
+                               setSelectedMembershipKey(org.key);
                                setShowOrgFilter(false);
                              }}
                              className={`px-4 py-3 text-left text-sm font-bold rounded-xl transition-colors ${
-                               (org.code === orgCode && org.code) || (org.id === orgId && org.id) 
+                               org.key === selectedMembershipKey
                                  ? 'bg-lime-50 text-lime-700' 
                                  : 'hover:bg-gray-50 text-gray-700'
                              }`}
                            >
-                             {org.name}
+                             {(() => {
+                               const scopeLabel = String(org.scopeName || org.scopeId || '').trim();
+                               return scopeLabel || org.name;
+                             })()}
                            </button>
                          ))
                        ) : (
@@ -1088,7 +1311,7 @@ export const MessagingPage: React.FC = () => {
               <p className="text-sm text-gray-500 mb-6">Message the entire group or a specific volunteer.</p>
               <div className="flex flex-col gap-3">
                 <button
-                  onClick={() => openThread(ALL_VOLUNTEERS_THREAD(orgCode))}
+                  onClick={() => openThread(ALL_VOLUNTEERS_THREAD(orgCode, threadScopeToken))}
                   className="w-full flex items-center gap-3 p-4 rounded-2xl bg-gray-900 text-white hover:bg-black"
                 >
                   <Users className="w-5 h-5" />
@@ -1098,7 +1321,7 @@ export const MessagingPage: React.FC = () => {
                   {volunteers.map((volunteer) => (
                     <button
                       key={volunteer.id}
-                      onClick={() => openThread(DIRECT_VOLUNTEER_THREAD(orgCode, volunteer.id))}
+                      onClick={() => openThread(DIRECT_VOLUNTEER_THREAD(orgCode, volunteer.id, threadScopeToken))}
                       className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-gray-50 text-left"
                     >
                       <div>

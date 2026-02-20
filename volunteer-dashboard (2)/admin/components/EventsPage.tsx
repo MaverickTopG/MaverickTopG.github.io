@@ -14,12 +14,15 @@ import {
   Download,
   Trash2,
   X,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  EyeOff,
+  RotateCcw,
 } from 'lucide-react';
 import { onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { deleteDoc, doc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, query, setDoc, serverTimestamp, where } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { getActiveSubAdminSession, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 import { AiInsightWidget } from './AiInsightWidget';
 import { useGeminiInsight } from '../hooks/useGeminiInsight';
 
@@ -52,6 +55,9 @@ interface Event {
   category?: string;
   description?: string;
   location?: string;
+  recurrenceType?: 'one-time' | 'weekly' | 'biweekly' | 'monthly';
+  recurrenceParentId?: string;
+  recurrenceOccurrenceDate?: string;
 }
 type Signup = {
   id: string;
@@ -62,17 +68,73 @@ type Signup = {
   status: string;
   role: string;
 };
+type DeleteScope = 'single' | 'series';
 
 const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
+const EVENT_REROLL_PREFILL_KEY = 'nexolink:event-reroll-prefill';
+const SUBADMIN_LOGIN_API_PATH = '/api/subAdminLogin';
+const RECURRING_TYPES = new Set(['weekly', 'biweekly', 'monthly']);
+const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
+  String(
+    data.target_group_id
+    || data.targetGroupId
+    || data.sub_admin_group_id
+    || data.subAdminGroupId
+    || data.group_scope_id
+    || data.groupScopeId
+    || data.groupId
+    || data.group_id
+    || '',
+  ).trim();
+const matchesScopeContext = (data: Record<string, unknown> = {}, activeScopeId = '') => {
+  const scopeId = resolveRecordScopeId(data);
+  if (activeScopeId) return scopeId === activeScopeId;
+  return !scopeId;
+};
 
 const parseDate = (value?: string) => {
   if (!value) return null;
-  const date = new Date(value);
-  // Add timezone offset to ensure consistency if needed, 
-  // but for simple date comparison we just need the midnight UTC or local.
-  // We'll use local midnight for "today" comparisons.
-  date.setHours(0, 0, 0, 0);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const raw = String(value).trim();
+  const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const monthIndex = Number(dateOnlyMatch[2]) - 1;
+    const day = Number(dateOnlyMatch[3]);
+    const date = new Date(year, monthIndex, day, 0, 0, 0, 0);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+};
+
+const toDateKey = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const addRecurrenceStep = (date: Date, recurrenceType: string) => {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+  if (recurrenceType === 'weekly') {
+    next.setDate(next.getDate() + 7);
+    return next;
+  }
+  if (recurrenceType === 'biweekly') {
+    next.setDate(next.getDate() + 14);
+    return next;
+  }
+  next.setMonth(next.getMonth() + 1);
+  return next;
 };
 
 const formatDateBadge = (value?: string) => {
@@ -121,6 +183,22 @@ const getEventStatus = (event: Event) => {
 const isPastEvent = (event: Event) => getEventStatus(event) === 'past';
 const isUpcomingEvent = (event: Event) => getEventStatus(event) === 'upcoming';
 const isLiveEvent = (event: Event) => getEventStatus(event) === 'live';
+const MAX_PAST_EVENTS = 10;
+const isRecurringTemplateEvent = (event: Event) =>
+  !event.recurrenceParentId && RECURRING_TYPES.has(String(event.recurrenceType || '').toLowerCase());
+const isRecurringSeriesEvent = (event: Event | null) =>
+  !!event && (
+    !!String(event.recurrenceParentId || '').trim()
+    || RECURRING_TYPES.has(String(event.recurrenceType || '').toLowerCase())
+  );
+
+const getEventSortTime = (event: Event) => {
+  return (
+    parseDate(event.endDate || event.startDate)?.getTime() ||
+    parseDate(event.startDate)?.getTime() ||
+    0
+  );
+};
 
 const parseNumber = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -133,6 +211,26 @@ const parseNumber = (value: unknown): number | null => {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+};
+
+const resolveCoverImageUrl = (data: Record<string, unknown>) => {
+  const coverObject = (typeof data.coverImage === 'object' && data.coverImage !== null)
+    ? (data.coverImage as Record<string, unknown>)
+    : null;
+  const legacyCoverObject = (typeof (data as Record<string, unknown>).cover_image === 'object' && (data as Record<string, unknown>).cover_image !== null)
+    ? ((data as Record<string, unknown>).cover_image as Record<string, unknown>)
+    : null;
+  const raw =
+    data.coverImageUrl ||
+    data.cover_image_url ||
+    (coverObject?.url as unknown) ||
+    (legacyCoverObject?.url as unknown) ||
+    data.coverImage ||
+    data.imageUrl ||
+    data.image_url ||
+    '';
+  const text = String(raw || '').trim();
+  return text || undefined;
 };
 
 const normalizeEvent = (data: Record<string, unknown>, id: string): Event => ({
@@ -162,23 +260,86 @@ const normalizeEvent = (data: Record<string, unknown>, id: string): Event => ({
   ) ?? undefined,
   peoplePerSlot: parseNumber(data.peoplePerSlot ?? data.people_per_slot),
   timeSlots: Array.isArray(data.timeSlots) ? data.timeSlots : [],
-  coverImageUrl: data.coverImageUrl
-    ? String(data.coverImageUrl)
-    : data.cover_image_url
-      ? String(data.cover_image_url)
-      : data.coverImage
-        ? String(data.coverImage)
-        : data.imageUrl
-          ? String(data.imageUrl)
-          : data.image_url
-            ? String(data.image_url)
-            : undefined,
+  coverImageUrl: resolveCoverImageUrl(data),
   isDateRange: !!data.isDateRange,
   shifts: Array.isArray(data.shifts) ? data.shifts : [],
   category: data.category ? String(data.category) : undefined,
   description: data.description ? String(data.description) : undefined,
   location: data.location ? String(data.location) : undefined,
+  recurrenceType: data.recurrenceType
+    ? (String(data.recurrenceType).toLowerCase() as Event['recurrenceType'])
+    : undefined,
+  recurrenceParentId: data.recurrenceParentId ? String(data.recurrenceParentId) : undefined,
+  recurrenceOccurrenceDate: data.recurrenceOccurrenceDate ? String(data.recurrenceOccurrenceDate) : undefined,
 });
+
+const materializeRecurringEvents = async (
+  rows: Array<{ id: string; data: Record<string, unknown> }>,
+) => {
+  const db = getFirestoreDb();
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+  const eventsByParent = new Map<string, string[]>();
+
+  rows.forEach((row) => {
+    const parentId = String((row.data || {}).recurrenceParentId || '').trim();
+    if (!parentId) return;
+    const list = eventsByParent.get(parentId) || [];
+    const candidateDate = String((row.data || {}).startDate || '').trim();
+    if (candidateDate) list.push(candidateDate);
+    eventsByParent.set(parentId, list);
+  });
+
+  const tasks = rows.map(async (row) => {
+    const data = row.data || {};
+    const recurrenceParentId = String(data.recurrenceParentId || '').trim();
+    if (recurrenceParentId) return;
+    const recurrenceType = String(data.recurrenceType || 'one-time').toLowerCase();
+    if (!RECURRING_TYPES.has(recurrenceType)) return;
+    const templateStart = parseDate(String(data.startDate || ''));
+    if (!templateStart) return;
+
+    const knownDates = new Set<string>([
+      String(data.startDate || '').trim(),
+      ...(eventsByParent.get(row.id) || []),
+    ]);
+
+    const hasUpcoming = Array.from(knownDates).some((dateText) => {
+      const parsed = parseDate(dateText);
+      return !!parsed && parsed.getTime() >= startOfToday.getTime();
+    });
+    if (hasUpcoming) return;
+
+    let nextDate = new Date(templateStart);
+    while (nextDate.getTime() < startOfToday.getTime()) {
+      nextDate = addRecurrenceStep(nextDate, recurrenceType);
+    }
+
+    const nextStartDate = toDateKey(nextDate);
+    const templateEnd = parseDate(String(data.endDate || data.startDate || ''));
+    const durationDays = templateEnd
+      ? Math.max(0, Math.round((templateEnd.getTime() - templateStart.getTime()) / 86400000))
+      : 0;
+    const nextEndDateObj = new Date(nextDate);
+    nextEndDateObj.setDate(nextEndDateObj.getDate() + durationDays);
+    const nextEndDate = toDateKey(nextEndDateObj);
+    const occurrenceId = `${row.id}__${nextStartDate}`;
+
+    await setDoc(doc(db, 'events', occurrenceId), {
+      ...data,
+      startDate: nextStartDate,
+      endDate: nextEndDate,
+      status: 'published',
+      recurrenceType,
+      recurrenceParentId: row.id,
+      recurrenceOccurrenceDate: nextStartDate,
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    }, { merge: true });
+  });
+
+  await Promise.all(tasks);
+};
 
 const resolveEventCapacity = (event: Event, signups: Signup[]) => {
   if (Number.isFinite(event.capacity ?? NaN) && (event.capacity ?? 0) > 0) {
@@ -209,11 +370,14 @@ export const EventsPage: React.FC<EventsPageProps> = ({
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [orgCode, setOrgCode] = useState('');
   const [orgId, setOrgId] = useState('');
+  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
   const [events, setEvents] = useState<Event[]>([]);
   const [drafts, setDrafts] = useState<Event[]>([]);
   const [signupsByEvent, setSignupsByEvent] = useState<Record<string, Signup[]>>({});
   const [deleteTarget, setDeleteTarget] = useState<Event | null>(null);
   const [deletePassword, setDeletePassword] = useState('');
+  const [deleteScope, setDeleteScope] = useState<DeleteScope>('single');
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [volunteerSearch, setVolunteerSearch] = useState('');
@@ -243,6 +407,16 @@ export const EventsPage: React.FC<EventsPageProps> = ({
   }, []);
 
   useEffect(() => {
+    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
+    window.addEventListener('nexolink:subadmin-session', syncScope);
+    window.addEventListener('storage', syncScope);
+    return () => {
+      window.removeEventListener('nexolink:subadmin-session', syncScope);
+      window.removeEventListener('storage', syncScope);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!orgCode && !orgId) return;
     const db = getFirestoreDb();
     const unsubEvents = subscribeToOrgCollection({
@@ -251,22 +425,40 @@ export const EventsPage: React.FC<EventsPageProps> = ({
       orgCode,
       orgId,
       onData: (rows) => {
-        const published: Event[] = [];
+        const scopedRows = rows.filter((row) => matchesScopeContext(row.data || {}, subAdminScopeKey));
+        void materializeRecurringEvents(scopedRows);
+        const publishedCandidates: Event[] = [];
         const draftItems: Event[] = [];
-        rows.forEach((row) => {
+        scopedRows.forEach((row) => {
           const event = normalizeEvent(row.data || {}, row.id);
           const status = (event.status || 'published').toLowerCase();
           if (status === 'draft') {
             draftItems.push(event);
           } else if (status !== 'archived') {
-            published.push(event);
+            publishedCandidates.push(event);
           }
         });
-        published.sort((a, b) => {
-          const aDate = parseDate(a.startDate)?.getTime() || 0;
-          const bDate = parseDate(b.startDate)?.getTime() || 0;
-          return aDate - bDate;
-        });
+
+        const pastPublished = publishedCandidates
+          .filter(isPastEvent)
+          .sort((a, b) => getEventSortTime(b) - getEventSortTime(a));
+        const stalePast = pastPublished
+          .filter((event) => !isRecurringTemplateEvent(event))
+          .slice(MAX_PAST_EVENTS);
+        if (stalePast.length) {
+          void Promise.allSettled(
+            stalePast.map((event) => deleteDoc(doc(db, 'events', event.id))),
+          );
+        }
+        const stalePastIds = new Set(stalePast.map((event) => event.id));
+        const published = publishedCandidates
+          .filter((event) => !stalePastIds.has(event.id))
+          .sort((a, b) => {
+            const aDate = parseDate(a.startDate)?.getTime() || 0;
+            const bDate = parseDate(b.startDate)?.getTime() || 0;
+            return aDate - bDate;
+          });
+
         draftItems.sort((a, b) => {
           const aDate = parseDate(a.startDate)?.getTime() || 0;
           const bDate = parseDate(b.startDate)?.getTime() || 0;
@@ -286,6 +478,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({
         const map: Record<string, Signup[]> = {};
         rows.forEach((row) => {
           const data = row.data || {};
+          if (!matchesScopeContext(data, subAdminScopeKey)) return;
           const eventId = String(data.eventId || data.event_id || '');
           if (!eventId) return;
           const entry: Signup = {
@@ -315,7 +508,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({
       unsubEvents();
       unsubSignups();
     };
-  }, [orgCode, orgId]);
+  }, [orgCode, orgId, subAdminScopeKey]);
 
   const visibleEvents = useMemo(() => {
     if (filter === 'Drafts') return drafts;
@@ -342,6 +535,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({
   const handleOpenEventAction = (event: Event) => {
     const status = String(event.status || '').toLowerCase();
     if (status === 'draft') {
+      sessionStorage.removeItem(EVENT_REROLL_PREFILL_KEY);
       sessionStorage.setItem(EVENT_DRAFT_EDIT_KEY, event.id);
       onNavigate('create-event');
       return;
@@ -349,9 +543,31 @@ export const EventsPage: React.FC<EventsPageProps> = ({
     setSelectedEvent(event);
   };
 
+  const handleRerollEvent = (event: Event) => {
+    const payload = {
+      title: String(event.title || ''),
+      description: String(event.description || ''),
+      category: String(event.category || 'Community'),
+      location: String(event.location || ''),
+      maxVolunteers: event.maxVolunteers != null ? String(event.maxVolunteers) : '',
+      coverImageUrl: String(event.coverImageUrl || ''),
+      shifts: Array.isArray(event.shifts) ? event.shifts : [],
+      recurrenceType: String(event.recurrenceType || 'one-time'),
+      // Force fresh scheduling for rerolled events.
+      startDate: '',
+      endDate: '',
+      isDateRange: false,
+    };
+    sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
+    sessionStorage.setItem(EVENT_REROLL_PREFILL_KEY, JSON.stringify(payload));
+    onNavigate('create-event');
+  };
+
   const openDeleteModal = (event: Event) => {
     setDeleteTarget(event);
     setDeletePassword('');
+    setDeleteScope('single');
+    setShowDeletePassword(false);
     setDeleteError(null);
   };
 
@@ -359,6 +575,8 @@ export const EventsPage: React.FC<EventsPageProps> = ({
     if (deleteLoading) return;
     setDeleteTarget(null);
     setDeletePassword('');
+    setDeleteScope('single');
+    setShowDeletePassword(false);
     setDeleteError(null);
   };
 
@@ -374,15 +592,76 @@ export const EventsPage: React.FC<EventsPageProps> = ({
       const auth = getFirebaseAuth();
       const db = getFirestoreDb();
       const user = auth.currentUser;
-      if (!user || !user.email) throw new Error('Auth state invalid.');
-      const credential = EmailAuthProvider.credential(user.email, deletePassword);
-      await reauthenticateWithCredential(user, credential);
-      await deleteDoc(doc(db, 'events', deleteTarget.id));
+      if (!user) throw new Error('Auth state invalid.');
+
+      const subAdminSession = getActiveSubAdminSession();
+      const emailCandidates = Array.from(
+        new Set(
+          [user.email, subAdminSession?.email]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean),
+        ),
+      );
+
+      let verified = false;
+      let authError: any = null;
+
+      for (const candidateEmail of emailCandidates) {
+        try {
+          const credential = EmailAuthProvider.credential(candidateEmail, deletePassword);
+          await reauthenticateWithCredential(user, credential);
+          await user.getIdToken(true);
+          verified = true;
+          break;
+        } catch (err: any) {
+          authError = err;
+        }
+      }
+
+      // Sub-admin sessions can be signed in with custom token, where password reauth
+      // may fail even when credentials are correct. Verify with the same fallback API.
+      if (!verified && subAdminSession?.groupId && emailCandidates.length) {
+        for (const candidateEmail of emailCandidates) {
+          try {
+            const resp = await fetch(SUBADMIN_LOGIN_API_PATH, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: candidateEmail, password: deletePassword }),
+            });
+            if (resp.ok) {
+              verified = true;
+              break;
+            }
+          } catch (_err) {
+            // Ignore network failures here and keep default auth error handling below.
+          }
+        }
+      }
+
+      if (!verified) {
+        throw authError || new Error('Unable to verify login password.');
+      }
+
+      const shouldDeleteSeries = isRecurringSeriesEvent(deleteTarget) && deleteScope === 'series';
+      if (shouldDeleteSeries) {
+        const seriesRootId = String(deleteTarget.recurrenceParentId || deleteTarget.id).trim();
+        const seriesSnap = await getDocs(
+          query(collection(db, 'events'), where('recurrenceParentId', '==', seriesRootId)),
+        );
+        const idsToDelete = new Set<string>([seriesRootId]);
+        seriesSnap.forEach((docSnap) => idsToDelete.add(docSnap.id));
+        await Promise.all(Array.from(idsToDelete).map((id) => deleteDoc(doc(db, 'events', id))));
+      } else {
+        await deleteDoc(doc(db, 'events', deleteTarget.id));
+      }
       closeDeleteModal();
     } catch (err: any) {
       console.error('Failed to delete event', err);
-      if (err?.code === 'auth/wrong-password') {
+      const code = String(err?.code || '');
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
         setDeleteError('Incorrect password. Please try again.');
+      } else if (code === 'auth/too-many-requests') {
+        setDeleteError('Too many attempts. Please wait and try again.');
       } else {
         setDeleteError(err?.message || 'Failed to delete event.');
       }
@@ -843,6 +1122,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({
                 <button
                   onClick={() => {
                     sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
+                    sessionStorage.removeItem(EVENT_REROLL_PREFILL_KEY);
                     onNavigate('create-event');
                   }}
                   className="h-11 px-5 bg-gray-900 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-black transition-all shadow-sm hover:shadow-md"
@@ -886,7 +1166,11 @@ export const EventsPage: React.FC<EventsPageProps> = ({
                     {/* Cover / Date Badge */}
                     <div className="relative group/cover w-full sm:w-60 md:w-48 aspect-square shrink-0 bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 self-start">
                         {event.coverImageUrl ? (
-                          <img src={event.coverImageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                          <img
+                            src={event.coverImageUrl}
+                            alt={`${event.title} cover`}
+                            className="absolute inset-0 block w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center bg-lime-50/50">
                             <Calendar className="w-8 h-8 text-lime-200" />
@@ -935,13 +1219,24 @@ export const EventsPage: React.FC<EventsPageProps> = ({
                         </div>
                     </div>
 
-                    <button 
-                        onClick={() => handleOpenEventAction(event)}
-                        className="absolute bottom-6 right-6 px-5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-900 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors"
-                    >
-                        {String(event.status || '').toLowerCase() === 'draft' ? 'Edit' : 'Manage'}
-                        <ChevronRight className="w-4 h-4" />
-                    </button>
+                    <div className="absolute bottom-6 right-6 flex items-center gap-2">
+                      {isPastEvent(event) && String(event.status || '').toLowerCase() !== 'draft' && (
+                        <button
+                          onClick={() => handleRerollEvent(event)}
+                          className="px-4 py-2.5 bg-lime-50 hover:bg-lime-100 text-lime-800 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors border border-lime-200"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          Reroll
+                        </button>
+                      )}
+                      <button 
+                          onClick={() => handleOpenEventAction(event)}
+                          className="px-5 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-900 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors"
+                      >
+                          {String(event.status || '').toLowerCase() === 'draft' ? 'Edit' : 'Manage'}
+                          <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                 </motion.div>
             ))
             )}
@@ -968,7 +1263,11 @@ export const EventsPage: React.FC<EventsPageProps> = ({
               <div className="p-8 pb-6 flex items-start justify-between">
                 <div>
                   <h3 className="text-2xl font-bold text-gray-900">Delete Event</h3>
-                  <p className="text-gray-500 mt-1 text-sm">This will permanently delete “{deleteTarget.title}”.</p>
+                  <p className="text-gray-500 mt-1 text-sm">
+                    {isRecurringSeriesEvent(deleteTarget) && deleteScope === 'series'
+                      ? `This will permanently delete the full recurring series for “${deleteTarget.title}”.`
+                      : `This will permanently delete “${deleteTarget.title}”.`}
+                  </p>
                 </div>
                 <button
                   onClick={closeDeleteModal}
@@ -978,17 +1277,62 @@ export const EventsPage: React.FC<EventsPageProps> = ({
                 </button>
               </div>
               <div className="px-8 space-y-6 pb-8">
+                {isRecurringSeriesEvent(deleteTarget) && (
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">Delete Scope</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDeleteScope('single')}
+                        disabled={deleteLoading}
+                        className={`h-12 rounded-xl border text-sm font-bold transition-colors ${
+                          deleteScope === 'single'
+                            ? 'bg-lime-100 text-lime-800 border-lime-300'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        One Time
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteScope('series')}
+                        disabled={deleteLoading}
+                        className={`h-12 rounded-xl border text-sm font-bold transition-colors ${
+                          deleteScope === 'series'
+                            ? 'bg-red-100 text-red-700 border-red-300'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        Entire Event
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 ml-1">
+                      {deleteScope === 'series'
+                        ? 'Deletes this recurring event and all related occurrences.'
+                        : 'Deletes only this selected occurrence.'}
+                    </p>
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-bold text-red-500 uppercase tracking-widest mb-2 ml-1">Confirm with Password</label>
                   <div className="relative">
                     <input
-                      type="password"
+                      type={showDeletePassword ? 'text' : 'password'}
                       placeholder="Your login password"
                       value={deletePassword}
                       onChange={(e) => setDeletePassword(e.target.value)}
                       disabled={deleteLoading}
-                      className="w-full h-14 pl-4 pr-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-gray-900 font-bold focus:border-red-400 focus:bg-white outline-none transition-all"
+                      className="w-full h-14 pl-4 pr-14 bg-gray-50 border-2 border-gray-100 rounded-2xl text-gray-900 font-bold focus:border-red-400 focus:bg-white outline-none transition-all"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowDeletePassword((prev) => !prev)}
+                      disabled={deleteLoading}
+                      aria-label={showDeletePassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 flex items-center justify-center transition-colors disabled:opacity-50"
+                    >
+                      {showDeletePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
                 {deleteError && (

@@ -39,6 +39,25 @@ type VolunteerRow = {
   matchNames: string[];
 };
 
+const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
+  String(
+    data.target_group_id
+    || data.targetGroupId
+    || data.sub_admin_group_id
+    || data.subAdminGroupId
+    || data.group_scope_id
+    || data.groupScopeId
+    || data.groupId
+    || data.group_id
+    || '',
+  ).trim();
+
+const matchesScopeContext = (data: Record<string, unknown> = {}, activeScopeId = '') => {
+  const scopeId = resolveRecordScopeId(data);
+  if (activeScopeId) return scopeId === activeScopeId;
+  return !scopeId;
+};
+
 interface VolunteersPageProps {
   isActive?: boolean;
   aiEnabled?: boolean;
@@ -88,7 +107,6 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   const [page, setPage] = useState(1);
   const pageSize = 7;
   const [insightUpdatedAt, setInsightUpdatedAt] = useState(() => Date.now());
-  const isSubAdminScoped = Boolean(subAdminScopeKey);
 
   const filters = ['All Members', 'Highest Hours', 'Lowest Hours', 'Archived'];
 
@@ -206,31 +224,37 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
     const keyByUserId = new Map<string, string>();
     const keyByEmail = new Map<string, string>();
     const keyByName = new Map<string, string>();
+    const scopedMemberLinks = memberLinks.filter((link) =>
+      matchesScopeContext((link.data || {}) as Record<string, unknown>, subAdminScopeKey),
+    );
+    const scopedJoinRequests = joinRequests.filter((req) =>
+      matchesScopeContext((req.data || {}) as Record<string, unknown>, subAdminScopeKey),
+    );
+    const scopedLogs = logs.filter((log) =>
+      matchesScopeContext(log as Record<string, unknown>, subAdminScopeKey),
+    );
     const scopedAllowedIds = new Set<string>();
     const scopedAllowedEmails = new Set<string>();
-
-    if (isSubAdminScoped) {
-      memberLinks.forEach((link) => {
-        const data = link.data || {};
-        const id = String(data.user_id || data.userId || data.uid || link.id || '').trim();
-        const email = String(data.email || data.user_email || '').trim().toLowerCase();
-        if (id) scopedAllowedIds.add(id);
-        if (email) scopedAllowedEmails.add(email);
-      });
-      joinRequests.forEach((req) => {
-        const data = req.data || {};
-        const id = String(data.user_id || data.userId || '').trim();
-        const email = String(data.user_email || data.email || '').trim().toLowerCase();
-        if (id) scopedAllowedIds.add(id);
-        if (email) scopedAllowedEmails.add(email);
-      });
-      logs.forEach((log) => {
-        const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
-        const email = String(log.volunteer_email || log.email || '').trim().toLowerCase();
-        if (id) scopedAllowedIds.add(id);
-        if (email) scopedAllowedEmails.add(email);
-      });
-    }
+    scopedMemberLinks.forEach((link) => {
+      const data = link.data || {};
+      const id = String(data.user_id || data.userId || data.uid || link.id || '').trim();
+      const email = String(data.email || data.user_email || '').trim().toLowerCase();
+      if (id) scopedAllowedIds.add(id);
+      if (email) scopedAllowedEmails.add(email);
+    });
+    scopedJoinRequests.forEach((req) => {
+      const data = req.data || {};
+      const id = String(data.user_id || data.userId || '').trim();
+      const email = String(data.user_email || data.email || '').trim().toLowerCase();
+      if (id) scopedAllowedIds.add(id);
+      if (email) scopedAllowedEmails.add(email);
+    });
+    scopedLogs.forEach((log) => {
+      const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
+      const email = String(log.volunteer_email || log.email || '').trim().toLowerCase();
+      if (id) scopedAllowedIds.add(id);
+      if (email) scopedAllowedEmails.add(email);
+    });
 
     users.forEach((user) => {
       const data = user.data || {};
@@ -239,11 +263,9 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       const email = String(data.email || '').trim();
       const name = [first, last].filter(Boolean).join(' ').trim() || email || 'Volunteer';
       const role = String(data.role || 'Volunteer');
-      if (isSubAdminScoped) {
-        const normalizedEmail = email.toLowerCase();
-        if (!scopedAllowedIds.has(user.id) && (!normalizedEmail || !scopedAllowedEmails.has(normalizedEmail))) {
-          return;
-        }
+      const normalizedEmail = email.toLowerCase();
+      if (!scopedAllowedIds.has(user.id) && (!normalizedEmail || !scopedAllowedEmails.has(normalizedEmail))) {
+        return;
       }
       
       // Strict filters for organizations and admins
@@ -302,7 +324,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       }
     });
 
-    memberLinks.forEach((link) => {
+    scopedMemberLinks.forEach((link) => {
       const data = link.data || {};
       const userId = String(data.user_id || data.userId || data.uid || link.id || '').trim();
       const email = String(data.email || data.user_email || '').trim();
@@ -342,7 +364,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       });
     });
 
-    joinRequests.forEach((req) => {
+    scopedJoinRequests.forEach((req) => {
       const data = req.data || {};
       const status = String(data.status || '').toLowerCase();
       if (status !== 'accepted') return;
@@ -380,7 +402,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       });
     });
 
-    logs.forEach((log) => {
+    scopedLogs.forEach((log) => {
       const userId = getLogUserId(log);
       const logEmail = String(log.volunteer_email || log.email || '').trim();
       const logName = String(log.volunteer_name || log.name || log.firstName || '').trim();
@@ -458,7 +480,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
 
     // This page is strictly for volunteers. Never include admin/sub-admin accounts.
     return Array.from(volunteerMap.values()).filter((row) => !isAdminRole(String(row.role || '')));
-  }, [adminEmail, adminUid, isSubAdminScoped, joinRequests, logs, memberLinks, orgAdminEmails, orgAdminIds, users]);
+  }, [adminEmail, adminUid, joinRequests, logs, memberLinks, orgAdminEmails, orgAdminIds, subAdminScopeKey, users]);
 
   const activeVolunteers = useMemo(
     () => volunteers.filter((volunteer) => volunteer.status !== 'archived'),

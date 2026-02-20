@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import { Building2, Mail, Lock, Plus, ArrowRight, User, Eye, EyeOff } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, updateProfile, setPersistence, browserSessionPersistence } from 'firebase/auth';
 import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface CreatePageProps {
@@ -178,6 +178,7 @@ const CreatePage: React.FC<CreatePageProps> = ({ onNavigate }) => {
     setIsLoading(true);
     try {
       const auth = getAuth();
+      await setPersistence(auth, browserSessionPersistence);
       const db = getFirestore();
       const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const user = credential.user;

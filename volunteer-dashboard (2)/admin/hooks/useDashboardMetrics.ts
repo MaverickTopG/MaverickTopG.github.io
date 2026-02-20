@@ -36,6 +36,25 @@ type MetricsState = {
   topVolunteerMonthLabel: string;
 };
 
+const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
+  String(
+    data.target_group_id
+    || data.targetGroupId
+    || data.sub_admin_group_id
+    || data.subAdminGroupId
+    || data.group_scope_id
+    || data.groupScopeId
+    || data.groupId
+    || data.group_id
+    || '',
+  ).trim();
+
+const matchesScopeContext = (data: Record<string, unknown> = {}, activeScopeId = '') => {
+  const scopeId = resolveRecordScopeId(data);
+  if (activeScopeId) return scopeId === activeScopeId;
+  return !scopeId;
+};
+
 const emptyMetrics: DashboardMetrics = {
   totalVolunteers: 0,
   weeklyActive: 0,
@@ -48,7 +67,10 @@ const emptyMetrics: DashboardMetrics = {
   dailyGoalPercent: 0,
 };
 
-export const useDashboardMetrics = (): MetricsState => {
+export const useDashboardMetrics = (
+  options: { includeAllScopes?: boolean } = {},
+): MetricsState => {
+  const includeAllScopes = Boolean(options.includeAllScopes);
   const [orgCode, setOrgCode] = useState<string>('');
   const [orgId, setOrgId] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -62,7 +84,6 @@ export const useDashboardMetrics = (): MetricsState => {
   const [orgAdminEmails, setOrgAdminEmails] = useState<string[]>([]);
   const [memberLinks, setMemberLinks] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
   const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
-  const isSubAdminScoped = Boolean(subAdminScopeKey);
 
   useEffect(() => {
     const syncScope = () => {
@@ -202,53 +223,60 @@ export const useDashboardMetrics = (): MetricsState => {
       if (isAdminLikeRole(logRole)) return false;
       return true;
     });
+    const scopedMemberLinks = includeAllScopes
+      ? memberLinks
+      : memberLinks.filter((row) =>
+          matchesScopeContext((row.data || {}) as Record<string, unknown>, subAdminScopeKey),
+        );
+    const scopedLogs = includeAllScopes
+      ? filteredLogs
+      : filteredLogs.filter((log) =>
+          matchesScopeContext((log as Record<string, unknown>) || {}, subAdminScopeKey),
+        );
+
     const scopedAllowedIds = new Set<string>();
     const scopedAllowedEmails = new Set<string>();
-    if (isSubAdminScoped) {
-      memberLinks.forEach((row) => {
-        const data = row.data || {};
-        const id = String(data.user_id || data.userId || data.uid || row.id || '').trim();
-        const email = String(data.user_email || data.email || '').trim().toLowerCase();
-        if (id) scopedAllowedIds.add(id);
-        if (email) scopedAllowedEmails.add(email);
-      });
-      filteredLogs.forEach((log) => {
-        const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
-        const email = String((log as Record<string, unknown>).volunteer_email || (log as Record<string, unknown>).email || '').trim().toLowerCase();
-        if (id) scopedAllowedIds.add(id);
-        if (email) scopedAllowedEmails.add(email);
-      });
-    }
+    scopedMemberLinks.forEach((row) => {
+      const data = row.data || {};
+      const id = String(data.user_id || data.userId || data.uid || row.id || '').trim();
+      const email = String(data.user_email || data.email || '').trim().toLowerCase();
+      if (id) scopedAllowedIds.add(id);
+      if (email) scopedAllowedEmails.add(email);
+    });
+    scopedLogs.forEach((log) => {
+      const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
+      const email = String((log as Record<string, unknown>).volunteer_email || (log as Record<string, unknown>).email || '').trim().toLowerCase();
+      if (id) scopedAllowedIds.add(id);
+      if (email) scopedAllowedEmails.add(email);
+    });
 
-    const scopedVolunteers = isSubAdminScoped
-      ? filteredVolunteers.filter((volunteer) => {
-          const email = String(volunteer.email || '').trim().toLowerCase();
-          return scopedAllowedIds.has(volunteer.id) || (email && scopedAllowedEmails.has(email));
-        })
-      : filteredVolunteers;
+    const scopedVolunteers = filteredVolunteers.filter((volunteer) => {
+      const email = String(volunteer.email || '').trim().toLowerCase();
+      return scopedAllowedIds.has(volunteer.id) || (email && scopedAllowedEmails.has(email));
+    });
 
     const dedupedVolunteers = dedupeVolunteers(scopedVolunteers);
-    const enriched = computeVolunteerHours(dedupedVolunteers, filteredLogs);
-    const metrics = computeDashboardMetrics(enriched, filteredLogs);
+    const enriched = computeVolunteerHours(dedupedVolunteers, scopedLogs);
+    const metrics = computeDashboardMetrics(enriched, scopedLogs);
     const topVolunteers = [...enriched]
       .filter((v) => !isAdminLikeRole(v.role))
       .map((volunteer) => ({
         ...volunteer,
-        totalHours: getMonthHoursForVolunteer(volunteer, filteredLogs),
+        totalHours: getMonthHoursForVolunteer(volunteer, scopedLogs),
       }))
       .sort((a, b) => (b.totalHours || 0) - (a.totalHours || 0))
       .slice(0, 3);
-    const weeklySeries = buildWeeklySeries(enriched, filteredLogs, weekOffset);
-    const monthlySeries = buildMonthlySeries(enriched, filteredLogs);
-    const yearlySeries = buildYearlySeries(enriched, filteredLogs);
-    const recent = buildLastNDaysSeries(enriched, filteredLogs, 10);
+    const weeklySeries = buildWeeklySeries(enriched, scopedLogs, weekOffset);
+    const monthlySeries = buildMonthlySeries(enriched, scopedLogs);
+    const yearlySeries = buildYearlySeries(enriched, scopedLogs);
+    const recent = buildLastNDaysSeries(enriched, scopedLogs, 10);
     const eligible = enriched.filter((v) => !isAdminLikeRole(v.role));
     const retained = eligible.filter((v) => (v.totalHours || 0) > 0).length;
     const retentionRate = eligible.length ? Math.round((retained / eligible.length) * 100) : 0;
 
     const currentMonthLabel = new Date().toLocaleDateString(undefined, { month: 'long' });
     return {
-      logs: filteredLogs,
+      logs: scopedLogs,
       metrics,
       volunteers: enriched,
       topVolunteers,
@@ -260,7 +288,18 @@ export const useDashboardMetrics = (): MetricsState => {
       retentionRate,
       topVolunteerMonthLabel: `${currentMonthLabel} • Monthly`,
     };
-  }, [adminEmail, adminUid, isSubAdminScoped, logs, memberLinks, orgAdminEmails, orgAdminIds, volunteers, weekOffset]);
+  }, [
+    adminEmail,
+    adminUid,
+    includeAllScopes,
+    logs,
+    memberLinks,
+    orgAdminEmails,
+    orgAdminIds,
+    subAdminScopeKey,
+    volunteers,
+    weekOffset,
+  ]);
 
   return {
     loading,

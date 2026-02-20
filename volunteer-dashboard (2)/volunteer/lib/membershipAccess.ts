@@ -6,6 +6,8 @@ export type VolunteerMembership = {
   id: string;
   code: string;
   name: string;
+  scopeId: string;
+  scopeName: string;
   planTier: PlanTier;
   source: MembershipSource;
   docId: string;
@@ -38,6 +40,28 @@ const ORG_NAME_FIELDS = [
   'organization_name',
   'schoolName',
   'school_name',
+];
+
+const GROUP_SCOPE_ID_FIELDS = [
+  'target_group_id',
+  'targetGroupId',
+  'sub_admin_group_id',
+  'subAdminGroupId',
+  'group_scope_id',
+  'groupScopeId',
+  'group_id',
+  'groupId',
+];
+
+const GROUP_SCOPE_NAME_FIELDS = [
+  'target_group_name',
+  'targetGroupName',
+  'sub_admin_group_name',
+  'subAdminGroupName',
+  'group_scope_name',
+  'groupScopeName',
+  'group_name',
+  'groupName',
 ];
 
 const PLAN_HINT_FIELDS = [
@@ -206,6 +230,8 @@ export const extractVolunteerMembership = (
   const code = normalizeCode(ORG_CODE_FIELDS.map((field) => data[field]).find(Boolean));
   const id = normalizeText(ORG_ID_FIELDS.map((field) => data[field]).find(Boolean) || docId);
   const name = normalizeText(ORG_NAME_FIELDS.map((field) => data[field]).find(Boolean) || code || 'Organization');
+  const scopeId = normalizeText(GROUP_SCOPE_ID_FIELDS.map((field) => data[field]).find(Boolean));
+  const scopeName = normalizeText(GROUP_SCOPE_NAME_FIELDS.map((field) => data[field]).find(Boolean));
   const status = normalizeLower(data.status);
 
   if (isDeclinedJoinStatus(status)) return null;
@@ -216,10 +242,12 @@ export const extractVolunteerMembership = (
 
   const planTier = inferMembershipPlanTier(data);
   return {
-    key: code || id || `${source}:${docId}`,
+    key: `${scopeId || 'super-admin'}::${code || id || `${source}:${docId}`}`,
     id,
     code,
     name,
+    scopeId,
+    scopeName,
     planTier,
     source,
     docId,
@@ -241,6 +269,7 @@ export const mergeVolunteerMemberships = (memberships: VolunteerMembership[]) =>
         ...existing,
         ...membership,
         name: membership.name || existing.name,
+        scopeName: membership.scopeName || existing.scopeName,
       });
       return;
     }
@@ -250,6 +279,8 @@ export const mergeVolunteerMemberships = (memberships: VolunteerMembership[]) =>
         id: existing.id || membership.id,
         code: existing.code || membership.code,
         name: existing.name || membership.name,
+        scopeId: existing.scopeId || membership.scopeId,
+        scopeName: existing.scopeName || membership.scopeName,
       });
     }
   });

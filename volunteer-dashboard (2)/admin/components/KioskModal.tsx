@@ -57,6 +57,8 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
     { id: 'super-admin', name: 'Super Admin', isSuperAdmin: true },
   ]);
   const [selectedGroupId, setSelectedGroupId] = useState('super-admin');
+  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
+  const [groupLoadError, setGroupLoadError] = useState<string | null>(null);
 
   // Toast State
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
@@ -79,24 +81,67 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
     if (!isOpen) return;
     let active = true;
     const loadGroups = async () => {
+      setIsLoadingGroups(true);
+      setGroupLoadError(null);
       try {
         const call = httpsCallable(getFirebaseFunctions(), 'listSubAdminDirectory');
         const result = await call();
         const data = (result.data || {}) as any;
         const groups = Array.isArray(data.groups) ? data.groups : [];
+        const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+        const groupMeta = new Map<string, { name: string; hasActive: boolean; hasArchived: boolean }>();
+
+        groups.forEach((group: any) => {
+          const groupId = String(group.id || '').trim();
+          if (!groupId) return;
+          groupMeta.set(groupId, {
+            name: String(group.name || 'Subadmin Group'),
+            hasActive: false,
+            hasArchived: false,
+          });
+        });
+
+        accounts.forEach((account: any) => {
+          const groupId = String(account.groupId || '').trim();
+          if (!groupId) return;
+          const status = String(account.status || 'active').trim().toLowerCase();
+          const existing = groupMeta.get(groupId) || {
+            name: String(account.groupName || 'Subadmin Group'),
+            hasActive: false,
+            hasArchived: false,
+          };
+          if (status === 'archived') {
+            existing.hasArchived = true;
+          } else {
+            existing.hasActive = true;
+          }
+          if (!existing.name) {
+            existing.name = String(account.groupName || 'Subadmin Group');
+          }
+          groupMeta.set(groupId, existing);
+        });
+
+        const derivedGroups = Array.from(groupMeta.entries())
+          .filter(([, meta]) => meta.hasActive)
+          .map(([id, meta]) => ({
+            id,
+            name: meta.name,
+            isSuperAdmin: false,
+          }));
+
         const normalized = [
           { id: 'super-admin', name: 'Super Admin', isSuperAdmin: true },
-          ...groups.map((group: any) => ({
-            id: String(group.id || ''),
-            name: String(group.name || 'Subadmin Group'),
-            isSuperAdmin: false,
-          })).filter((group: { id: string }) => group.id),
+          ...derivedGroups.filter((group: { id: string }) => group.id),
         ];
         if (!active) return;
         setGroupOptions(normalized);
+        setGroupLoadError(null);
       } catch (fetchError) {
         if (!active) return;
         setGroupOptions([{ id: 'super-admin', name: 'Super Admin', isSuperAdmin: true }]);
+        setGroupLoadError('Could not load subadmin groups. Logs will be sent to Super Admin.');
+      } finally {
+        if (active) setIsLoadingGroups(false);
       }
     };
     loadGroups();
@@ -469,27 +514,36 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
                         className="w-full h-[100px] pl-24 pr-10 bg-white border-2 border-transparent rounded-[3rem] text-gray-900 font-[900] placeholder:text-gray-200 outline-none focus:ring-[12px] focus:ring-lime-300/10 focus:border-lime-300 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.08)] transition-all text-3xl"
                       />
                     </div>
-                    {groupOptions.length > 1 && (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between px-8">
-                          <label className="text-[11px] font-black text-gray-900 uppercase tracking-[0.4em]">Select Group</label>
-                          <Monitor className="w-4 h-4 text-gray-400" />
-                        </div>
-                        <div className="bg-white border-2 border-transparent rounded-[2.2rem] px-8 py-5 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.08)]">
-                          <select
-                            value={selectedGroupId}
-                            onChange={(event) => setSelectedGroupId(event.target.value)}
-                            className="w-full bg-transparent text-gray-900 font-bold text-2xl outline-none"
-                          >
-                            {groupOptions.map((group) => (
-                              <option key={group.id} value={group.id}>
-                                {group.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between px-8">
+                        <label className="text-[11px] font-black text-gray-900 uppercase tracking-[0.4em]">Send Log To</label>
+                        <Monitor className="w-4 h-4 text-gray-400" />
                       </div>
-                    )}
+                      <div className="bg-white border-2 border-transparent rounded-[2.2rem] px-8 py-5 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.08)]">
+                        <select
+                          value={selectedGroupId}
+                          onChange={(event) => setSelectedGroupId(event.target.value)}
+                          className="w-full bg-transparent text-gray-900 font-bold text-2xl outline-none"
+                        >
+                          {groupOptions.map((group) => (
+                            <option key={group.id} value={group.id}>
+                              {group.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className={`px-8 text-xs font-semibold ${
+                        groupLoadError ? 'text-amber-600' : 'text-gray-500'
+                      }`}>
+                        {isLoadingGroups
+                          ? 'Loading subadmin groups...'
+                          : groupLoadError
+                            ? groupLoadError
+                            : groupOptions.length > 1
+                              ? `${groupOptions.length - 1} subadmin group(s) available.`
+                              : 'No subadmin groups found. Logs will go to Super Admin.'}
+                      </p>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>

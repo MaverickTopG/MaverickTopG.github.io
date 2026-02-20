@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { gsap } from 'gsap';
-import { Building2, Mail, Lock, Plus, ArrowRight, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { Building2, Mail, Lock, Plus, ArrowRight, Eye, EyeOff, ArrowLeft, User } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { getFirebaseFunctions } from '../lib/firebase';
 
@@ -20,6 +20,8 @@ type SubAdminAccount = {
 export const CreatePage: React.FC<CreatePageProps> = ({ onBack, onCreated }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -85,7 +87,7 @@ export const CreatePage: React.FC<CreatePageProps> = ({ onBack, onCreated }) => 
     setError('');
     setNotice('');
 
-    if (!title.trim() || !email.trim() || !password) {
+    if (!title.trim() || !firstName.trim() || !lastName.trim() || !email.trim() || !password) {
       setError('All fields are required.');
       return;
     }
@@ -95,11 +97,15 @@ export const CreatePage: React.FC<CreatePageProps> = ({ onBack, onCreated }) => 
       const call = httpsCallable(functions, 'createSubAdminPortal');
       await call({
         title: title.trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         email: email.trim(),
         password,
       });
       setNotice('Subadmin created successfully.');
       setTitle('');
+      setFirstName('');
+      setLastName('');
       setEmail('');
       setPassword('');
       setShowPassword(false);
@@ -175,6 +181,46 @@ export const CreatePage: React.FC<CreatePageProps> = ({ onBack, onCreated }) => 
           </div>
 
           <form className="space-y-10" onSubmit={handleCreateSubadmin}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="create-input relative">
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <User className={`w-5 h-5 transition-colors ${focusedField === 'firstName' ? 'text-neon' : 'text-white/20'}`} />
+                </div>
+                <label className={`absolute left-8 top-1/2 -translate-y-1/2 text-xs font-black uppercase tracking-widest transition-all duration-300 pointer-events-none ${focusedField === 'firstName' || firstName ? 'text-white -translate-y-12 scale-90 opacity-40' : 'text-white/30'}`}>
+                  First Name
+                </label>
+                <input
+                  type="text"
+                  value={firstName}
+                  autoComplete="given-name"
+                  name="subadmin_first_name"
+                  onFocus={() => setFocusedField('firstName')}
+                  onBlur={() => setFocusedField(null)}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="w-full bg-transparent border-b border-white/15 pl-8 py-4 text-lg font-bold text-white focus:outline-none focus:border-neon transition-colors"
+                />
+              </div>
+
+              <div className="create-input relative">
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <User className={`w-5 h-5 transition-colors ${focusedField === 'lastName' ? 'text-neon' : 'text-white/20'}`} />
+                </div>
+                <label className={`absolute left-8 top-1/2 -translate-y-1/2 text-xs font-black uppercase tracking-widest transition-all duration-300 pointer-events-none ${focusedField === 'lastName' || lastName ? 'text-white -translate-y-12 scale-90 opacity-40' : 'text-white/30'}`}>
+                  Last Name
+                </label>
+                <input
+                  type="text"
+                  value={lastName}
+                  autoComplete="family-name"
+                  name="subadmin_last_name"
+                  onFocus={() => setFocusedField('lastName')}
+                  onBlur={() => setFocusedField(null)}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="w-full bg-transparent border-b border-white/15 pl-8 py-4 text-lg font-bold text-white focus:outline-none focus:border-neon transition-colors"
+                />
+              </div>
+            </div>
+
             <div className="create-input relative">
               <div className="absolute left-0 top-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-500">
                 <Building2 className={`w-5 h-5 transition-colors ${focusedField === 'title' ? 'text-neon' : 'text-white/20'}`} />

@@ -104,7 +104,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onOpenCreateSubAdmin }
       const session = data.session || null;
       setActiveSession(session);
       if (session) {
-        localStorage.setItem('nexolink_active_sub_admin_session', JSON.stringify(session));
+        window.sessionStorage.setItem('nexolink_active_sub_admin_session', JSON.stringify(session));
       }
       setNotice('Opening sub-admin portal...');
       window.dispatchEvent(new CustomEvent('nexolink:subadmin-session', { detail: session }));
@@ -190,7 +190,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onOpenCreateSubAdmin }
       const call = httpsCallable(functions, 'clearSubAdminSession');
       await call();
       setActiveSession(null);
-      localStorage.removeItem('nexolink_active_sub_admin_session');
+      window.sessionStorage.removeItem('nexolink_active_sub_admin_session');
       setNotice('Returned to super admin portal.');
       window.dispatchEvent(new CustomEvent('nexolink:subadmin-session', { detail: null }));
     } catch (sessionError: any) {

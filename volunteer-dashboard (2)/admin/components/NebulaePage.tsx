@@ -17,7 +17,10 @@ import {
   Compass,
   Plus,
   FileText,
-  X
+  X,
+  ChevronDown,
+  Network,
+  Shield,
 } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { 
@@ -77,6 +80,9 @@ interface NebulaePageProps {
   planTier?: string;
   aiEnabled?: boolean;
   opsCenter?: NebulaeOpsPanel | null;
+  contextScope?: 'superadmin-only' | 'include-subadmins';
+  onContextScopeChange?: (scope: 'superadmin-only' | 'include-subadmins') => void;
+  isSubAdminPortal?: boolean;
 }
 
 const INTELLIGENCE_MODULES = [
@@ -282,6 +288,9 @@ export const NebulaePage: React.FC<NebulaePageProps> = ({
   planTier = 'orbit',
   aiEnabled = false,
   opsCenter = null,
+  contextScope = 'superadmin-only',
+  onContextScopeChange,
+  isSubAdminPortal = false,
 }) => {
   const [input, setInput] = useState('');
   const [chatId, setChatId] = useState<string | null>(null);
@@ -292,16 +301,26 @@ export const NebulaePage: React.FC<NebulaePageProps> = ({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedModes, setSelectedModes] = useState<NebulaeModeKey[]>([]);
+  const [showContextMenu, setShowContextMenu] = useState(false);
   const [strategyGoal, setStrategyGoal] = useState(STRATEGY_GOALS[0].id);
   const [strategyHorizon, setStrategyHorizon] = useState(STRATEGY_HORIZONS[1].id);
   const [strategyStyle, setStrategyStyle] = useState(STRATEGY_STYLES[0].id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const modeSearchTimerRef = useRef<number | null>(null);
   const lastModeQueryRef = useRef<Record<string, string>>({});
   const selectedModesKey = useMemo(() => getModeSelectionKey(selectedModes), [selectedModes]);
   const hasModeSelection = selectedModes.length > 0;
   const isDeepMode = selectedModes.length >= 2;
+  const contextLabel =
+    contextScope === 'include-subadmins' ? 'Superadmin + Subadmins' : 'Superadmin Only';
+  const contextInstruction = useMemo(() => {
+    if (contextScope === 'include-subadmins') {
+      return 'Context scope: Include all organization data from superadmin and all subadmin groups to provide a holistic response.';
+    }
+    return 'Context scope: Use only superadmin-scope data (exclude subadmin-scoped data) for this response.';
+  }, [contextScope]);
   const primaryMode = selectedModes[0] || null;
   const activeModeConfig = primaryMode ? NEBULAE_MODE_CONFIG[primaryMode] : null;
   const ActiveModeIcon = activeModeConfig?.icon || Layers;
@@ -360,6 +379,18 @@ export const NebulaePage: React.FC<NebulaePageProps> = ({
     }
   }, [messages, isThinking]);
 
+  useEffect(() => {
+    if (!showContextMenu) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!contextMenuRef.current) return;
+      if (!contextMenuRef.current.contains(event.target as Node)) {
+        setShowContextMenu(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [showContextMenu]);
+
   const buildModePrompt = (mode: NebulaeModeKey, queryText: string) => {
     const normalizedQuery = queryText || 'Provide mode-specific analysis for volunteer operations.';
     if (mode === 'grants') {
@@ -387,12 +418,13 @@ Output: Provide top options, expected impact, risks, and a recommended path with
     const modeContext = modes
       .map((mode) => `- ${NEBULAE_MODE_CONFIG[mode].label}: ${NEBULAE_MODE_CONFIG[mode].focus}`)
       .join('\n');
-    return `Context: You are in DEEP MODE for volunteer management intelligence.
+    return `Context: You are in multi-mode advanced reasoning for volunteer management intelligence.
 Selected modes:
 ${modeContext}
 
 Task: Crunch the full picture and calculate interactions across staffing, grants, portal workflow, and decision risk where applicable.
 Query: ${normalizedQuery}
+Reasoning directive: Think deeply, evaluate cross-dependencies, and favor completeness over speed.
 
 Output format:
 1) Cross-factor diagnosis with hard constraints.
@@ -439,6 +471,7 @@ Output format:
       ? `${opsCenter.primaryRecommendation.volunteerName} (${opsCenter.primaryRecommendation.confidence}% confidence)`
       : 'No primary recommendation yet';
     return `Ops context:
+${contextInstruction}
 Top priorities:
 ${topPriorities || '- None'}
 Primary recommendation: ${recommendation}
@@ -602,7 +635,8 @@ Output format:
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
     
-    const currentInput = overrideInput ?? buildActivePrompt(modesAtSend, finalInput.trim());
+    const modePrompt = buildActivePrompt(modesAtSend, finalInput.trim());
+    const currentInput = overrideInput ?? `${contextInstruction}\n\n${modePrompt}`;
     const currentAttachments = [...attachments];
     
     setInput('');
@@ -769,6 +803,57 @@ Output format:
            </div>
            
            <div className="flex items-center gap-4">
+              {!isSubAdminPortal && (
+                <div className="relative" ref={contextMenuRef}>
+                  <button
+                    onClick={() => setShowContextMenu((prev) => !prev)}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-full border transition-all shadow-sm bg-white text-gray-700 border-gray-100 hover:bg-gray-50"
+                  >
+                    {contextScope === 'include-subadmins' ? (
+                      <Network className="w-4 h-4 text-gray-500" />
+                    ) : (
+                      <Shield className="w-4 h-4 text-gray-500" />
+                    )}
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Context</span>
+                    <ChevronDown className="w-3 h-3 text-gray-400" />
+                  </button>
+                  <AnimatePresence>
+                    {showContextMenu && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                        className="absolute right-0 top-14 w-72 bg-white rounded-2xl border border-gray-100 shadow-2xl p-2 z-30"
+                      >
+                        <button
+                          onClick={() => {
+                            onContextScopeChange?.('superadmin-only');
+                            setShowContextMenu(false);
+                          }}
+                          className={`w-full text-left rounded-xl px-3 py-3 transition-colors ${
+                            contextScope === 'superadmin-only' ? 'bg-[#D2F677]/40' : 'hover:bg-gray-50'
+                          }`}
+                        >
+                          <p className="text-xs font-black text-gray-900 uppercase tracking-[0.14em]">Superadmin Only</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Use only superadmin-scope records.</p>
+                        </button>
+                        <button
+                          onClick={() => {
+                            onContextScopeChange?.('include-subadmins');
+                            setShowContextMenu(false);
+                          }}
+                          className={`w-full text-left rounded-xl px-3 py-3 transition-colors ${
+                            contextScope === 'include-subadmins' ? 'bg-[#D2F677]/40' : 'hover:bg-gray-50'
+                          }`}
+                        >
+                          <p className="text-xs font-black text-gray-900 uppercase tracking-[0.14em]">Include Subadmins</p>
+                          <p className="text-[11px] text-gray-500 mt-1">Use superadmin + all subadmin data for holistic answers.</p>
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
               {SHOW_EMBEDDED_OPS_CENTER && aiEnabled && opsCenter && (
                 <button
                   onClick={() => {
@@ -809,12 +894,6 @@ Output format:
                   </button>
                 );
               })}
-              {isDeepMode && (
-                <div className="flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm bg-[#D2F677] border-[#D2F677]">
-                  <Zap className="w-4 h-4 text-black" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-black">Deep Mode</span>
-                </div>
-              )}
            </div>
         </div>
 
@@ -1085,7 +1164,7 @@ Output format:
                       color: '#0F172A',
                     }}
                   >
-                    {isDeepMode ? 'Deep Mode Active' : `${activeModeConfig?.label || 'Mode'} Active`}
+                    {isDeepMode ? 'Multi-Mode Active' : `${activeModeConfig?.label || 'Mode'} Active`}
                   </span>
                   <span
                     className="px-3 py-1 rounded-full bg-white text-[10px] font-black uppercase tracking-[0.2em] text-gray-500"
@@ -1095,6 +1174,14 @@ Output format:
                       ? `Modes: ${selectedModes.map((mode) => NEBULAE_MODE_CONFIG[mode].buttonLabel).join(' + ')}`
                       : `Focus: ${activeModeConfig?.focus || ''}`}
                   </span>
+                  {!isSubAdminPortal && (
+                    <span
+                      className="px-3 py-1 rounded-full bg-white text-[10px] font-black uppercase tracking-[0.2em] text-gray-500"
+                      style={{ border: `1px solid ${LIME_ACCENT}` }}
+                    >
+                      {`Context: ${contextLabel}`}
+                    </span>
+                  )}
                 </div>
               )}
               {isDragging && (
@@ -1161,7 +1248,7 @@ Output format:
                 ref={inputRef}
                 placeholder={
                   isDeepMode
-                    ? 'Deep Mode active: ask for full cross-factor analysis across selected features...'
+                    ? 'Multi-mode active: ask for full cross-factor analysis across selected features...'
                     : activeModeConfig?.inputPlaceholder || 'Select one or more mode buttons above, then ask your question...'
                 }
                 className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 placeholder:text-gray-400 font-bold text-lg"
@@ -1188,7 +1275,7 @@ Output format:
           >
              <div className="mb-12">
                 <h3 className="text-xs font-[1000] text-gray-400 uppercase tracking-[0.5em] mb-4">
-                  {isDeepMode ? 'Deep Mode Intelligence' : activeModeConfig?.sidebarEyebrow}
+                  {isDeepMode ? 'Multi-Mode Intelligence' : activeModeConfig?.sidebarEyebrow}
                 </h3>
                  <div className="flex items-center justify-between">
                     <h2 className="text-2xl font-black text-gray-900 italic uppercase tracking-tighter">
@@ -1244,9 +1331,9 @@ Output format:
                        <h4 className="font-bold text-gray-900 text-base leading-snug mb-2 transition-colors">
                           {res.web?.title || "Verification Pending"}
                        </h4>
-                       <p className="text-xs text-gray-400 font-medium line-clamp-2">
+                          <p className="text-xs text-gray-400 font-medium line-clamp-2">
                           {isDeepMode
-                            ? 'Deep Mode combines selected features to compute cross-factor operational guidance.'
+                            ? 'Multi-mode reasoning combines selected features to compute cross-factor operational guidance.'
                             : activeModeConfig?.insightLine}
                        </p>
                     </motion.div>
@@ -1259,7 +1346,7 @@ Output format:
                      <h4 className="text-sm font-black text-gray-900 uppercase tracking-widest">Awaiting Queries</h4>
                      <p className="text-[10px] font-bold text-gray-400 max-w-[200px] mt-2">
                        {isDeepMode
-                         ? 'Ask a Deep Mode question to compute combined insights across your selected features.'
+                         ? 'Ask a multi-mode question to compute combined insights across your selected features.'
                          : activeModeConfig?.sidebarEmpty}
                      </p>
                   </div>
@@ -1280,7 +1367,7 @@ Output format:
                   className="w-full py-5 rounded-2xl text-black font-[1000] text-xs uppercase tracking-[0.2em] italic hover:bg-black hover:text-white transition-all shadow-xl shadow-black/5"
                   style={{ backgroundColor: LIME_ACCENT }}
                 >
-                   {isDeepMode ? 'Refresh Deep Mode' : activeModeConfig?.refreshLabel}
+                   {isDeepMode ? 'Refresh Multi-Mode' : activeModeConfig?.refreshLabel}
                 </button>
              </div>
           </motion.div>

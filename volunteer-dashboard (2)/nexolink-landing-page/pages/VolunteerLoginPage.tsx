@@ -7,7 +7,6 @@ import {
   getAuth,
   signInWithEmailAndPassword,
   setPersistence,
-  browserLocalPersistence,
   browserSessionPersistence
 } from 'firebase/auth';
 
@@ -97,7 +96,7 @@ const VolunteerLoginPage: React.FC<VolunteerLoginPageProps> = ({ onNavigate }) =
 
     try {
       const auth = getAuth();
-      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+      await setPersistence(auth, browserSessionPersistence);
       await signInWithEmailAndPassword(auth, email.trim(), password);
       
       if (rememberMe) {

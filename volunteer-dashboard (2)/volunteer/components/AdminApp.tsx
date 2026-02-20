@@ -25,7 +25,6 @@ import { useVolunteerMetrics } from '../hooks/useVolunteerMetrics';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgContext } from '../lib/orgContext';
 import {
   extractVolunteerMembership,
   hasPremiumAccessForMembership,
@@ -187,6 +186,25 @@ export const VolunteerApp: React.FC = () => {
       const canAccessMessaging = canAccessPremium;
       setHasPremiumOrgAccess(canAccessPremium);
       setHasMessagingAccess(canAccessMessaging);
+      setOrgContext((prev) => {
+        const selectedMembership =
+          hydratedMemberships.find(
+            (membership) =>
+              (prev.id && membership.id === prev.id) ||
+              (prev.code && membership.code === prev.code),
+          ) ||
+          hydratedMemberships.find(hasPremiumAccessForMembership) ||
+          hydratedMemberships[0] ||
+          null;
+        if (!selectedMembership) {
+          return { id: '', code: '', name: '' };
+        }
+        return {
+          id: selectedMembership.id || '',
+          code: selectedMembership.code || '',
+          name: selectedMembership.name || '',
+        };
+      });
       setMembershipAccessReady(true);
     };
 
@@ -195,6 +213,7 @@ export const VolunteerApp: React.FC = () => {
       if (!user) {
         setHasPremiumOrgAccess(false);
         setHasMessagingAccess(false);
+        setOrgContext({ id: '', code: '', name: '' });
         setMembershipAccessReady(true);
         return;
       }
@@ -229,28 +248,6 @@ export const VolunteerApp: React.FC = () => {
       clearMembershipListeners();
       unsubscribeAuth();
     };
-  }, []);
-
-  React.useEffect(() => {
-    const auth = getFirebaseAuth();
-    const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        setOrgContext({ id: '', code: '', name: '' });
-        return;
-      }
-      try {
-        const context = await resolveOrgContext(db, user.uid);
-        setOrgContext({
-          id: context.orgId || '',
-          code: context.orgCode || '',
-          name: context.orgName || ''
-        });
-      } catch (error) {
-        console.error('Failed to resolve org context', error);
-      }
-    });
-    return () => unsubscribe();
   }, []);
 
   const formatted = useMemo(() => {

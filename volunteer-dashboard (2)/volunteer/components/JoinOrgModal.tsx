@@ -89,17 +89,25 @@ export const JoinOrgModal: React.FC<JoinOrgModalProps> = ({ isOpen, onClose, use
       const data = (result.data || {}) as any;
       const allTargets: JoinTarget[] = Array.isArray(data.targets) ? data.targets : [];
       const availableTargets = allTargets.filter((target) => !target.alreadyJoined);
+      const resolvedOrgName = String(data.orgName || 'Organization');
+      const displayTargets = availableTargets.map((target) => ({
+        ...target,
+        name: target.isSuperAdmin ? resolvedOrgName : target.name,
+      }));
+      const hasSubAdminTargets = availableTargets.some((target) => !target.isSuperAdmin);
 
-      setOrgName(String(data.orgName || 'Organization'));
+      setOrgName(resolvedOrgName);
 
-      if (availableTargets.length === 0) {
+      if (displayTargets.length === 0) {
         setError('You are already joined or pending in all available groups for this organization.');
         setLoading(false);
         return;
       }
 
-      setTargets(availableTargets);
-      setSelectedTargetIds(availableTargets.map((target) => target.id));
+      setTargets(displayTargets);
+      setSelectedTargetIds(
+        hasSubAdminTargets ? [] : displayTargets.map((target) => target.id)
+      );
       setStep('groups');
     } catch (err: any) {
       console.error('Join target lookup failed:', err);

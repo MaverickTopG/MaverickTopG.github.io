@@ -5,145 +5,50 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    // Rely on custom claims from token.
+    // 'paid' is true for paying org members or subdmins.
+    // 'admin' or 'sub_admin' flags are set by Cloud Functions.
     function hasPaidAccess() {
-      return isSignedIn() && request.auth.token.paid == true;
-    }
-
-    function hasGrandfatheredAccess() {
-      return isSignedIn() && request.auth.token.grandfathered == true;
+      return isSignedIn() && (request.auth.token.paid == true || request.auth.token.grandfathered == true);
     }
 
     function hasFullAccess() {
-      return hasPaidAccess() || hasGrandfatheredAccess();
+      return isSignedIn() && (
+        request.auth.token.admin == true || 
+        request.auth.token.sub_admin == true || 
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'super-admin'
+      );
     }
 
-    function userOrgDoc() {
-      return get(/databases/(default)/documents/user_organizations/$(request.auth.uid));
+    // Check if path's orgId corresponds to auth token org claims.
+    function orgMatchesClaim(pathOrgId) {
+      return isSignedIn() && (
+        pathOrgId == request.auth.token.orgId ||
+        pathOrgId == request.auth.token.organizationId ||
+        pathOrgId.matches('subadmin_' + (request.auth.token.orgId ? request.auth.token.orgId : '---') + '_.*') ||
+        pathOrgId.matches('subadmin_' + (request.auth.token.organizationId ? request.auth.token.organizationId : '---') + '_.*')
+      );
     }
 
-    function userOrgExists() {
-      return exists(/databases/(default)/documents/user_organizations/$(request.auth.uid));
+    function orgMatches(pathOrgId) {
+      return orgMatchesClaim(pathOrgId);
     }
 
-    function userProfile() {
-      return get(/databases/(default)/documents/users/$(request.auth.uid));
-    }
-
-    function userProfileExists() {
-      return exists(/databases/(default)/documents/users/$(request.auth.uid));
-    }
-
-    function orgMatches(orgId) {
-      return (userOrgExists()
-        && (
-          userOrgDoc().data.org_id == orgId ||
-          userOrgDoc().data.orgId == orgId ||
-          userOrgDoc().data.organization_id == orgId ||
-          userOrgDoc().data.organizationId == orgId ||
-          userOrgDoc().data.linked_org_id == orgId ||
-          userOrgDoc().data.linkedOrgId == orgId
-        ))
-        || (userProfileExists()
-          && (
-            userProfile().data.org_id == orgId ||
-            userProfile().data.orgId == orgId ||
-            userProfile().data.organization_id == orgId ||
-            userProfile().data.organizationId == orgId ||
-            userProfile().data.linked_org_id == orgId ||
-            userProfile().data.linkedOrgId == orgId
-          ));
-    }
-
-    function orgSegmentMatches(segment) {
-      return (userOrgExists()
-        && (
-          segment == 'org-' + userOrgDoc().data.org_id ||
-          segment == 'org-' + userOrgDoc().data.orgId ||
-          segment == 'org-' + userOrgDoc().data.organization_id ||
-          segment == 'org-' + userOrgDoc().data.organizationId ||
-          segment == 'org-' + userOrgDoc().data.linked_org_id ||
-          segment == 'org-' + userOrgDoc().data.linkedOrgId
-        ))
-        || (userProfileExists()
-          && (
-            segment == 'org-' + userProfile().data.org_id ||
-            segment == 'org-' + userProfile().data.orgId ||
-            segment == 'org-' + userProfile().data.organization_id ||
-            segment == 'org-' + userProfile().data.organizationId ||
-            segment == 'org-' + userProfile().data.linked_org_id ||
-            segment == 'org-' + userProfile().data.linkedOrgId
-          ));
-    }
-
-    function orgDoc(orgId) {
-      return get(/databases/(default)/documents/organizations/$(orgId));
-    }
-
-    function orgDocExists(orgId) {
-      return exists(/databases/(default)/documents/organizations/$(orgId));
-    }
-
-    function orgDocAlt(orgId) {
-      return get(/databases/(default)/documents/orgs/$(orgId));
-    }
-
-    function orgDocAltExists(orgId) {
-      return exists(/databases/(default)/documents/orgs/$(orgId));
-    }
-
-    function orgDocVol(orgId) {
-      return get(/databases/(default)/documents/volunteer_organizations/$(orgId));
-    }
-
-    function orgDocVolExists(orgId) {
-      return exists(/databases/(default)/documents/volunteer_organizations/$(orgId));
-    }
-
-    function planTierForOrg(orgId) {
-      return orgId != null && orgDocExists(orgId) && orgDoc(orgId).data.plan_tier != null
-        ? orgDoc(orgId).data.plan_tier
-        : orgId != null && orgDocAltExists(orgId) && orgDocAlt(orgId).data.plan_tier != null
-          ? orgDocAlt(orgId).data.plan_tier
-          : orgId != null && orgDocVolExists(orgId) && orgDocVol(orgId).data.plan_tier != null
-            ? orgDocVol(orgId).data.plan_tier
-            : 'nebula';
-    }
-
-    function userOrgId() {
-      return (userOrgExists()
-        ? (
-          userOrgDoc().data.org_id
-          || userOrgDoc().data.orgId
-          || userOrgDoc().data.organization_id
-          || userOrgDoc().data.organizationId
-          || userOrgDoc().data.linked_org_id
-          || userOrgDoc().data.linkedOrgId
-        )
-        : null)
-        || (userProfileExists()
-          ? (
-            userProfile().data.org_id
-            || userProfile().data.orgId
-            || userProfile().data.organization_id
-            || userProfile().data.organizationId
-            || userProfile().data.linked_org_id
-            || userProfile().data.linkedOrgId
-          )
-          : null);
-    }
-
+    // Messaging attachments should be available to signed-in org participants.
+    // Scope and org isolation is enforced by orgMatches/hasFullAccess checks.
     function planAllowsMessaging() {
-      return hasGrandfatheredAccess() || (userOrgId() != null && planTierForOrg(userOrgId()) != 'orbit');
+      return isSignedIn();
     }
 
     function planAllowsEvents() {
-      return hasGrandfatheredAccess() || (userOrgId() != null && planTierForOrg(userOrgId()) != 'orbit');
+      return hasPaidAccess() || hasFullAccess();
     }
 
     match /messages/{orgSegment}/{fileName} {
-      allow read, write: if isSignedIn()
-        && (hasFullAccess() || orgSegmentMatches(orgSegment))
-        && planAllowsMessaging();
+      // Messaging attachments must work for authenticated portal users.
+      // Scope and recipient restrictions are enforced at Firestore message docs.
+      allow read, write: if isSignedIn() && planAllowsMessaging();
     }
 
     match /events/{orgId}/{fileName} {

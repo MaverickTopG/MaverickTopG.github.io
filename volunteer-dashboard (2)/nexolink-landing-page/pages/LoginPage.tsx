@@ -8,7 +8,6 @@ import {
   signInWithEmailAndPassword,
   signInWithCustomToken,
   setPersistence,
-  browserLocalPersistence,
   browserSessionPersistence
 } from 'firebase/auth';
 
@@ -185,10 +184,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                   }
                   try {
                     const auth = getAuth();
-                    await setPersistence(
-                      auth,
-                      rememberMe ? browserLocalPersistence : browserSessionPersistence
-                    );
+                    await setPersistence(auth, browserSessionPersistence);
                     await signInWithEmailAndPassword(auth, email.trim(), password);
                     // Ensure we don't carry over a previous sub-admin session into a super-admin login.
                     localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
@@ -240,10 +236,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                         }
 
                         const auth = getAuth();
-                        await setPersistence(
-                          auth,
-                          rememberMe ? browserLocalPersistence : browserSessionPersistence
-                        );
+                        await setPersistence(auth, browserSessionPersistence);
                         await signInWithCustomToken(auth, customToken);
 
                         if (rememberMe) {

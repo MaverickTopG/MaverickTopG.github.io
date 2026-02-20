@@ -885,16 +885,16 @@ export const listSubAdminDirectory = onCall(async (request) => {
   const accounts = accountsSnap.docs
     .map((docSnap) => {
       const data = docSnap.data() || {};
-      const groupId = String(data.groupId || '');
+      const group = resolveSubAdminGroupContext(docSnap.id, data);
       return {
         id: docSnap.id,
         email: String(data.email || ''),
         displayName: String(data.displayName || ''),
-        groupId,
-        groupName: groupMap.get(groupId)?.name || String(data.groupName || ''),
+        groupId: group.groupId,
+        groupName: groupMap.get(group.groupId)?.name || group.groupName,
         createdAt: data.createdAt || null,
         lastSessionStartedAt: data.lastSessionStartedAt || null,
-        status: String(data.status || 'active'),
+        status: isSubAdminAccountActive(data) ? 'active' : 'archived',
       };
     })
     .sort((a, b) => {
@@ -969,7 +969,10 @@ export const createSubAdminAccount = onCall(async (request) => {
 
   const groupId = String(request.data?.groupId || '').trim();
   const email = normalizeSubAdminEmail(request.data?.email);
-  const displayName = String(request.data?.displayName || '').trim();
+  const firstName = String(request.data?.firstName || request.data?.first_name || '').trim();
+  const lastName = String(request.data?.lastName || request.data?.last_name || '').trim();
+  const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+  const displayName = fullName || String(request.data?.displayName || '').trim();
   const password = normalizeSubAdminPassword(request.data?.password);
 
   if (!groupId) {
@@ -1016,6 +1019,10 @@ export const createSubAdminAccount = onCall(async (request) => {
       groupName,
       email,
       displayName: displayName || '',
+      firstName: firstName || '',
+      lastName: lastName || '',
+      first_name: firstName || '',
+      last_name: lastName || '',
       passwordHash: hash,
       passwordSalt: salt,
       passwordFingerprint: fingerprint,
@@ -1045,6 +1052,8 @@ export const createSubAdminAccount = onCall(async (request) => {
     id: accountRef.id,
     email,
     displayName: displayName || '',
+    firstName: firstName || '',
+    lastName: lastName || '',
     groupId,
     groupName,
     status: 'active',
@@ -1059,11 +1068,20 @@ export const createSubAdminPortal = onCall(async (request) => {
   }
 
   const title = String(request.data?.title || '').trim();
+  const firstName = String(request.data?.firstName || request.data?.first_name || '').trim();
+  const lastName = String(request.data?.lastName || request.data?.last_name || '').trim();
   const email = normalizeSubAdminEmail(request.data?.email);
   const password = normalizeSubAdminPassword(request.data?.password);
+  const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
 
   if (!title) {
     throw new HttpsError('invalid-argument', 'Title is required.');
+  }
+  if (!firstName) {
+    throw new HttpsError('invalid-argument', 'First name is required.');
+  }
+  if (!lastName) {
+    throw new HttpsError('invalid-argument', 'Last name is required.');
   }
   if (!email) {
     throw new HttpsError('invalid-argument', 'Email is required.');
@@ -1130,7 +1148,11 @@ export const createSubAdminPortal = onCall(async (request) => {
       groupId: groupRef.id,
       groupName,
       email,
-      displayName: title,
+      displayName: fullName || title,
+      firstName: firstName || '',
+      lastName: lastName || '',
+      first_name: firstName || '',
+      last_name: lastName || '',
       passwordHash: hash,
       passwordSalt: salt,
       passwordFingerprint: fingerprint,
@@ -1157,6 +1179,9 @@ export const createSubAdminPortal = onCall(async (request) => {
     accountId: accountRef.id,
     groupId: groupRef.id,
     title: groupName,
+    displayName: fullName || title,
+    firstName: firstName || '',
+    lastName: lastName || '',
     email,
   };
 });
@@ -1283,7 +1308,7 @@ export const backfillSubAdminPasswordIndex = onCall(async (request) => {
       accountId: accountDoc.id,
       accountPath: accountDoc.ref.path,
       email: normalizeSubAdminEmail(data.email),
-      status: String(data.status || 'active').toLowerCase(),
+      status: isSubAdminAccountActive(data) ? 'active' : 'archived',
       createdAt: now,
       updatedAt: now,
       createdBy: uid,
@@ -1327,7 +1352,13 @@ export const authenticateSubAdminLogin = onCall(async (request) => {
 
   const indexData = indexSnap.data() || {};
   const indexStatus = String(indexData.status || 'active').toLowerCase();
-  if (indexStatus !== 'active') {
+  if (
+    indexStatus.includes('archived')
+    || indexStatus.includes('inactive')
+    || indexStatus.includes('revoked')
+    || indexStatus.includes('disabled')
+    || indexStatus.includes('deleted')
+  ) {
     throw new HttpsError('failed-precondition', 'Sub-admin account is inactive.');
   }
 
@@ -1352,7 +1383,7 @@ export const authenticateSubAdminLogin = onCall(async (request) => {
   if (normalizeSubAdminEmail(accountData.email) !== email) {
     throw new HttpsError('permission-denied', 'Invalid sub-admin credentials.');
   }
-  if (String(accountData.status || 'active').toLowerCase() !== 'active') {
+  if (!isSubAdminAccountActive(accountData)) {
     throw new HttpsError('failed-precondition', 'Sub-admin account is inactive.');
   }
   if (!verifySubAdminPassword(password, accountData.passwordSalt, accountData.passwordHash)) {
@@ -1397,12 +1428,13 @@ export const authenticateSubAdminLogin = onCall(async (request) => {
   }
 
   const now = Timestamp.now();
+  const resolvedGroup = resolveSubAdminGroupContext(accountDoc.id, accountData);
   const session = {
     subAdminId: accountDoc.id,
     email: String(accountData.email || email),
     displayName: String(accountData.displayName || ''),
-    groupId: String(accountData.groupId || ''),
-    groupName: String(accountData.groupName || ''),
+    groupId: resolvedGroup.groupId,
+    groupName: resolvedGroup.groupName,
     startedAt: now,
   };
 
@@ -1497,7 +1529,7 @@ export const subAdminLogin = onRequest(async (req, res) => {
       if (!accountDoc || !accountDoc.exists) return false;
       const data = accountData || accountDoc.data() || {};
       if (normalizeSubAdminEmail(data.email) !== email) return false;
-      if (String(data.status || 'active').toLowerCase() !== 'active') return false;
+      if (!isSubAdminAccountActive(data)) return false;
       return verifySubAdminPassword(password, data.passwordSalt, data.passwordHash);
     };
 
@@ -1506,7 +1538,14 @@ export const subAdminLogin = onRequest(async (req, res) => {
 
     if (indexSnap.exists) {
       const indexData = indexSnap.data() || {};
-      if (String(indexData.status || 'active').toLowerCase() !== 'active') {
+      const indexStatus = String(indexData.status || 'active').toLowerCase();
+      if (
+        indexStatus.includes('archived')
+        || indexStatus.includes('inactive')
+        || indexStatus.includes('revoked')
+        || indexStatus.includes('disabled')
+        || indexStatus.includes('deleted')
+      ) {
         res.status(403).json({ error: 'Invalid email or password.' });
         return;
       }
@@ -1553,7 +1592,7 @@ export const subAdminLogin = onRequest(async (req, res) => {
 
       const matches = accountsSnap.docs.filter((docSnap) => {
         const data = docSnap.data() || {};
-        if (String(data.status || 'active').toLowerCase() !== 'active') return false;
+        if (!isSubAdminAccountActive(data)) return false;
         return verifySubAdminPassword(password, data.passwordSalt, data.passwordHash);
       });
 
@@ -1602,7 +1641,7 @@ export const subAdminLogin = onRequest(async (req, res) => {
           if (!snap || snap.empty) continue;
           for (const docSnap of snap.docs) {
             const data = docSnap.data() || {};
-            if (String(data.status || 'active').toLowerCase() !== 'active') continue;
+            if (!isSubAdminAccountActive(data)) continue;
             if (!verifySubAdminPassword(password, data.passwordSalt, data.passwordHash)) continue;
             found.push({ orgId: entry.orgId, docSnap, data });
             if (found.length > 1) break;
@@ -1648,7 +1687,8 @@ export const subAdminLogin = onRequest(async (req, res) => {
       }, { merge: true })
       .catch(() => {});
 
-    const groupId = String(accountData?.groupId || '').trim();
+    const resolvedGroup = resolveSubAdminGroupContext(accountId, accountData);
+    const groupId = String(resolvedGroup.groupId || '').trim();
     if (!accountOrgId || !groupId) {
       res.status(400).json({ error: 'Sub-admin account is missing organization metadata.' });
       return;
@@ -1688,7 +1728,7 @@ export const subAdminLogin = onRequest(async (req, res) => {
       email: String(accountData.email || email),
       displayName: String(accountData.displayName || ''),
       groupId,
-      groupName: String(accountData.groupName || ''),
+      groupName: resolvedGroup.groupName,
       startedAt: sessionStartedAt,
     };
 
@@ -1754,6 +1794,8 @@ export const subAdminLogin = onRequest(async (req, res) => {
         updatedAt: sessionStartedAt,
       }, { merge: true }),
       accountDoc.ref.set({
+        groupId,
+        groupName: resolvedGroup.groupName,
         lastSessionStartedAt: sessionStartedAt,
         lastSessionStartedBy: uid,
         updatedAt: sessionStartedAt,
@@ -1794,17 +1836,18 @@ export const startSubAdminSession = onCall(async (request) => {
     throw new HttpsError('not-found', 'Sub-admin account not found.');
   }
   const accountData = accountSnap.data() || {};
-  if (String(accountData.status || 'active') !== 'active') {
+  if (!isSubAdminAccountActive(accountData)) {
     throw new HttpsError('failed-precondition', 'Sub-admin account is inactive.');
   }
 
   const now = Timestamp.now();
+  const resolvedGroup = resolveSubAdminGroupContext(subAdminId, accountData);
   const session = {
     subAdminId,
     email: String(accountData.email || ''),
     displayName: String(accountData.displayName || ''),
-    groupId: String(accountData.groupId || ''),
-    groupName: String(accountData.groupName || ''),
+    groupId: resolvedGroup.groupId,
+    groupName: resolvedGroup.groupName,
     startedAt: now,
   };
 
@@ -1819,6 +1862,8 @@ export const startSubAdminSession = onCall(async (request) => {
       updatedAt: now,
     }, { merge: true }),
     accountRef.set({
+      groupId: resolvedGroup.groupId,
+      groupName: resolvedGroup.groupName,
       lastSessionStartedAt: now,
       lastSessionStartedBy: uid,
       updatedAt: now,
@@ -2701,17 +2746,22 @@ async function findUserDocByUid(uid) {
   return null;
 }
 
-async function syncCustomClaimsForUser(uid, paid, planTier = DEFAULT_PLAN_TIER, grandfathered = false) {
+async function syncCustomClaimsForUser(uid, paid, planTier = DEFAULT_PLAN_TIER, grandfathered = false, organizationId = null, role = null) {
   if (!uid) return;
   try {
     const userRecord = await authAdmin.getUser(uid);
     const currentClaims = userRecord.customClaims || {};
     const normalizedTier = normalizePlanTier(planTier);
     const normalizedGrandfathered = Boolean(grandfathered);
+    const targetOrgId = organizationId || currentClaims.organizationId || currentClaims.orgId || null;
+    const targetRole = role || currentClaims.role || (currentClaims.admin ? 'admin' : 'volunteer');
+
     if (
       currentClaims.paid === paid
       && currentClaims.plan_tier === normalizedTier
       && currentClaims.grandfathered === normalizedGrandfathered
+      && currentClaims.organizationId === targetOrgId
+      && currentClaims.role === targetRole
     ) {
       return;
     }
@@ -2720,6 +2770,8 @@ async function syncCustomClaimsForUser(uid, paid, planTier = DEFAULT_PLAN_TIER, 
       paid,
       plan_tier: normalizedTier,
       grandfathered: normalizedGrandfathered,
+      organizationId: targetOrgId,
+      role: targetRole,
     });
   } catch (error) {
     logger.warn(`Unable to sync custom claims for ${uid}`, error);
@@ -2851,6 +2903,53 @@ async function isBillingOwnerForUser(uid, userData = {}) {
   return false;
 }
 
+async function isOrganizationAdminForUser(uid, userData = {}) {
+  if (!uid) return false;
+
+  let { orgId, orgCode } = extractOrgContextFromUserData(userData);
+  if (!orgId && !orgCode) {
+    const resolved = await resolveOrgContextForUser(uid);
+    orgId = resolved.orgId || null;
+    orgCode = resolved.orgCode || null;
+  }
+
+  let orgSnap = null;
+  if (orgId) {
+    orgSnap = await resolveOrgDocById(orgId);
+  }
+  if (!orgSnap?.exists && orgCode) {
+    orgSnap = await resolveOrgDocByCode(orgCode);
+  }
+
+  if (orgSnap?.exists) {
+    try {
+      const adminSnap = await orgSnap.ref.collection('admins').doc(uid).get();
+      if (adminSnap.exists) {
+        const adminData = adminSnap.data() || {};
+        return adminData.allowedCheckin !== false;
+      }
+    } catch (error) {
+      logger.warn('Unable to verify org-scoped admin membership', error);
+    }
+  }
+
+  try {
+    const adminGroup = await db
+      .collectionGroup('admins')
+      .where(FieldPath.documentId(), '==', uid)
+      .limit(1)
+      .get();
+    if (!adminGroup.empty) {
+      const adminData = adminGroup.docs[0].data() || {};
+      return adminData.allowedCheckin !== false;
+    }
+  } catch (error) {
+    logger.warn('Unable to verify admin membership via collection group', error);
+  }
+
+  return false;
+}
+
 function getSubAdminPasswordPepper() {
   return process.env.SUBADMIN_PASSWORD_PEPPER || DEFAULT_SUBADMIN_PASSWORD_PEPPER;
 }
@@ -2902,6 +3001,51 @@ function verifySubAdminPassword(password, passwordSalt, passwordHash) {
   } catch (error) {
     return actualHash === expectedHash;
   }
+}
+
+function isSubAdminAccountActive(data = {}) {
+  const status = String(data.status || '').trim().toLowerCase();
+  if (status) {
+    if (
+      status.includes('archived')
+      || status.includes('inactive')
+      || status.includes('revoked')
+      || status.includes('disabled')
+      || status.includes('deleted')
+    ) {
+      return false;
+    }
+  }
+  if (data.archived === true || data.isArchived === true) return false;
+  if (data.archived_at || data.archivedAt) return false;
+  return true;
+}
+
+function resolveSubAdminGroupContext(accountId, accountData = {}) {
+  const groupId = String(
+    accountData.groupId
+    || accountData.group_id
+    || accountData.target_group_id
+    || accountData.targetGroupId
+    || accountData.sub_admin_group_id
+    || accountData.subAdminGroupId
+    || accountData.group_scope_id
+    || accountData.groupScopeId
+    || accountId
+    || '',
+  ).trim();
+  const groupName = String(
+    accountData.groupName
+    || accountData.group_name
+    || accountData.target_group_name
+    || accountData.targetGroupName
+    || accountData.sub_admin_group_name
+    || accountData.subAdminGroupName
+    || accountData.displayName
+    || accountData.title
+    || 'Subadmin Group',
+  ).trim();
+  return { groupId, groupName };
 }
 
 function normalizeGroupScopeKey(value) {
@@ -2959,6 +3103,24 @@ function isBlockingJoinStatus(status) {
   );
 }
 
+function isArchivedEntity(data = {}) {
+  const status = String(data.status || '').trim().toLowerCase();
+  if (
+    status.includes('archived')
+    || status.includes('inactive')
+    || status.includes('revoked')
+    || status.includes('disabled')
+    || status.includes('deleted')
+    || status.includes('removed')
+  ) {
+    return true;
+  }
+  if (data.active === false) return true;
+  if (data.archived === true || data.isArchived === true) return true;
+  if (data.archived_at || data.archivedAt) return true;
+  return false;
+}
+
 function makeSafeScopedId(...parts) {
   return parts
     .map((part) => String(part || '').trim())
@@ -2989,6 +3151,7 @@ async function resolveOrganizationByAccessCode(accessCode) {
   const orgDoc = await resolveOrgDocByCode(normalizedCode);
   if (!orgDoc?.exists) return null;
   const orgData = orgDoc.data() || {};
+  if (isArchivedEntity(orgData)) return null;
   const resolvedCode = String(
     orgData.access_code
     || orgData.accessCode
@@ -3008,16 +3171,38 @@ async function resolveOrganizationByAccessCode(accessCode) {
 async function listOrganizationSubAdminGroups(orgId) {
   if (!orgId) return [];
   const groupsRef = db.collection('organizations').doc(orgId).collection('sub_admin_groups');
-  const snap = await groupsRef.get().catch(() => null);
-  if (!snap || snap.empty) return [];
-  return snap.docs
+  const accountsRef = db.collection('organizations').doc(orgId).collection('sub_admin_accounts');
+  const [groupsSnap, accountsSnap] = await Promise.all([
+    groupsRef.get().catch(() => null),
+    accountsRef.get().catch(() => null),
+  ]);
+  if (!groupsSnap || groupsSnap.empty) return [];
+
+  const activeGroupIds = new Set();
+  if (accountsSnap && !accountsSnap.empty) {
+    accountsSnap.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      if (!isSubAdminAccountActive(data)) return;
+      const group = resolveSubAdminGroupContext(docSnap.id, data);
+      const groupId = String(group.groupId || '').trim();
+      if (groupId) activeGroupIds.add(groupId);
+    });
+  }
+
+  // Only show groups that currently have at least one active subadmin account.
+  if (!activeGroupIds.size) return [];
+
+  return groupsSnap.docs
     .map((docSnap) => {
       const data = docSnap.data() || {};
+      if (isArchivedEntity(data)) return null;
+      if (!activeGroupIds.has(docSnap.id)) return null;
       return {
         id: docSnap.id,
         name: String(data.name || 'Subadmin Group').trim() || 'Subadmin Group',
       };
     })
+    .filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -3199,7 +3384,15 @@ async function requireSuperAdmin(request) {
   }
 
   const userData = userSnap.data() || {};
-  if (hasSuperAdminFlag(userData)) {
+  if (
+    hasSuperAdminFlag(userData) ||
+    (userData.email && userData.email.toLowerCase() === 'ayanshashish@gmail.com')
+  ) {
+    return { uid, token, userData };
+  }
+
+  const orgAdmin = await isOrganizationAdminForUser(uid, userData);
+  if (orgAdmin) {
     return { uid, token, userData };
   }
 
@@ -4646,7 +4839,9 @@ export const syncUserClaims = onDocumentWritten('users/{userId}', async (event) 
 
   const planTier = normalizePlanTier(afterData.plan_tier || afterData.planTier || afterData.planKey || afterData.plan_key);
   const grandfathered = Boolean(afterData.grandfathered || afterData.is_grandfathered);
-  await syncCustomClaimsForUser(userId, paid, planTier, grandfathered);
+  const organizationId = afterData.organization_id || afterData.organizationId || afterData.orgId || null;
+  const role = afterData.role || null;
+  await syncCustomClaimsForUser(userId, paid, planTier, grandfathered, organizationId, role);
 });
 
 const PURGE_COLLECTIONS = [

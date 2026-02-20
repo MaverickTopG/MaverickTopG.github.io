@@ -9,7 +9,8 @@ import {
   FileSpreadsheet, 
   FileText,
   Copy,
-  Monitor
+  Monitor,
+  BarChart3,
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -28,9 +29,21 @@ interface HeaderProps {
   orgContext: { id: string; code: string; name: string };
   planTier?: string;
   isSubAdminPortal?: boolean;
+  onOpenImpactOverview?: () => void;
+  showImpactOverviewButton?: boolean;
+  impactOverviewActive?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, orgContext, planTier, isSubAdminPortal }) => {
+export const Header: React.FC<HeaderProps> = ({
+  isKioskOpen,
+  setIsKioskOpen,
+  orgContext,
+  planTier,
+  isSubAdminPortal,
+  onOpenImpactOverview,
+  showImpactOverviewButton = false,
+  impactOverviewActive = false,
+}) => {
   const [copied, setCopied] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string; groupName?: string }>>([]);
@@ -51,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
   const auth = getFirebaseAuth();
   const userId = auth.currentUser?.uid || null;
   const normalizedTier = (planTier || '').toLowerCase();
-  const canUseKiosk = !isSubAdminPortal && (normalizedTier === 'nebula' || normalizedTier === 'cosmos');
+  const canUseKiosk = (normalizedTier === 'nebula' || normalizedTier === 'cosmos') && !isSubAdminPortal;
   const canUseAutoLog = normalizedTier === 'nebula' || normalizedTier === 'cosmos';
 
   useEffect(() => {
@@ -407,6 +420,23 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
           </button>
         )}
 
+        {showImpactOverviewButton && (
+          <button
+            onClick={() => onOpenImpactOverview?.()}
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm border group ${
+              impactOverviewActive
+                ? 'bg-lime-300 border-lime-400 shadow-[0_0_20px_rgba(190,242,100,0.3)]'
+                : 'bg-white border-gray-100 hover:bg-gray-50'
+            }`}
+            title={impactOverviewActive ? 'Exit Organization Impact Mode' : 'Enable Organization Impact Mode'}
+            aria-label={impactOverviewActive ? 'Exit Organization Impact Mode' : 'Enable Organization Impact Mode'}
+          >
+            <BarChart3 className={`w-5 h-5 transition-colors ${
+              impactOverviewActive ? 'text-gray-900' : 'text-gray-400 group-hover:text-gray-900'
+            }`} />
+          </button>
+        )}
+
 
         {/* QR Code Button & Dropdown */}
         <div className="relative">
@@ -522,9 +552,6 @@ export const Header: React.FC<HeaderProps> = ({ isKioskOpen, setIsKioskOpen, org
                         ))
                       )}
                   </div>
-                  <button className="w-full py-2.5 text-center text-xs font-semibold text-gray-500 hover:text-gray-900 border-t border-gray-50 hover:bg-gray-50 transition-colors">
-                      View all notifications
-                  </button>
                 </motion.div>
              )}
           </AnimatePresence>

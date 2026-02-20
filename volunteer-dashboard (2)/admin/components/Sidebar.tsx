@@ -256,7 +256,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planT
                   } catch (_error) {
                     // Best-effort only. Sign-out should still proceed.
                   }
-                  localStorage.removeItem('nexolink_active_sub_admin_session');
+                  window.sessionStorage.removeItem('nexolink_active_sub_admin_session');
                   await getFirebaseAuth().signOut();
                 } finally {
                   window.location.href = '/';

@@ -31,6 +31,9 @@ interface Shift {
   endTime: string;
 }
 
+const sanitizePathToken = (value: string) =>
+  value.replace(/[^a-zA-Z0-9._-]/g, '_');
+
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [activeCategory, setActiveCategory] = useState('Community');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -65,13 +68,66 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !orgData) return;
+    if (!file) return;
 
     setIsUploading(true);
     try {
       const storage = getFirebaseStorage();
-      const storageRef = ref(storage, `events/${orgData.orgId}/cover_${Date.now()}_${file.name}`);
-      const snapshot = await uploadBytes(storageRef, file);
+      const auth = getFirebaseAuth();
+      const userId = String(auth.currentUser?.uid || 'anonymous');
+      let tokenOrgId = '';
+      let tokenOrgCode = '';
+      try {
+        const tokenResult = await auth.currentUser?.getIdTokenResult();
+        tokenOrgId = String(
+          tokenResult?.claims?.orgId ||
+            tokenResult?.claims?.organizationId ||
+            tokenResult?.claims?.org_id ||
+            tokenResult?.claims?.organization_id ||
+            '',
+        ).trim();
+        tokenOrgCode = String(
+          tokenResult?.claims?.orgCode ||
+            tokenResult?.claims?.organizationCode ||
+            tokenResult?.claims?.linked_org_id ||
+            tokenResult?.claims?.linkedOrgId ||
+            tokenResult?.claims?.access_code ||
+            tokenResult?.claims?.accessCode ||
+            '',
+        ).trim();
+      } catch {
+        // Ignore claim lookup failures and continue with known orgData values.
+      }
+      const safeFileName = sanitizePathToken(String(file.name || `cover_${Date.now()}.jpg`));
+      const now = Date.now();
+      const candidateBuckets = Array.from(
+        new Set(
+          [
+            tokenOrgId,
+            tokenOrgCode,
+            String(orgData?.orgId || '').trim(),
+            String(orgData?.orgCode || '').trim(),
+            userId,
+          ]
+            .map((value) => sanitizePathToken(String(value || '').trim()))
+            .filter(Boolean),
+        ),
+      );
+
+      let snapshot: Awaited<ReturnType<typeof uploadBytes>> | null = null;
+      let lastError: unknown = null;
+      for (const bucket of candidateBuckets) {
+        try {
+          const storageRef = ref(storage, `events/${bucket}/cover_${now}_${safeFileName}`);
+          snapshot = await uploadBytes(storageRef, file);
+          break;
+        } catch (err) {
+          lastError = err;
+          const code = String((err as any)?.code || '');
+          if (code !== 'storage/unauthorized') break;
+        }
+      }
+      if (!snapshot) throw lastError || new Error('Upload failed for all org bucket candidates.');
       const url = await getDownloadURL(snapshot.ref);
       setCoverImageUrl(url);
     } catch (error) {

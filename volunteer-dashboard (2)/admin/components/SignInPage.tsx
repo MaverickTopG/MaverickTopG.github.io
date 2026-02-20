@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { signInWithCustomToken, signInWithEmailAndPassword } from 'firebase/auth';
+import { browserSessionPersistence, setPersistence, signInWithCustomToken, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirebaseAuth } from '../lib/firebase';
 import { motion } from 'framer-motion';
 import {
@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
+  Globe,
   Loader2,
   Lock,
   Mail,
@@ -37,8 +38,9 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
     setError(null);
     try {
       const auth = getFirebaseAuth();
+      await setPersistence(auth, browserSessionPersistence);
       await signInWithEmailAndPassword(auth, email.trim(), password);
-      localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+      window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
       onSignIn();
     } catch (err: any) {
       console.error('Login failed', err);
@@ -70,7 +72,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
           const session = payload?.session || null;
           if (session?.groupId) {
             try {
-              localStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(session));
+              window.sessionStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(session));
             } catch (_storageError) {
               // Ignore storage failures.
             }
@@ -80,17 +82,18 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
               // Ignore.
             }
           } else {
-            localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+            window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
           }
 
           const auth = getFirebaseAuth();
           try {
+            await setPersistence(auth, browserSessionPersistence);
             await signInWithCustomToken(auth, customToken);
             onSignIn();
             return;
           } catch (tokenError) {
             console.error('Custom token sign-in failed', tokenError);
-            localStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
+            window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
             setError('Login failed. Please try again.');
             return;
           }
