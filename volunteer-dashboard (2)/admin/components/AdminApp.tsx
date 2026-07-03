@@ -8,7 +8,7 @@ import { RightPanel } from './RightPanel';
 import { VolunteersPage } from './VolunteersPage';
 import { BillingPage } from './BillingPage';
 import { AccountPage } from './AccountPage';
-import { CreatePage } from './createpage';
+import { CreateSubAdminPage } from './CreateSubAdminPage';
 import { SupportPage } from './SupportPage';
 import { MessagingPage } from './MessagingPage';
 import { VolunteerRequestsPage } from './VolunteerRequestsPage';
@@ -864,7 +864,7 @@ export const AdminApp: React.FC = () => {
                   transition={{ duration: 0.3 }}
                   className="h-full"
                 >
-                  <CreatePage onBack={() => setCurrentView('account')} onCreated={() => setCurrentView('account')} />
+                  <CreateSubAdminPage onBack={() => setCurrentView('account')} onCreated={() => setCurrentView('account')} />
                 </motion.div>
               ) : (
                 <div key="empty" className="flex items-center justify-center h-[60vh] text-gray-400">
