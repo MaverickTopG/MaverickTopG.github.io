@@ -17,10 +17,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseFunctions } from '../lib/firebase';
 import { getActiveSubAdminSession, subscribeToOrgCollection, fetchOrgCollectionDocs } from '../lib/orgContext';
+import { collection, onSnapshot as onFirestoreSnapshot, query as firestoreQuery, where as firestoreWhere } from 'firebase/firestore';
 import { Toast } from './Toast';
 
 interface HeaderProps {
@@ -46,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string; groupName?: string }>>([]);
+  const [requests, setRequests] = useState<Array<{ id: string; name: string; role: string; time: string }>>([]);
   const [activeRequestAction, setActiveRequestAction] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [autoProcessing, setAutoProcessing] = useState(false);
@@ -68,22 +69,20 @@ export const Header: React.FC<HeaderProps> = ({
   const canUseAutoLog = normalizedTier === 'nebula' || normalizedTier === 'cosmos';
 
   useEffect(() => {
-    if (orgCode || !userId) return;
+    if (!orgId) return;
     const db = getFirestoreDb();
-    const loadFallbackCode = async () => {
+    const loadInviteCode = async () => {
       try {
-        const userRef = doc(db, 'users', userId);
-        const snap = await getDoc(userRef);
-        if (!snap.exists()) return;
-        const data = snap.data() as any;
-        const candidate = data.accessCode || data.access_code || data.org_access_code || null;
-        if (candidate) setFallbackAccessCode(String(candidate).trim().toUpperCase());
+        const orgSnap = await getDoc(doc(db, 'organizations', orgId));
+        if (!orgSnap.exists()) return;
+        const data = orgSnap.data() as any;
+        if (data.inviteCode) setFallbackAccessCode(String(data.inviteCode).trim().toUpperCase());
       } catch (error) {
-        console.warn('Unable to load fallback access code', error);
+        console.warn('Unable to load organization invite code', error);
       }
     };
-    loadFallbackCode();
-  }, [orgCode, userId]);
+    loadInviteCode();
+  }, [orgId]);
 
   useEffect(() => {
     const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
@@ -96,51 +95,37 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if (!orgId) return;
     const db = getFirestoreDb();
-    const unsubscribe = subscribeToOrgCollection({
-      db,
-      collectionName: 'organization_join_requests',
-      orgCode,
-      orgId,
-      filters: [['status', '==', 'pending']],
-      onData: (rows) => {
-        const pending: Array<{ id: string; name: string; role: string; time: string; groupName?: string }> = [];
-        rows.forEach((row) => {
-          const data = row.data as any || {};
-          const createdAt = data.created_at || data.createdAt || null;
-          const createdAtDate =
-            typeof createdAt?.toDate === 'function'
-              ? createdAt.toDate()
-              : createdAt?.seconds
-                ? new Date(createdAt.seconds * 1000)
-                : createdAt
-                  ? new Date(createdAt)
-                  : null;
-          const minutesAgo = createdAtDate
-            ? Math.max(1, Math.round((Date.now() - createdAtDate.getTime()) / 60000))
-            : 1;
-          pending.push({
-            id: row.id,
-            name: data.user_name || data.userName || data.user_email || 'Volunteer',
-            role: 'Volunteer',
-            time: `${minutesAgo}m ago`,
-            groupName: String(
-              data.target_group_name
-              || data.targetGroupName
-              || data.sub_admin_group_name
-              || data.subAdminGroupName
-              || 'Super Admin'
-            ),
-          });
+    const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+    const q = firestoreQuery(volunteersRef, firestoreWhere('status', '==', 'pending'));
+    const unsubscribe = onFirestoreSnapshot(q, (snap) => {
+      const pending: Array<{ id: string; name: string; role: string; time: string }> = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as any;
+        const joinedAt = data.joinedAt || null;
+        const joinedAtDate =
+          typeof joinedAt?.toDate === 'function'
+            ? joinedAt.toDate()
+            : joinedAt?.seconds
+              ? new Date(joinedAt.seconds * 1000)
+              : null;
+        const minutesAgo = joinedAtDate
+          ? Math.max(1, Math.round((Date.now() - joinedAtDate.getTime()) / 60000))
+          : 1;
+        pending.push({
+          id: docSnap.id,
+          name: data.displayName || data.email || 'Volunteer',
+          role: 'Volunteer',
+          time: `${minutesAgo}m ago`,
         });
-        pending.sort((a, b) => (a.time > b.time ? -1 : 1));
-        setRequests(pending.slice(0, 3));
-      },
+      });
+      pending.sort((a, b) => (a.time > b.time ? -1 : 1));
+      setRequests(pending.slice(0, 3));
     });
 
     return () => unsubscribe();
-  }, [orgCode, orgId, subAdminScopeKey]);
+  }, [orgId]);
 
   // Initial fetch for Auto-Processing state
   useEffect(() => {
@@ -240,21 +225,21 @@ export const Header: React.FC<HeaderProps> = ({
   const closeDropdowns = () => setActiveDropdown(null);
 
   const handleJoinRequestAction = async (requestId: string, action: 'accept' | 'deny') => {
+    if (!orgId) return;
     setActiveRequestAction(requestId);
     try {
       if (action === 'accept') {
         const functions = getFirebaseFunctions();
         const acceptJoin = httpsCallable(functions, 'acceptJoinRequest');
-        await acceptJoin({ requestId });
+        await acceptJoin({ orgId, volunteerId: requestId });
       } else {
         const db = getFirestoreDb();
         const admin = getFirebaseAuth().currentUser;
-        const requestRef = doc(db, 'organization_join_requests', requestId);
-        await updateDoc(requestRef, {
-          status: 'declined',
-          handled_at: serverTimestamp(),
-          handled_by: admin?.uid || null,
-          handled_by_email: admin?.email || null,
+        const volunteerRef = doc(db, 'organizations', orgId, 'volunteers', requestId);
+        await updateDoc(volunteerRef, {
+          status: 'rejected',
+          rejectedReason: 'Declined by admin',
+          approvedBy: admin?.uid || null,
         });
       }
       setRequests((prev) => prev.filter((req) => req.id !== requestId));
@@ -529,7 +514,7 @@ export const Header: React.FC<HeaderProps> = ({
                                         <span className="text-[10px] text-gray-400 font-medium">{req.time}</span>
                                     </div>
                                     <p className="text-xs text-gray-500 mb-2 truncate">
-                                      Wants to join as a Volunteer {req.groupName ? `· ${req.groupName}` : ''}
+                                      Wants to join as a Volunteer
                                     </p>
                                     <div className="flex gap-2">
                                         <button
