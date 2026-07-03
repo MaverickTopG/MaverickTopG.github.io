@@ -285,7 +285,6 @@ const SHOW_EMBEDDED_OPS_CENTER = false;
 const SHOW_VOLUNTEER_AI_TOOLS = false;
 
 export const NebulaePage: React.FC<NebulaePageProps> = ({
-  planTier = 'orbit',
   aiEnabled = false,
   opsCenter = null,
   contextScope = 'superadmin-only',
@@ -324,23 +323,17 @@ export const NebulaePage: React.FC<NebulaePageProps> = ({
   const primaryMode = selectedModes[0] || null;
   const activeModeConfig = primaryMode ? NEBULAE_MODE_CONFIG[primaryMode] : null;
   const ActiveModeIcon = activeModeConfig?.icon || Layers;
-  const intelligenceModules = useMemo(() => {
-    const base = [...INTELLIGENCE_MODULES];
-    if (planTier === 'cosmos') {
-      return [
-        ...base,
-        {
-          id: 'predictive-orchestration',
-          title: 'Predictive Orchestration',
-          description: 'Simulate staffing outcomes',
-          icon: Cpu,
-          color: 'gray',
-          prompt: 'Simulate next week volunteer operations and provide three staffing scenarios (safe, expected, stretch) with action triggers.'
-        },
-      ];
-    }
-    return base;
-  }, [planTier]);
+  const intelligenceModules = useMemo(() => [
+    ...INTELLIGENCE_MODULES,
+    {
+      id: 'predictive-orchestration',
+      title: 'Predictive Orchestration',
+      description: 'Simulate staffing outcomes',
+      icon: Cpu,
+      color: 'gray',
+      prompt: 'Simulate next week volunteer operations and provide three staffing scenarios (safe, expected, stretch) with action triggers.'
+    },
+  ], []);
 
   // Persistence Logic
   const saveToFirestore = async (newMessages: Message[], results: any[]) => {
@@ -1015,7 +1008,7 @@ Output format:
                              <p className="text-xs text-gray-500 font-semibold uppercase tracking-[0.2em]">AI plan generator</p>
                            </div>
                            <span className="px-3 py-1 rounded-full bg-[#D2F677]/30 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">
-                             Tier: {planTier}
+                             Tier: Cosmos
                            </span>
                          </div>
                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
