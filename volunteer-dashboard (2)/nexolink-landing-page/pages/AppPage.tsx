@@ -26,7 +26,7 @@ export default function AppPage() {
       <section className="app-feature app-feature--light">
         <div className="app-feature-phone">
           <div className="app-phone">
-            <img src="/screenshots/IMG_4342.PNG" alt="Weekly activity view" />
+            <img src="/screenshots/IMG_4342.PNG" alt="Weekly activity view" loading="lazy" />
           </div>
         </div>
         <div className="app-feature-text">
@@ -34,7 +34,7 @@ export default function AppPage() {
           <h2>See exactly where your time goes.</h2>
           <p>Weekly breakdowns, trend graphs, and calendar views — every hour you give is recorded, organized, and reflected back to you.</p>
           <div className="app-phone app-phone--small">
-            <img src="/screenshots/IMG_4345.PNG" alt="Calendar view of volunteer hours" />
+            <img src="/screenshots/IMG_4345.PNG" alt="Calendar view of volunteer hours" loading="lazy" />
           </div>
         </div>
       </section>
@@ -48,7 +48,7 @@ export default function AppPage() {
         </div>
         <div className="app-feature-phone">
           <div className="app-phone">
-            <img src="/screenshots/IMG_4346.PNG" alt="Log hours screen" />
+            <img src="/screenshots/IMG_4346.PNG" alt="Log hours screen" loading="lazy" />
           </div>
         </div>
       </section>
@@ -60,7 +60,7 @@ export default function AppPage() {
           <p className="app-bento-label">Daily goals hit</p>
         </div>
         <div className="app-bento-card app-bento-card--img">
-          <img src="/screenshots/IMG_4344.PNG" alt="Trends graph showing volunteer hours over time" />
+          <img src="/screenshots/IMG_4344.PNG" alt="Trends graph showing volunteer hours over time" loading="lazy" />
         </div>
         <div className="app-bento-card app-bento-card--violet">
           <p className="app-bento-stat">727</p>
