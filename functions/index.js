@@ -2000,6 +2000,97 @@ export const submitOrganizationJoinRequests = onCall(async (request) => {
   };
 });
 
+const ORG_ADMIN_ROLES = new Set(['owner', 'admin', 'coordinator', 'eventLead', 'viewer']);
+
+export const addOrgAdmin = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const orgId = String(request.data?.orgId || '').trim();
+  if (!orgId) {
+    throw new HttpsError('invalid-argument', 'orgId is required.');
+  }
+
+  const callerSnap = await db.collection('organizations').doc(orgId)
+    .collection('orgAdmins').doc(uid).get();
+  if (!callerSnap.exists) {
+    throw new HttpsError('permission-denied', 'Admin access required for this organization.');
+  }
+
+  const firstName = String(request.data?.firstName || '').trim();
+  const lastName = String(request.data?.lastName || '').trim();
+  const email = String(request.data?.email || '').trim().toLowerCase();
+  const password = String(request.data?.password || '');
+  const role = String(request.data?.role || 'coordinator').trim();
+
+  if (!email || !password || password.length < 6) {
+    throw new HttpsError('invalid-argument', 'Email and a password of at least 6 characters are required.');
+  }
+  if (!ORG_ADMIN_ROLES.has(role) || role === 'owner') {
+    throw new HttpsError('invalid-argument', 'Invalid role. Use admin, coordinator, eventLead, or viewer.');
+  }
+
+  const displayName = [firstName, lastName].filter(Boolean).join(' ').trim() || email;
+
+  let newUser;
+  try {
+    newUser = await authAdmin.getUserByEmail(email);
+  } catch (error) {
+    newUser = await authAdmin.createUser({ email, password, displayName });
+  }
+
+  const now = Timestamp.now();
+  await db.collection('organizations').doc(orgId)
+    .collection('orgAdmins').doc(newUser.uid).set({
+      userId: newUser.uid,
+      orgId,
+      displayName,
+      email,
+      role,
+      addedBy: uid,
+      createdAt: now,
+    });
+
+  return { uid: newUser.uid, email, displayName, role };
+});
+
+export const removeOrgAdmin = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError('unauthenticated', 'You must be signed in.');
+  }
+
+  const orgId = String(request.data?.orgId || '').trim();
+  const targetUid = String(request.data?.uid || '').trim();
+  if (!orgId || !targetUid) {
+    throw new HttpsError('invalid-argument', 'orgId and uid are required.');
+  }
+
+  const callerSnap = await db.collection('organizations').doc(orgId)
+    .collection('orgAdmins').doc(uid).get();
+  if (!callerSnap.exists) {
+    throw new HttpsError('permission-denied', 'Admin access required for this organization.');
+  }
+
+  const targetRef = db.collection('organizations').doc(orgId).collection('orgAdmins').doc(targetUid);
+  const targetSnap = await targetRef.get();
+  if (!targetSnap.exists) {
+    return { ok: true };
+  }
+  if ((targetSnap.data() || {}).role === 'owner') {
+    const ownersSnap = await db.collection('organizations').doc(orgId)
+      .collection('orgAdmins').where('role', '==', 'owner').get();
+    if (ownersSnap.size <= 1) {
+      throw new HttpsError('failed-precondition', 'Cannot remove the only owner of an organization.');
+    }
+  }
+
+  await targetRef.delete();
+  return { ok: true };
+});
+
 export const acceptJoinRequest = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -3439,6 +3530,19 @@ async function isAuthorizedAdmin(decoded = {}) {
     }
   } catch (error) {
     logger.warn('Unable to verify admin status from org admins', error);
+  }
+
+  try {
+    const orgAdminGroup = await db
+      .collectionGroup('orgAdmins')
+      .where(FieldPath.documentId(), '==', decoded.uid)
+      .limit(1)
+      .get();
+    if (!orgAdminGroup.empty) {
+      return true;
+    }
+  } catch (error) {
+    logger.warn('Unable to verify admin status from orgAdmins', error);
   }
 
   return false;
