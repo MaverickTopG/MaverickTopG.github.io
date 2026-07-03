@@ -37,6 +37,11 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/volunteer_organizations/$(orgId));
     }
 
+    function isOrgAdmin(orgId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/organizations/$(orgId)/orgAdmins/$(request.auth.uid));
+    }
+
     function planTierForOrg(orgId) {
       return orgDoc(orgId).exists() && orgDoc(orgId).data.plan_tier != null
         ? orgDoc(orgId).data.plan_tier
@@ -161,10 +166,32 @@ service cloud.firestore {
     }
 
     match /organizations/{orgId} {
-      allow read: if hasFullAccess() || isOrgMember(orgId);
+      allow read: if hasFullAccess() || isOrgMember(orgId) || isOrgAdmin(orgId);
       allow update: if (hasFullAccess() || isOrgMember(orgId))
         && (!request.resource.data.keys().hasAny(['auto_process_logs']) || request.resource.data.auto_process_logs != true || planAllowsAutoLogReview(orgId));
       allow create, delete: if hasFullAccess();
+
+      match /orgAdmins/{adminId} {
+        allow read: if isSignedIn() && (request.auth.uid == adminId || isOrgAdmin(orgId));
+        allow write: if false;
+      }
+
+      match /volunteers/{volunteerId} {
+        allow read: if isSignedIn() && (request.auth.uid == volunteerId || isOrgAdmin(orgId));
+        allow create: if isSignedIn() && request.auth.uid == volunteerId;
+        allow update: if isOrgAdmin(orgId);
+        allow delete: if false;
+      }
+    }
+
+    match /joinCodes/{code} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /publicOrgPages/{orgId} {
+      allow read: if true;
+      allow write: if false;
     }
 
     match /orgs/{orgId} {
