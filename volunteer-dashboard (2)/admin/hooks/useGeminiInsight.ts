@@ -9,7 +9,6 @@ type InsightResult = {
 
 type UseGeminiInsightArgs = {
   enabled: boolean;
-  planTier: string;
   pageKey: string;
   sourceData: Record<string, unknown>;
   fallback: InsightResult;
@@ -20,7 +19,6 @@ const DEFAULT_MIN_INTERVAL = 25000;
 
 export const useGeminiInsight = ({
   enabled,
-  planTier,
   pageKey,
   sourceData,
   fallback,
@@ -60,7 +58,7 @@ export const useGeminiInsight = ({
       setLoading(true);
       const reqId = ++requestIdRef.current;
       try {
-        const cap = getContextCapForTier(planTier);
+        const cap = getContextCapForTier();
         const promptData = trimToCap(JSON.stringify(sourceData), Math.floor(cap * 0.45));
         const prompt = `Return JSON ONLY, no markdown.
 Schema:
@@ -127,7 +125,7 @@ ${promptData}`;
         window.clearTimeout(debounceRef.current);
       }
     };
-  }, [enabled, fallback, minIntervalMs, planTier, signature]);
+  }, [enabled, fallback, minIntervalMs, signature]);
 
   return { insight, loading };
 };

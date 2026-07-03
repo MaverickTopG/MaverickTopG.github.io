@@ -1,20 +1,12 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-export type PlanTier = 'orbit' | 'nebula' | 'cosmos' | string;
-
 export const NEBULAE_MODEL_ID = 'gemini-2.5-flash-lite';
 const NEBULAE_API_KEY = 'AIzaSyCX9iZt_rDr0B1jQu-pqhGHiQm3avmDt6o';
 const NEBULA_CONTEXT_BASE_CHARS = 12000;
 const COSMOS_CONTEXT_MULTIPLIER = 1.3;
 const INSIGHT_CONTEXT_KEY = 'nexolink:ai-insight-context';
 
-export const getContextCapForTier = (planTier: PlanTier) => {
-  const base = NEBULA_CONTEXT_BASE_CHARS;
-  if (String(planTier || '').toLowerCase() === 'cosmos') {
-    return Math.round(base * COSMOS_CONTEXT_MULTIPLIER);
-  }
-  return base;
-};
+export const getContextCapForTier = () => Math.round(NEBULA_CONTEXT_BASE_CHARS * COSMOS_CONTEXT_MULTIPLIER);
 
 export const createNebulaeModel = (withSearch = false) => {
   const genAI = new GoogleGenerativeAI(NEBULAE_API_KEY);
