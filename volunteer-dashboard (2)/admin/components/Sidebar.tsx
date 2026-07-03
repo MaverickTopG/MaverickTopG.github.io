@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  BarChart2, 
-  ClipboardList, 
-  Users, 
-  CreditCard,
+import {
+  BarChart2,
+  ClipboardList,
+  Users,
   HelpCircle,
   MessageSquare,
   Calendar,
@@ -14,8 +13,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { getFirebaseAuth, getFirestoreDb, getFirebaseFunctions } from '../lib/firebase';
+import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 
 interface SidebarProps {
   currentView: string;
@@ -194,33 +192,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planT
             ))}
 
             {!isSubAdminPortal && (
-              <button 
-                  onClick={() => onNavigate('billing')}
-                  className={`
-                      flex items-center h-10 text-gray-500 hover:text-white transition-colors group rounded-xl hover:bg-gray-800/30 mt-2
-                      ${currentView === 'billing' ? 'text-white bg-gray-800/50' : ''}
-                      ${isHovered ? 'px-4' : 'pl-4'}
-                  `}
-              >
-                  <div className="w-8 h-8 flex items-center justify-center shrink-0">
-                      <CreditCard className="w-5 h-5" />
-                  </div>
-                  <AnimatePresence>
-                      {isHovered && (
-                          <motion.span
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="ml-4 text-sm font-medium whitespace-nowrap"
-                          >
-                          Billing
-                          </motion.span>
-                      )}
-                  </AnimatePresence>
-              </button>
-            )}
-
-            {!isSubAdminPortal && (
               <button
                 onClick={() => onNavigate('account')}
                 className={`
@@ -250,12 +221,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planT
             <button
               onClick={async () => {
                 try {
-                  try {
-                    const call = httpsCallable(getFirebaseFunctions(), 'clearSubAdminSession');
-                    await call();
-                  } catch (_error) {
-                    // Best-effort only. Sign-out should still proceed.
-                  }
                   window.sessionStorage.removeItem('nexolink_active_sub_admin_session');
                   await getFirebaseAuth().signOut();
                 } finally {
