@@ -6,11 +6,11 @@ service cloud.firestore {
     }
 
     function hasPaidAccess() {
-      return isSignedIn() && request.auth.token.paid == true;
+      return isSignedIn() && request.auth.token.get('paid', false) == true;
     }
 
     function hasGrandfatheredAccess() {
-      return isSignedIn() && request.auth.token.grandfathered == true;
+      return isSignedIn() && request.auth.token.get('grandfathered', false) == true;
     }
 
     function hasFullAccess() {
@@ -37,9 +37,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/volunteer_organizations/$(orgId));
     }
 
+    function orgAdminDoc(orgId) {
+      return get(/databases/$(database)/documents/organizations/$(orgId)/orgAdmins/$(request.auth.uid));
+    }
+
     function isOrgAdmin(orgId) {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/organizations/$(orgId)/orgAdmins/$(request.auth.uid));
+      return isSignedIn() && orgAdminDoc(orgId).data != null;
     }
 
     function planTierForOrg(orgId) {
@@ -166,7 +169,7 @@ service cloud.firestore {
     }
 
     match /organizations/{orgId} {
-      allow read: if hasFullAccess() || isOrgMember(orgId) || isOrgAdmin(orgId);
+      allow read: if hasFullAccess() || isOrgAdmin(orgId) || isOrgMember(orgId);
       allow update: if (hasFullAccess() || isOrgMember(orgId))
         && (!request.resource.data.keys().hasAny(['auto_process_logs']) || request.resource.data.auto_process_logs != true || planAllowsAutoLogReview(orgId));
       allow create, delete: if hasFullAccess();
@@ -182,6 +185,15 @@ service cloud.firestore {
         allow update: if isOrgAdmin(orgId);
         allow delete: if false;
       }
+    }
+
+    // Collection-group rule for querying an admin's own orgAdmins membership(s)
+    // across all orgs (used by resolveOrgAdminContext/subscribeToOrgAdminContext).
+    // Nested `match` rules under /organizations/{orgId}/orgAdmins do not reliably
+    // apply to collectionGroup() list queries that aren't scoped to a single known
+    // orgId, so this needs its own top-level, path-wildcard rule.
+    match /{path=**}/orgAdmins/{adminId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     match /joinCodes/{code} {
