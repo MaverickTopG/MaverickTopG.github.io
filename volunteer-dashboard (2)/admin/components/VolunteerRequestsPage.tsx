@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
 import { getActiveSubAdminSession, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { collection, onSnapshot as onFirestoreSnapshot, query as firestoreQuery, where as firestoreWhere } from 'firebase/firestore';
 
 interface Request {
   id: string;
@@ -293,37 +294,34 @@ export const VolunteerRequestsPage: React.FC = () => {
       },
     });
 
-    const unsubJoinRequests = subscribeToOrgCollection({
-      db,
-      collectionName: 'organization_join_requests',
-      orgCode,
-      orgId,
-      onData: (rows) => {
+    let unsubJoinRequests = () => {};
+    if (orgId) {
+      const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+      const pendingQuery = firestoreQuery(volunteersRef, firestoreWhere('status', '==', 'pending'));
+      unsubJoinRequests = onFirestoreSnapshot(pendingQuery, (snap) => {
         const pending: Request[] = [];
-        rows.forEach((row) => {
-          const data = row.data || {};
-          const status = String(data.status || 'pending').toLowerCase();
-          if (status !== 'pending') return;
-          const createdAt = data.created_at || data.createdAt || data.requested_at || data.requestedAt || null;
-          const createdAtMs = resolveTimestampMillis(createdAt);
-          const name = String(data.user_name || data.userName || data.user_email || 'Volunteer').trim();
+        snap.forEach((docSnap) => {
+          const data = docSnap.data() as Record<string, unknown>;
+          const joinedAt = data.joinedAt;
+          const createdAtMs = resolveTimestampMillis(joinedAt);
+          const name = String(data.displayName || data.email || 'Volunteer').trim();
           pending.push({
-            id: row.id,
+            id: docSnap.id,
             type: 'join',
-            userId: (data.user_id || data.userId || '').toString(),
+            userId: String(data.userId || ''),
             name,
             role: 'Volunteer',
             task: 'Wants to join as a Volunteer',
             hours: 0,
-            date: createdAt ? formatDateLabel(createdAt) : '—',
-            description: String(data.message || data.note || '').trim(),
+            date: joinedAt ? formatDateLabel(joinedAt) : '—',
+            description: '',
             createdAtMs,
           });
         });
         setRequests((prev) => mergeRequests(prev, pending, 'join'));
         setLoading(false);
-      },
-    });
+      });
+    }
 
     return () => {
       unsubUsers();
