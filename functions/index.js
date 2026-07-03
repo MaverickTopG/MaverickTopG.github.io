@@ -4,7 +4,6 @@ import { logger } from 'firebase-functions';
 import { defineSecret } from 'firebase-functions/params';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import crypto from 'crypto';
-import Stripe from 'stripe';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, FieldPath, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
