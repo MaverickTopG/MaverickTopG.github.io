@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { browserSessionPersistence, setPersistence, signInWithCustomToken, signInWithEmailAndPassword } from 'firebase/auth';
+import { browserSessionPersistence, setPersistence, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirebaseAuth } from '../lib/firebase';
 import { motion } from 'framer-motion';
 import {
@@ -16,8 +16,6 @@ import {
   Users,
 } from 'lucide-react';
 
-const SUBADMIN_SESSION_STORAGE_KEY = 'nexolink_active_sub_admin_session';
-
 interface SignInPageProps {
   onSignIn: () => void;
   onBack: () => void;
@@ -33,74 +31,17 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
-    
+
     setIsLoading(true);
     setError(null);
     try {
       const auth = getFirebaseAuth();
       await setPersistence(auth, browserSessionPersistence);
       await signInWithEmailAndPassword(auth, email.trim(), password);
-      window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
       onSignIn();
     } catch (err: any) {
       console.error('Login failed', err);
       const code = String(err?.code || '');
-      const couldBeSubAdmin = code.startsWith('auth/');
-
-      if (couldBeSubAdmin) {
-        try {
-          const resp = await fetch('/api/subAdminLogin', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.trim(), password }),
-          });
-
-          if (!resp.ok) {
-            const payload = await resp.json().catch(() => ({}));
-            const message = String(payload?.error || '').trim() || 'Invalid email or password.';
-            setError(message);
-            return;
-          }
-
-          const payload = await resp.json().catch(() => ({}));
-          const customToken = String(payload?.customToken || '').trim();
-          if (!customToken) {
-            setError('Login failed. Please try again.');
-            return;
-          }
-
-          const session = payload?.session || null;
-          if (session?.groupId) {
-            try {
-              window.sessionStorage.setItem(SUBADMIN_SESSION_STORAGE_KEY, JSON.stringify(session));
-            } catch (_storageError) {
-              // Ignore storage failures.
-            }
-            try {
-              window.dispatchEvent(new CustomEvent('nexolink:subadmin-session', { detail: session }));
-            } catch (_error) {
-              // Ignore.
-            }
-          } else {
-            window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
-          }
-
-          const auth = getFirebaseAuth();
-          try {
-            await setPersistence(auth, browserSessionPersistence);
-            await signInWithCustomToken(auth, customToken);
-            onSignIn();
-            return;
-          } catch (tokenError) {
-            console.error('Custom token sign-in failed', tokenError);
-            window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
-            setError('Login failed. Please try again.');
-            return;
-          }
-        } catch (fallbackError) {
-          console.error('Sub-admin login fallback failed', fallbackError);
-        }
-      }
 
       let message = 'Invalid email or password.';
       if (code === 'auth/user-not-found') message = 'No account found with this email.';
