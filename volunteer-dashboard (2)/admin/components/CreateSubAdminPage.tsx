@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { httpsCallable } from 'firebase/functions';
+import { onAuthStateChanged } from 'firebase/auth';
 import { ArrowLeft, UserRoundPlus } from 'lucide-react';
-import { getFirebaseFunctions } from '../lib/firebase';
+import { getFirebaseAuth, getFirestoreDb, getFirebaseFunctions } from '../lib/firebase';
+import { subscribeToOrgAdminContext } from '../lib/orgContext';
 
 interface CreateSubAdminPageProps {
   onBack: () => void;
@@ -19,41 +21,73 @@ const item = {
   show: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 80 } },
 };
 
+const ROLE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'admin', label: 'Admin' },
+  { value: 'coordinator', label: 'Coordinator' },
+  { value: 'eventLead', label: 'Event Lead' },
+  { value: 'viewer', label: 'Viewer' },
+];
+
 export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, onCreated }) => {
-  const [title, setTitle] = useState('');
+  const [orgId, setOrgId] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('coordinator');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const functions = useMemo(() => getFirebaseFunctions(), []);
 
+  useEffect(() => {
+    const auth = getFirebaseAuth();
+    const db = getFirestoreDb();
+    let unsubContext: (() => void) | null = null;
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
+      }
+      if (!user) {
+        setOrgId('');
+        return;
+      }
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
+        setOrgId(context.orgId || '');
+      });
+    });
+    return () => {
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
+    };
+  }, []);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim()) return;
+    if (!orgId || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim()) return;
     setLoading(true);
     setError(null);
     setNotice(null);
     try {
-      const call = httpsCallable(functions, 'createSubAdminPortal');
+      const call = httpsCallable(functions, 'addOrgAdmin');
       await call({
-        title: title.trim(),
+        orgId,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         email: email.trim(),
         password,
+        role,
       });
-      setNotice('Subadmin portal created successfully.');
-      setTitle('');
+      setNotice('Admin added successfully.');
       setFirstName('');
       setLastName('');
       setEmail('');
       setPassword('');
+      setRole('coordinator');
       onCreated?.();
     } catch (createError: any) {
-      setError(createError?.message || 'Unable to create subadmin portal.');
+      setError(createError?.message || 'Unable to add admin.');
     } finally {
       setLoading(false);
     }
@@ -80,9 +114,9 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
       <motion.div variants={item} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm p-8">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Create Subadmin</h2>
+            <h2 className="text-2xl font-bold text-gray-900">Add Admin</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Create a subadmin portal with an isolated group namespace.
+              Invite another admin to help manage this organization.
             </p>
           </div>
           <button
@@ -102,13 +136,6 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
         className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm p-8 grid grid-cols-1 md:grid-cols-2 gap-4"
       >
         <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          className="md:col-span-2 rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
-          placeholder="Subadmin title (e.g. Book Shelving)"
-          required
-        />
-        <input
           value={firstName}
           onChange={(event) => setFirstName(event.target.value)}
           className="rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
@@ -127,7 +154,7 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           className="rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
-          placeholder="Subadmin email"
+          placeholder="Admin email"
           required
         />
         <input
@@ -135,20 +162,29 @@ export const CreateSubAdminPage: React.FC<CreateSubAdminPageProps> = ({ onBack, 
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           className="rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900"
-          placeholder="Subadmin password"
+          placeholder="Temporary password"
           minLength={6}
           required
         />
+        <select
+          value={role}
+          onChange={(event) => setRole(event.target.value)}
+          className="md:col-span-2 rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-gray-900 bg-white"
+        >
+          {ROLE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
         <p className="md:col-span-2 text-xs text-gray-500">
-          Same email is allowed. Password must be unique across all subadmins.
+          The new admin signs in at /login with this email and password.
         </p>
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !orgId}
           className="md:col-span-2 mt-1 px-4 py-3 rounded-xl bg-lime-300 text-gray-900 text-sm font-bold hover:bg-lime-400 disabled:opacity-60 transition-colors inline-flex items-center justify-center gap-2"
         >
           <UserRoundPlus className="w-4 h-4" />
-          {loading ? 'Creating…' : 'Create Subadmin Portal'}
+          {loading ? 'Adding…' : 'Add Admin'}
         </button>
       </motion.form>
     </motion.div>
