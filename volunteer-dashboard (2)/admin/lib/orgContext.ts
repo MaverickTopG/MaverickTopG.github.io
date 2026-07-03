@@ -1,5 +1,6 @@
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -434,4 +435,49 @@ export const fetchOrgCollectionDocs = async (
 export const getOrgCodeValue = (data: Record<string, unknown>) => {
   const code = ORG_CODE_FIELDS.map((field) => data[field] as string | undefined).find(Boolean);
   return normalizeOrgCode(code ? String(code) : null);
+};
+
+export type OrgAdminContext = {
+  orgId: string | null;
+  orgName: string | null;
+  role: string | null;
+};
+
+const buildOrgAdminContext = async (
+  db: Firestore,
+  adminDoc: { ref: { parent: { parent: { id: string } | null } }; data: () => Record<string, unknown> },
+): Promise<OrgAdminContext> => {
+  const orgId = adminDoc.ref.parent.parent?.id || null;
+  const role = (adminDoc.data().role as string | undefined) || null;
+  let orgName: string | null = null;
+  if (orgId) {
+    const orgSnap = await getDoc(doc(db, 'organizations', orgId));
+    orgName = orgSnap.exists() ? ((orgSnap.data() as Record<string, unknown>).name as string) || null : null;
+  }
+  return { orgId, orgName, role };
+};
+
+/** One-shot lookup of the org this admin (owner/admin/coordinator/eventLead/viewer) belongs to. */
+export const resolveOrgAdminContext = async (db: Firestore, uid: string): Promise<OrgAdminContext> => {
+  const snap = await getDocs(query(collectionGroup(db, 'orgAdmins'), where('userId', '==', uid)));
+  if (snap.empty) {
+    return { orgId: null, orgName: null, role: null };
+  }
+  return buildOrgAdminContext(db, snap.docs[0]);
+};
+
+/** Live-updating version of resolveOrgAdminContext. Returns an unsubscribe function. */
+export const subscribeToOrgAdminContext = (
+  db: Firestore,
+  uid: string,
+  onChange: (context: OrgAdminContext) => void,
+) => {
+  const q = query(collectionGroup(db, 'orgAdmins'), where('userId', '==', uid));
+  return onSnapshot(q, async (snap) => {
+    if (snap.empty) {
+      onChange({ orgId: null, orgName: null, role: null });
+      return;
+    }
+    onChange(await buildOrgAdminContext(db, snap.docs[0]));
+  });
 };
