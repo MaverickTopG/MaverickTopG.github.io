@@ -1570,19 +1570,18 @@ async function findUserDocByUid(uid) {
   return null;
 }
 
-async function syncCustomClaimsForUser(uid, paid, planTier = DEFAULT_PLAN_TIER, grandfathered = false, organizationId = null, role = null) {
+async function syncCustomClaimsForUser(uid, paid, grandfathered = false, organizationId = null, role = null) {
   if (!uid) return;
   try {
     const userRecord = await authAdmin.getUser(uid);
     const currentClaims = userRecord.customClaims || {};
-    const normalizedTier = normalizePlanTier(planTier);
     const normalizedGrandfathered = Boolean(grandfathered);
     const targetOrgId = organizationId || currentClaims.organizationId || currentClaims.orgId || null;
     const targetRole = role || currentClaims.role || (currentClaims.admin ? 'admin' : 'volunteer');
 
     if (
       currentClaims.paid === paid
-      && currentClaims.plan_tier === normalizedTier
+      && currentClaims.plan_tier === 'cosmos'
       && currentClaims.grandfathered === normalizedGrandfathered
       && currentClaims.organizationId === targetOrgId
       && currentClaims.role === targetRole
@@ -1592,7 +1591,7 @@ async function syncCustomClaimsForUser(uid, paid, planTier = DEFAULT_PLAN_TIER, 
     await authAdmin.setCustomUserClaims(uid, {
       ...currentClaims,
       paid,
-      plan_tier: normalizedTier,
+      plan_tier: 'cosmos',
       grandfathered: normalizedGrandfathered,
       organizationId: targetOrgId,
       role: targetRole,
@@ -3180,11 +3179,10 @@ export const syncUserClaims = onDocumentWritten('users/{userId}', async (event) 
     return;
   }
 
-  const planTier = normalizePlanTier(afterData.plan_tier || afterData.planTier || afterData.planKey || afterData.plan_key);
   const grandfathered = Boolean(afterData.grandfathered || afterData.is_grandfathered);
   const organizationId = afterData.organization_id || afterData.organizationId || afterData.orgId || null;
   const role = afterData.role || null;
-  await syncCustomClaimsForUser(userId, paid, planTier, grandfathered, organizationId, role);
+  await syncCustomClaimsForUser(userId, paid, grandfathered, organizationId, role);
 });
 
 const PURGE_COLLECTIONS = [
