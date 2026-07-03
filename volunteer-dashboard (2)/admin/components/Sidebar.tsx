@@ -25,7 +25,7 @@ interface SidebarProps {
   isSubAdminPortal?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planTier, portalName, portalSubtitle, isSubAdminPortal }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, portalName, portalSubtitle, isSubAdminPortal }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [orgName, setOrgName] = useState('Organization');
 
@@ -56,11 +56,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planT
     }
   }, [portalName]);
 
-  const normalizedTier = (planTier || '').toLowerCase();
-  const canUseAi = normalizedTier === 'nebula' || normalizedTier === 'cosmos';
-  const canUseMessaging = normalizedTier === 'nebula' || normalizedTier === 'cosmos';
-  const canUseEvents = normalizedTier === 'orbit' || normalizedTier === 'nebula' || normalizedTier === 'cosmos';
-
   const navItems = [
     { id: 'impact', label: 'Impact Overview', icon: BarChart2 },
     { id: 'requests', label: 'Volunteer Request', icon: ClipboardList },
@@ -68,12 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planT
     { id: 'messaging', label: 'Messages', icon: MessageSquare },
     { id: 'events', label: 'Events', icon: Calendar },
     { id: 'nebulae', label: 'Nebulae AI', icon: Sparkles },
-  ].filter((item) => {
-    if (item.id === 'nebulae') return canUseAi;
-    if (item.id === 'messaging') return canUseMessaging;
-    if (item.id === 'events') return canUseEvents;
-    return true;
-  });
+  ];
 
   const helperItems = [
     { id: 'support', icon: HelpCircle, label: 'Support' }
