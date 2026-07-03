@@ -93,10 +93,6 @@
         "destination": "/volunteer/index.html"
       },
       {
-        "source": "/api/subAdminLogin",
-        "function": "subAdminLogin"
-      },
-      {
         "source": "/api/checkout",
         "function": "createCheckout"
       },
