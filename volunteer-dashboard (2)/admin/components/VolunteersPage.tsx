@@ -11,18 +11,21 @@ import {
   Check,
   RotateCcw,
   Copy,
-  History,
 } from 'lucide-react';
 import { onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import {
+  collection,
   doc,
+  onSnapshot,
+  query,
   serverTimestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { AiInsightWidget } from './AiInsightWidget';
 import { useGeminiInsight } from '../hooks/useGeminiInsight';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { getActiveSubAdminSession, resolveOrgAdmins, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { subscribeToOrgAdminContext } from '../lib/orgContext';
 
 type VolunteerRow = {
   id: string;
@@ -30,32 +33,8 @@ type VolunteerRow = {
   role: string;
   status: 'active' | 'archived';
   hours: number;
-  task: string;
-  lastLogged: string;
   email: string;
-  lastLogDate?: Date | null;
-  matchIds: string[];
-  matchEmails: string[];
-  matchNames: string[];
-};
-
-const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
-  String(
-    data.target_group_id
-    || data.targetGroupId
-    || data.sub_admin_group_id
-    || data.subAdminGroupId
-    || data.group_scope_id
-    || data.groupScopeId
-    || data.groupId
-    || data.group_id
-    || '',
-  ).trim();
-
-const matchesScopeContext = (data: Record<string, unknown> = {}, activeScopeId = '') => {
-  const scopeId = resolveRecordScopeId(data);
-  if (activeScopeId) return scopeId === activeScopeId;
-  return !scopeId;
+  joinedAt: Date | null;
 };
 
 interface VolunteersPageProps {
@@ -64,6 +43,23 @@ interface VolunteersPageProps {
   onOpenCopilot?: () => void;
   planTier?: string;
 }
+
+const toDate = (value: unknown): Date | null => {
+  if (!value) return null;
+  const raw = value as { toDate?: () => Date; seconds?: number };
+  if (typeof raw.toDate === 'function') return raw.toDate();
+  if (typeof raw.seconds === 'number') return new Date(raw.seconds * 1000);
+  return null;
+};
+
+const formatRelativeTime = (date: Date | null) => {
+  if (!date) return '—';
+  const diffMs = Date.now() - date.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffHours < 24) return `${Math.max(1, diffHours)} hrs ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+};
 
 export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   isActive = false,
@@ -84,403 +80,82 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
     name: '',
     email: '',
   });
-  const [historyModal, setHistoryModal] = useState<{ isOpen: boolean; name: string; logs: Array<Record<string, unknown>> }>({
-    isOpen: false,
-    name: '',
-    logs: [],
-  });
   const [archivePassword, setArchivePassword] = useState('');
   const [archiveError, setArchiveError] = useState('');
-  const [orgCode, setOrgCode] = useState('');
   const [orgId, setOrgId] = useState('');
-  const [orgName, setOrgName] = useState('');
-  const [adminUid, setAdminUid] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
-  const [orgAdminIds, setOrgAdminIds] = useState<string[]>([]);
-  const [orgAdminEmails, setOrgAdminEmails] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [users, setUsers] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
-  const [memberLinks, setMemberLinks] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
-  const [joinRequests, setJoinRequests] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
-  const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
-  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
+  const [volunteers, setVolunteers] = useState<VolunteerRow[]>([]);
   const [page, setPage] = useState(1);
   const pageSize = 7;
   const [insightUpdatedAt, setInsightUpdatedAt] = useState(() => Date.now());
 
   const filters = ['All Members', 'Highest Hours', 'Lowest Hours', 'Archived'];
 
-  const getLogDate = (log: Record<string, unknown>) => {
-    const raw = (log.created_at || log.createdAt || log.date) as { toDate?: () => Date } | undefined;
-    if (raw && typeof (raw as { toDate?: () => Date }).toDate === 'function') {
-      return (raw as { toDate: () => Date }).toDate();
-    }
-    if (typeof raw === 'string' || typeof raw === 'number') {
-      const date = new Date(raw);
-      if (!Number.isNaN(date.getTime())) return date;
-    }
-    const timestamp = raw as { seconds?: number; nanoseconds?: number } | undefined;
-    if (timestamp?.seconds != null && timestamp?.nanoseconds != null) {
-      return new Date(timestamp.seconds * 1000 + Math.floor(timestamp.nanoseconds / 1e6));
-    }
-    return null;
-  };
-
-  const formatLogDate = (date: Date | null) => {
-    if (!date) return '—';
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubContext: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
+      }
       if (!user) {
-        setOrgCode('');
-        setAdminUid('');
+        setOrgId('');
         setAdminEmail('');
-        setUsers([]);
-        setLogs([]);
+        setVolunteers([]);
         setLoading(false);
         return;
       }
-      setAdminUid(user.uid || '');
       setAdminEmail(user.email || '');
-      const context = await resolveOrgContext(db, user.uid, user.email || null);
-      setOrgCode(context.orgCode || '');
-      setOrgId(context.orgId || '');
-      setOrgName(context.orgName || '');
-      const adminContext = await resolveOrgAdmins(db, context.orgId, context.orgCode);
-      setOrgAdminIds(adminContext.adminIds || []);
-      setOrgAdminEmails(adminContext.adminEmails || []);
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
+        setOrgId(context.orgId || '');
+      });
     });
-    return () => unsubscribe();
-  }, []);
 
-  useEffect(() => {
-    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
-    window.addEventListener('nexolink:subadmin-session', syncScope);
-    window.addEventListener('storage', syncScope);
     return () => {
-      window.removeEventListener('nexolink:subadmin-session', syncScope);
-      window.removeEventListener('storage', syncScope);
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
     };
   }, []);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if (!orgId) {
+      setVolunteers([]);
+      setLoading(false);
+      return;
+    }
     const db = getFirestoreDb();
-    const unsubUsers = subscribeToOrgCollection({
-      db,
-      collectionName: 'users',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setUsers(rows);
+    const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+    const q = query(volunteersRef, where('status', 'in', ['active', 'rejected']));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const rows: VolunteerRow[] = snap.docs.map((docSnap) => {
+          const data = docSnap.data() as Record<string, unknown>;
+          const perOrgStats = (data.perOrgStats as Record<string, unknown>) || {};
+          return {
+            id: docSnap.id,
+            name: String(data.displayName || data.email || 'Volunteer'),
+            role: String(data.role || 'Volunteer'),
+            status: data.archived ? 'archived' : 'active',
+            hours: Number(perOrgStats.hours ?? 0),
+            email: String(data.email || ''),
+            joinedAt: toDate(data.joinedAt),
+          };
+        });
+        setVolunteers(rows.filter((row) => row.status === 'active' || row.status === 'archived'));
         setLoading(false);
       },
-    });
-
-    const unsubLogs = subscribeToOrgCollection({
-      db,
-      collectionName: 'volunteer_logs',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setLogs(rows.map((row) => ({ id: row.id, ...(row.data || {}) })));
+      (error) => {
+        console.error('Failed to load volunteers', error);
+        setLoading(false);
       },
-    });
-
-    const unsubMembers = subscribeToOrgCollection({
-      db,
-      collectionName: 'user_organizations',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setMemberLinks(rows);
-      },
-    });
-
-    const unsubJoinRequests = subscribeToOrgCollection({
-      db,
-      collectionName: 'organization_join_requests',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setJoinRequests(rows);
-      },
-    });
-
-    return () => {
-      unsubUsers();
-      unsubLogs();
-      unsubMembers();
-      unsubJoinRequests();
-    };
-  }, [orgCode, orgId, subAdminScopeKey]);
-
-  const volunteers = useMemo<VolunteerRow[]>(() => {
-    const volunteerMap = new Map<string, VolunteerRow>();
-    const keyByUserId = new Map<string, string>();
-    const keyByEmail = new Map<string, string>();
-    const keyByName = new Map<string, string>();
-    const scopedMemberLinks = memberLinks.filter((link) =>
-      matchesScopeContext((link.data || {}) as Record<string, unknown>, subAdminScopeKey),
     );
-    const scopedJoinRequests = joinRequests.filter((req) =>
-      matchesScopeContext((req.data || {}) as Record<string, unknown>, subAdminScopeKey),
-    );
-    const scopedLogs = logs.filter((log) =>
-      matchesScopeContext(log as Record<string, unknown>, subAdminScopeKey),
-    );
-    const scopedAllowedIds = new Set<string>();
-    const scopedAllowedEmails = new Set<string>();
-    scopedMemberLinks.forEach((link) => {
-      const data = link.data || {};
-      const id = String(data.user_id || data.userId || data.uid || link.id || '').trim();
-      const email = String(data.email || data.user_email || '').trim().toLowerCase();
-      if (id) scopedAllowedIds.add(id);
-      if (email) scopedAllowedEmails.add(email);
-    });
-    scopedJoinRequests.forEach((req) => {
-      const data = req.data || {};
-      const id = String(data.user_id || data.userId || '').trim();
-      const email = String(data.user_email || data.email || '').trim().toLowerCase();
-      if (id) scopedAllowedIds.add(id);
-      if (email) scopedAllowedEmails.add(email);
-    });
-    scopedLogs.forEach((log) => {
-      const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
-      const email = String(log.volunteer_email || log.email || '').trim().toLowerCase();
-      if (id) scopedAllowedIds.add(id);
-      if (email) scopedAllowedEmails.add(email);
-    });
-
-    users.forEach((user) => {
-      const data = user.data || {};
-      const first = String(data.firstName || data.name || '').trim();
-      const last = String(data.lastName || data.last_name || '').trim();
-      const email = String(data.email || '').trim();
-      const name = [first, last].filter(Boolean).join(' ').trim() || email || 'Volunteer';
-      const role = String(data.role || 'Volunteer');
-      const normalizedEmail = email.toLowerCase();
-      if (!scopedAllowedIds.has(user.id) && (!normalizedEmail || !scopedAllowedEmails.has(normalizedEmail))) {
-        return;
-      }
-      
-      // Strict filters for organizations and admins
-      if (orgId && user.id === orgId) return;
-      if (adminUid && user.id === adminUid) return;
-      if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      if (orgAdminIds.includes(user.id)) return;
-      if (orgAdminEmails.includes(email.toLowerCase())) return;
-      
-      const cleanOrgName = (orgName || '').trim().toLowerCase();
-      if (cleanOrgName && (name.toLowerCase() === cleanOrgName || name.toLowerCase().includes('tutoring club'))) return;
-
-      const archived = Boolean(data.archived || data.status === 'archived');
-      const key = buildVolunteerKey(email, name, user.id);
-      keyByUserId.set(user.id, key);
-      if (email) keyByEmail.set(email.toLowerCase(), key);
-      if (name) keyByName.set(name.toLowerCase(), key);
-      const existing = volunteerMap.get(key);
-
-      if (!existing) {
-        volunteerMap.set(key, {
-          id: user.id,
-          name,
-          role,
-          status: archived ? 'archived' : 'active',
-          hours: 0,
-          task: '—',
-          lastLogged: '—',
-          email,
-          lastLogDate: null,
-          matchIds: user.id ? [user.id] : [],
-          matchEmails: email ? [email.toLowerCase()] : [],
-          matchNames: name ? [name.toLowerCase()] : [],
-        });
-        return;
-      }
-
-      existing.email = existing.email || email;
-      existing.name = existing.name || name;
-      existing.role = role !== 'Volunteer' ? role : existing.role;
-      existing.status = existing.status === 'archived' || archived ? 'archived' : 'active';
-      if (user.id && !existing.matchIds.includes(user.id)) {
-        existing.matchIds.push(user.id);
-      }
-      if (email) {
-        const normalizedEmail = email.toLowerCase();
-        if (!existing.matchEmails.includes(normalizedEmail)) {
-          existing.matchEmails.push(normalizedEmail);
-        }
-      }
-      if (name) {
-        const normalizedName = name.toLowerCase();
-        if (!existing.matchNames.includes(normalizedName)) {
-          existing.matchNames.push(normalizedName);
-        }
-      }
-    });
-
-    scopedMemberLinks.forEach((link) => {
-      const data = link.data || {};
-      const userId = String(data.user_id || data.userId || data.uid || link.id || '').trim();
-      const email = String(data.email || data.user_email || '').trim();
-      const name = String(data.name || data.user_name || '').trim() || email || 'Volunteer';
-      const role = String(data.role || 'Volunteer');
-
-      // Strict filters for organizations and admins
-      if (orgId && userId === orgId) return;
-      if (adminUid && userId === adminUid) return;
-      if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      if (orgAdminIds.includes(userId)) return;
-      if (orgAdminEmails.includes(email.toLowerCase())) return;
-      
-      const cleanOrgName = (orgName || '').trim().toLowerCase();
-      if (cleanOrgName && (name.toLowerCase() === cleanOrgName || name.toLowerCase().includes('tutoring club'))) return;
-
-      if (userId && keyByUserId.has(userId)) return;
-      if (email && keyByEmail.has(email.toLowerCase())) return;
-      if (name && keyByName.has(name.toLowerCase())) return;
-      const key = buildVolunteerKey(email, name, userId || link.id);
-      keyByUserId.set(userId || key, key);
-      if (email) keyByEmail.set(email.toLowerCase(), key);
-      if (name) keyByName.set(name.toLowerCase(), key);
-      volunteerMap.set(key, {
-        id: userId || key,
-        name,
-        role,
-        status: 'active',
-        hours: 0,
-        task: '—',
-        lastLogged: '—',
-        email,
-        lastLogDate: null,
-        matchIds: userId ? [userId] : [],
-        matchEmails: email ? [email.toLowerCase()] : [],
-        matchNames: name ? [name.toLowerCase()] : [],
-      });
-    });
-
-    scopedJoinRequests.forEach((req) => {
-      const data = req.data || {};
-      const status = String(data.status || '').toLowerCase();
-      if (status !== 'accepted') return;
-
-      const userId = String(data.user_id || data.userId || '').trim();
-      const email = String(data.user_email || data.email || '').trim();
-      const name = String(data.user_name || data.name || '').trim() || email || 'Volunteer';
-      const role = String(data.requested_role || data.role || 'Volunteer');
-
-      if (orgId && userId === orgId) return;
-      if (adminUid && userId === adminUid) return;
-      if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      
-      if (userId && keyByUserId.has(userId)) return;
-      if (email && keyByEmail.has(email.toLowerCase())) return;
-      if (name && keyByName.has(name.toLowerCase())) return;
-
-      const key = buildVolunteerKey(email, name, userId || req.id);
-      keyByUserId.set(userId || key, key);
-      if (email) keyByEmail.set(email.toLowerCase(), key);
-      if (name) keyByName.set(name.toLowerCase(), key);
-      volunteerMap.set(key, {
-        id: userId || key,
-        name,
-        role,
-        status: 'active',
-        hours: 0,
-        task: '—',
-        lastLogged: '—',
-        email,
-        lastLogDate: null,
-        matchIds: userId ? [userId] : [],
-        matchEmails: email ? [email.toLowerCase()] : [],
-        matchNames: name ? [name.toLowerCase()] : [],
-      });
-    });
-
-    scopedLogs.forEach((log) => {
-      const userId = getLogUserId(log);
-      const logEmail = String(log.volunteer_email || log.email || '').trim();
-      const logName = String(log.volunteer_name || log.name || log.firstName || '').trim();
-      const role = String(log.role || log.volunteer_role || 'Volunteer');
-      
-      // Strict filters for organizations and admins
-      if (orgId && userId === orgId) return;
-      if (adminUid && userId === adminUid) return;
-      if (adminEmail && logEmail.toLowerCase() === adminEmail.toLowerCase()) return;
-      if (orgAdminIds.includes(userId)) return;
-      if (orgAdminEmails.includes(logEmail.toLowerCase())) return;
-      
-      const cleanOrgName = (orgName || '').trim().toLowerCase();
-      if (cleanOrgName && (logName.toLowerCase() === cleanOrgName || logName.toLowerCase().includes('tutoring club'))) return;
-
-      const key = userId && keyByUserId.has(userId)
-        ? keyByUserId.get(userId) as string
-        : logEmail && keyByEmail.has(logEmail.toLowerCase())
-          ? keyByEmail.get(logEmail.toLowerCase()) as string
-          : logName && keyByName.has(logName.toLowerCase())
-            ? keyByName.get(logName.toLowerCase()) as string
-            : buildVolunteerKey(logEmail, logName, userId);
-      const entry = volunteerMap.get(key) || {
-        id: userId || key,
-        name: logName || logEmail || 'Volunteer',
-        role: role,
-        status: 'active' as const,
-        hours: 0,
-        task: '—',
-        lastLogged: '—',
-        email: logEmail,
-        lastLogDate: null,
-        matchIds: userId ? [userId] : [],
-        matchEmails: logEmail ? [logEmail.toLowerCase()] : [],
-        matchNames: logName ? [logName.toLowerCase()] : [],
-      };
-
-      const addHours = isApproved(log) ? getLogHours(log) : 0;
-      entry.hours += addHours;
-
-      const approved = isApproved(log);
-      if (approved) {
-        const date = getLogDate(log);
-        if (date && (!entry.lastLogDate || date > entry.lastLogDate)) {
-          entry.lastLogDate = date;
-          entry.lastLogged = formatRelativeTime(date);
-          entry.task = String(log.volunteering_task || log.task || log.site || 'Volunteer shift');
-        }
-      }
-
-      if (!volunteerMap.has(key)) {
-        volunteerMap.set(key, entry);
-      } else {
-        const existing = volunteerMap.get(key);
-        if (existing) {
-          if (approved && entry.lastLogDate && (!existing.lastLogDate || entry.lastLogDate > existing.lastLogDate)) {
-            existing.lastLogDate = entry.lastLogDate;
-            existing.lastLogged = entry.lastLogged;
-            existing.task = entry.task;
-          }
-          existing.email = existing.email || entry.email;
-          existing.name = existing.name || entry.name;
-          entry.matchIds.forEach((id) => {
-            if (!existing.matchIds.includes(id)) existing.matchIds.push(id);
-          });
-          entry.matchEmails.forEach((mail) => {
-            if (!existing.matchEmails.includes(mail)) existing.matchEmails.push(mail);
-          });
-          entry.matchNames.forEach((nameKey) => {
-            if (!existing.matchNames.includes(nameKey)) existing.matchNames.push(nameKey);
-          });
-        }
-      }
-    });
-
-    // This page is strictly for volunteers. Never include admin/sub-admin accounts.
-    return Array.from(volunteerMap.values()).filter((row) => !isAdminRole(String(row.role || '')));
-  }, [adminEmail, adminUid, joinRequests, logs, memberLinks, orgAdminEmails, orgAdminIds, subAdminScopeKey, users]);
+    return () => unsubscribe();
+  }, [orgId]);
 
   const activeVolunteers = useMemo(
     () => volunteers.filter((volunteer) => volunteer.status !== 'archived'),
@@ -490,19 +165,13 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   const volunteerInsights = useMemo(() => {
     const now = Date.now();
     const withSignals = activeVolunteers.map((volunteer) => {
-      const daysSince = volunteer.lastLogDate
-        ? Math.floor((now - volunteer.lastLogDate.getTime()) / (1000 * 60 * 60 * 24))
+      const daysSince = volunteer.joinedAt
+        ? Math.floor((now - volunteer.joinedAt.getTime()) / (1000 * 60 * 60 * 24))
         : null;
       let score = 0;
       if (volunteer.hours >= 40) score += 3;
       else if (volunteer.hours >= 25) score += 2;
       else if (volunteer.hours >= 15) score += 1;
-
-      if (daysSince !== null) {
-        if (daysSince <= 2) score += 2;
-        else if (daysSince <= 7) score += 1;
-        else if (daysSince >= 21) score -= 1;
-      }
 
       const risk = score >= 4 ? 'high' : score >= 2 ? 'moderate' : 'healthy';
       return { ...volunteer, daysSince, risk, score };
@@ -511,30 +180,13 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
     const high = withSignals.filter((v) => v.risk === 'high');
     const moderate = withSignals.filter((v) => v.risk === 'moderate');
     const healthy = withSignals.filter((v) => v.risk === 'healthy');
-    const burnoutHighlights = [...high, ...moderate]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
-    const dropoff = withSignals
-      .filter((v) => v.daysSince === null || v.daysSince >= 21)
-      .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999))
-      .slice(0, 3);
+    const burnoutHighlights = [...high, ...moderate].sort((a, b) => b.score - a.score).slice(0, 3);
     const reliability = withSignals
-      .filter((v) => (v.daysSince ?? 99) <= 10 && v.hours >= 20)
+      .filter((v) => v.hours >= 20)
       .sort((a, b) => b.hours - a.hours)
       .slice(0, 3);
-    const roleMatch = withSignals
-      .filter((v) => v.hours <= 5 && (v.daysSince ?? 999) <= 30)
-      .slice(0, 3);
 
-    return {
-      high,
-      moderate,
-      healthy,
-      burnoutHighlights,
-      dropoff,
-      reliability,
-      roleMatch,
-    };
+    return { high, moderate, healthy, burnoutHighlights, reliability };
   }, [activeVolunteers]);
 
   useEffect(() => {
@@ -551,29 +203,9 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
         label: volunteer.name,
         value: volunteer.risk === 'high' ? 'High' : 'Mod',
         tone: volunteer.risk === 'high' ? 'alert' : 'warning',
-        helper: `${volunteer.hours.toFixed(0)}h · ${volunteer.lastLogged || 'No logs'}`,
+        helper: `${volunteer.hours.toFixed(0)}h`,
       }))
-    : [
-        {
-          label: 'All clear',
-          value: 'OK',
-          tone: 'ok' as const,
-        },
-      ];
-
-  const dropoffItems = volunteerInsights.dropoff.length
-    ? volunteerInsights.dropoff.map((volunteer) => ({
-        label: volunteer.name,
-        value: volunteer.daysSince ? `${volunteer.daysSince}d` : 'No logs',
-        tone: 'warning' as const,
-      }))
-    : [
-        {
-          label: 'Retention stable',
-          value: 'OK',
-          tone: 'ok' as const,
-        },
-      ];
+    : [{ label: 'All clear', value: 'OK', tone: 'ok' as const }];
 
   const reliabilityItems = volunteerInsights.reliability.length
     ? volunteerInsights.reliability.map((volunteer) => ({
@@ -581,55 +213,17 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
         value: `${volunteer.hours.toFixed(0)}h`,
         tone: 'ok' as const,
       }))
-    : [
-        {
-          label: 'No leaders yet',
-          value: '—',
-          tone: 'info' as const,
-        },
-      ];
-
-  const roleMatchItems = volunteerInsights.roleMatch.length
-    ? volunteerInsights.roleMatch.map((volunteer) => ({
-        label: volunteer.name,
-        value: 'Match',
-        tone: 'info' as const,
-      }))
-    : [
-        {
-          label: 'Role fit stable',
-          value: 'OK',
-          tone: 'ok' as const,
-        },
-      ];
+    : [{ label: 'No leaders yet', value: '—', tone: 'info' as const }];
 
   const fallbackInsight = useMemo(
     () => ({
       summary: `${activeVolunteers.length} active · ${volunteerInsights.high.length} high risk · ${volunteerInsights.moderate.length} moderate`,
       sections: [
-        {
-          title: 'Burnout Risk',
-          items: burnoutItems,
-        },
-        {
-          title: 'Retention Drop',
-          items: dropoffItems,
-        },
-        {
-          title: 'Reliability + Match',
-          items: [...reliabilityItems.slice(0, 2), ...roleMatchItems.slice(0, 1)],
-        },
+        { title: 'Burnout Risk', items: burnoutItems },
+        { title: 'Reliability', items: reliabilityItems },
       ],
     }),
-    [
-      activeVolunteers.length,
-      burnoutItems,
-      dropoffItems,
-      reliabilityItems,
-      roleMatchItems,
-      volunteerInsights.high.length,
-      volunteerInsights.moderate.length,
-    ],
+    [activeVolunteers.length, burnoutItems, reliabilityItems, volunteerInsights.high.length, volunteerInsights.moderate.length],
   );
 
   const insightSource = useMemo(
@@ -640,17 +234,8 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       burnoutHighlights: volunteerInsights.burnoutHighlights.map((volunteer) => ({
         name: volunteer.name,
         hours: volunteer.hours,
-        lastLogged: volunteer.lastLogged,
-      })),
-      dropoff: volunteerInsights.dropoff.map((volunteer) => ({
-        name: volunteer.name,
-        daysSince: volunteer.daysSince,
       })),
       reliability: volunteerInsights.reliability.map((volunteer) => ({
-        name: volunteer.name,
-        hours: volunteer.hours,
-      })),
-      roleMatch: volunteerInsights.roleMatch.map((volunteer) => ({
         name: volunteer.name,
         hours: volunteer.hours,
       })),
@@ -666,48 +251,11 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
     fallback: fallbackInsight,
   });
 
-  const buildVolunteerHistory = (volunteer: VolunteerRow) => {
-    const normalizedEmail = volunteer.email?.toLowerCase();
-    const matchIds = new Set(volunteer.matchIds.filter(Boolean));
-    const matchEmails = new Set(volunteer.matchEmails.filter(Boolean));
-    const matchNames = new Set(volunteer.matchNames.filter(Boolean));
-    const filtered = logs.filter((log) => {
-      const userId = getLogUserId(log);
-      const logEmail = String(log.volunteer_email || log.email || '').toLowerCase();
-      const logName = String(log.volunteer_name || log.name || log.firstName || '').trim().toLowerCase();
-      if (userId && matchIds.has(userId)) return true;
-      if (logEmail && matchEmails.has(logEmail)) return true;
-      if (logName && matchNames.has(logName)) return true;
-      if (volunteer.id && userId && userId === volunteer.id) return true;
-      if (normalizedEmail && logEmail === normalizedEmail) return true;
-      if (volunteer.name && logName === volunteer.name.toLowerCase()) return true;
-      return false;
-    });
-    return filtered
-      .map((log) => ({ ...log }))
-      .sort((a, b) => {
-        const aDate = getLogDate(a);
-        const bDate = getLogDate(b);
-        return (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
-      });
-  };
-
-  const openHistoryModal = (volunteer: VolunteerRow) => {
-    const history = buildVolunteerHistory(volunteer);
-    setHistoryModal({
-      isOpen: true,
-      name: volunteer.name || 'Volunteer',
-      logs: history,
-    });
-  };
-
   const filteredData = useMemo(() => {
     let data = [...volunteers];
-
     if (searchQuery) {
       data = data.filter((v) => v.name.toLowerCase().includes(searchQuery.toLowerCase()));
     }
-
     switch (activeFilter) {
       case 'Archived':
         return data.filter((v) => v.status === 'archived');
@@ -730,9 +278,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   }, [activeFilter, searchQuery]);
 
   useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
+    if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
   const handleArchiveClick = (id: string, name: string) => {
@@ -742,7 +288,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   };
 
   const confirmArchive = async () => {
-    if (!archiveModal.id) return;
+    if (!archiveModal.id || !orgId) return;
     if (!archivePassword.trim()) {
       setArchiveError('Password required.');
       return;
@@ -756,10 +302,8 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       const credential = EmailAuthProvider.credential(adminEmail, archivePassword);
       await reauthenticateWithCredential(auth.currentUser, credential);
       const db = getFirestoreDb();
-      await updateDoc(doc(db, 'users', archiveModal.id), {
+      await updateDoc(doc(db, 'organizations', orgId, 'volunteers', archiveModal.id), {
         archived: true,
-        archivedAt: serverTimestamp(),
-        archivedBy: auth.currentUser.uid,
       });
       setArchiveModal({ isOpen: false, id: null, name: '' });
     } catch (error) {
@@ -769,27 +313,26 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   };
 
   const handleUnarchive = async (id: string) => {
+    if (!orgId) return;
     const db = getFirestoreDb();
-    await updateDoc(doc(db, 'users', id), {
+    await updateDoc(doc(db, 'organizations', orgId, 'volunteers', id), {
       archived: false,
-      unarchivedAt: serverTimestamp(),
     });
   };
 
   const handleMessageAll = () => {
-    // Collect all unique emails from non-archived volunteers
-    const activeEmails = Array.from(new Set(
-      volunteers
-        .filter(v => v.status !== 'archived' && v.email && v.email.includes('@'))
-        .map(v => v.email)
-    ));
-    
+    const activeEmails = Array.from(
+      new Set(
+        volunteers
+          .filter((v) => v.status !== 'archived' && v.email && v.email.includes('@'))
+          .map((v) => v.email),
+      ),
+    );
     if (activeEmails.length === 0) return;
-    
     setEmailModal({
       isOpen: true,
       name: `All Volunteers (${activeEmails.length})`,
-      email: activeEmails.join(', ')
+      email: activeEmails.join(', '),
     });
   };
 
@@ -824,10 +367,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
               <AnimatePresence>
                 {showFilterMenu && (
                   <>
-                    <div
-                      className="fixed inset-0 z-40 bg-transparent"
-                      onClick={() => setShowFilterMenu(false)}
-                    />
+                    <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setShowFilterMenu(false)} />
                     <motion.div
                       initial={{ opacity: 0, y: 10, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -844,9 +384,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
                             setShowFilterMenu(false);
                           }}
                           className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center justify-between ${
-                            activeFilter === f
-                              ? 'bg-gray-50 text-gray-900'
-                              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                            activeFilter === f ? 'bg-gray-50 text-gray-900' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                           }`}
                         >
                           {f}
@@ -879,11 +417,10 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
         className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[400px]"
       >
         <div className="grid grid-cols-12 gap-4 p-6 border-b border-gray-100 bg-gray-50/50 text-xs font-bold text-gray-400 uppercase tracking-wider">
-          <div className="col-span-4 pl-4">Volunteer Profile</div>
+          <div className="col-span-5 pl-4">Volunteer Profile</div>
           <div className="col-span-2">Total Hours</div>
-          <div className="col-span-3">Latest Task</div>
-          <div className="col-span-2">Last Logged</div>
-          <div className="col-span-1 text-right pr-4">Actions</div>
+          <div className="col-span-3">Joined</div>
+          <div className="col-span-2 text-right pr-4">Actions</div>
         </div>
 
         <div className="flex flex-col">
@@ -910,7 +447,7 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
                   transition={{ type: 'spring', stiffness: 50, damping: 15 }}
                   className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-gray-50/80 transition-colors group border-b border-gray-50 last:border-0"
                 >
-                  <div className="col-span-4 flex items-center gap-4 pl-4">
+                  <div className="col-span-5 flex items-center gap-4 pl-4">
                     <div>
                       <h4 className="font-bold text-gray-900 text-sm group-hover:text-lime-700 transition-colors">{v.name}</h4>
                       <p className="text-xs text-gray-500 font-medium">{v.role}</p>
@@ -926,28 +463,14 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
                     </div>
                   </div>
 
-                  <div className="col-span-3 pr-4">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${v.status === 'archived' ? 'bg-gray-300' : 'bg-lime-500'}`} />
-                      <span className="text-sm font-medium text-gray-700 truncate">{v.task}</span>
-                    </div>
-                  </div>
-
-                  <div className="col-span-2">
+                  <div className="col-span-3">
                     <span className="text-sm font-medium text-gray-500 flex items-center gap-2">
                       <Calendar className="w-3.5 h-3.5" />
-                      {v.lastLogged}
+                      {v.joinedAt ? formatRelativeTime(v.joinedAt) : '—'}
                     </span>
                   </div>
 
-                  <div className="col-span-1 flex justify-end gap-2 pr-2">
-                    <button
-                      title="View History"
-                      onClick={() => openHistoryModal(v)}
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-lime-600 hover:bg-lime-50 transition-all opacity-0 group-hover:opacity-100"
-                    >
-                      <History className="w-4 h-4" />
-                    </button>
+                  <div className="col-span-2 flex justify-end gap-2 pr-2">
                     <button
                       title="View Email"
                       onClick={() => setEmailModal({ isOpen: true, name: v.name, email: v.email || 'No email on file' })}
@@ -1031,7 +554,6 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
               className="absolute inset-0 bg-black/40 backdrop-blur-sm"
               onClick={() => setArchiveModal({ isOpen: false, id: null, name: '' })}
             />
-
             <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -1119,76 +641,6 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {historyModal.isOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-              onClick={() => setHistoryModal({ isOpen: false, name: '', logs: [] })}
-            />
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              className="bg-white rounded-3xl p-8 w-full max-w-2xl relative shadow-2xl z-10"
-            >
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-xl font-bold text-gray-900">{historyModal.name}</h3>
-                  <p className="text-sm text-gray-500">Volunteer log history</p>
-                </div>
-                <button
-                  onClick={() => setHistoryModal({ isOpen: false, name: '', logs: [] })}
-                  className="px-4 py-2 bg-gray-900 text-white rounded-xl text-sm font-semibold hover:bg-black"
-                >
-                  Close
-                </button>
-              </div>
-
-              {historyModal.logs.length === 0 ? (
-                <div className="py-12 text-center text-gray-400 text-sm">No volunteer logs found for this person.</div>
-              ) : (
-                <div className="max-h-[420px] overflow-y-auto no-scrollbar flex flex-col gap-3">
-                  {historyModal.logs.map((log, idx) => {
-                    const date = getLogDate(log);
-                    const hours = getLogHours(log);
-                    const task = String(log.volunteering_task || log.task || log.site || 'Volunteer shift');
-                    const status = String(
-                      log.approve
-                        || log.status
-                        || log.state
-                        || log.approval_status
-                        || log.approvalStatus
-                        || 'pending',
-                    ).toLowerCase();
-                    return (
-                      <div
-                        key={`${log.id || 'log'}-${idx}`}
-                        className="border border-gray-100 rounded-2xl px-5 py-4 flex items-center justify-between gap-4"
-                      >
-                        <div>
-                          <div className="text-sm font-semibold text-gray-900">{task}</div>
-                          <div className="text-xs text-gray-500 mt-1">{formatLogDate(date)}</div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-bold text-gray-900">{hours.toFixed(1)} hrs</span>
-                          <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full ${status === 'approved' || status === 'accepted' ? 'bg-lime-100 text-lime-700' : 'bg-gray-100 text-gray-500'}`}>
-                            {status}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
       {isActive && aiEnabled && (
         <AiInsightWidget
           title="Volunteer Pulse"
@@ -1203,77 +655,4 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
       )}
     </div>
   );
-};
-
-const getLogUserId = (log: Record<string, unknown>) => {
-  return (log.user_id || log.userId || log.volunteer_id || log.volunteerId || log.uid || '') as string;
-};
-
-const isAdminRole = (role: string) => {
-  const normalized = role.toLowerCase();
-  return ['org-admin', 'admin', 'subadmin', 'sub-admin', 'owner', 'organization'].includes(normalized);
-};
-
-const buildVolunteerKey = (email: string, name: string, fallback: string) => {
-  if (email) return `email:${email.toLowerCase()}`;
-  if (name) return `name:${name.toLowerCase()}`;
-  return `id:${fallback}`;
-};
-
-const getLogHours = (log: Record<string, unknown>) => {
-  const raw = log.hours_contributed ?? log.hours ?? 0;
-  const value = typeof raw === 'string' ? parseFloat(raw) : Number(raw);
-  return Number.isNaN(value) ? 0 : value;
-};
-
-const isApproved = (log: Record<string, unknown>) => {
-  const status = String(
-    log.approve
-      || log.status
-      || log.state
-      || log.approval_status
-      || log.approvalStatus
-      || 'pending',
-  ).toLowerCase();
-  return status === 'approved' || status === 'accepted';
-};
-
-const parseLogDate = (value: unknown) => {
-  if (!value) return null;
-  const raw = value as { toDate?: () => Date };
-  if (typeof raw.toDate === 'function') {
-    return raw.toDate();
-  }
-  if (typeof value === 'object' && value !== null && (value as { seconds?: number }).seconds) {
-    return new Date((value as { seconds: number }).seconds * 1000);
-  }
-  const parsed = new Date(String(value));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const getLatestLog = (userLogs: Array<Record<string, unknown>>) => {
-  return userLogs.reduce<{ date: Date | null; task: string }>(
-    (acc, log) => {
-      const date = parseLogDate(log.date);
-      if (!date) return acc;
-      if (!acc.date || date > acc.date) {
-        return {
-          date,
-          task: String(log.volunteering_task || log.task || log.site || 'Volunteer shift'),
-        };
-      }
-      return acc;
-    },
-    { date: null, task: '—' }
-  );
-};
-
-const formatRelativeTime = (date: Date) => {
-  const diffMs = Date.now() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  if (diffHours < 24) {
-    return `${Math.max(1, diffHours)} hrs ago`;
-  }
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 };
