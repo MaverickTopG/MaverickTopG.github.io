@@ -670,9 +670,6 @@ export const autoApproveVolunteerLogs = onDocumentWritten('volunteer_logs/{logId
     return;
   }
   const autoProcessingEnabled = await resolveAutoProcessingEnabled(org);
-  const planTier = await resolveOrgPlanTier({ orgId: org.orgId, orgCode: org.orgCode });
-  const planLimits = getPlanLimits(planTier);
-  if (!planLimits.autoLogReview && event.auth?.token?.grandfathered !== true) return;
   if (!autoProcessingEnabled) return;
 
   const userId = resolveLogUserId(log);
@@ -759,45 +756,7 @@ export const consumeNebulaePrompt = onCall(async (request) => {
     throw new HttpsError('failed-precondition', 'Organization context is required.');
   }
 
-  const planTier = await resolveOrgPlanTier({ orgId, orgCode, userId: uid });
-  const limits = getPlanLimits(planTier);
-
-  if (limits.aiPromptsPerDay === 0) {
-    throw new HttpsError('permission-denied', 'Nebulae AI is not enabled for your plan.');
-  }
-
-  if (limits.aiPromptsPerDay === null) {
-    return { allowed: true, planTier, remaining: null };
-  }
-
-  const dayKey = new Date().toISOString().slice(0, 10);
-  const usageKey = orgId || orgCode || uid;
-  const usageRef = db.collection('org_usage').doc(usageKey);
-  let remaining = null;
-
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(usageRef);
-    const data = snap.exists ? snap.data() || {} : {};
-    const map = data.nebulae_prompts || {};
-    const used = Number(map[dayKey] || 0);
-
-    if (used >= limits.aiPromptsPerDay) {
-      throw new HttpsError('resource-exhausted', 'Nebulae AI prompt limit reached for today.');
-    }
-
-    const nextUsed = used + 1;
-    const nextMap = { ...map, [dayKey]: nextUsed };
-    remaining = Math.max(0, limits.aiPromptsPerDay - nextUsed);
-
-    tx.set(usageRef, {
-      orgId: orgId || null,
-      orgCode: orgCode || null,
-      nebulae_prompts: nextMap,
-      updatedAt: Timestamp.now(),
-    }, { merge: true });
-  });
-
-  return { allowed: true, planTier, remaining };
+  return { allowed: true, planTier: 'cosmos', remaining: null };
 });
 
 export const requestPlanChange = onCall(async (request) => {
