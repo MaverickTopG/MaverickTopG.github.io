@@ -30,7 +30,6 @@ interface EventsPageProps {
   onNavigate: (view: string) => void;
   isActive?: boolean;
   aiEnabled?: boolean;
-  planTier?: string;
 }
 
 interface Event {
@@ -363,7 +362,6 @@ export const EventsPage: React.FC<EventsPageProps> = ({
   onNavigate,
   isActive = false,
   aiEnabled = false,
-  planTier = 'nebula',
 }) => {
   const [filter, setFilter] = useState('Upcoming');
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -776,7 +774,6 @@ export const EventsPage: React.FC<EventsPageProps> = ({
 
   const { insight: aiInsight } = useGeminiInsight({
     enabled: aiEnabled && isActive,
-    planTier,
     pageKey: 'events',
     sourceData: insightSource,
     fallback: fallbackInsight,

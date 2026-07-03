@@ -41,7 +41,6 @@ interface VolunteersPageProps {
   isActive?: boolean;
   aiEnabled?: boolean;
   onOpenCopilot?: () => void;
-  planTier?: string;
 }
 
 const toDate = (value: unknown): Date | null => {
@@ -65,7 +64,6 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
   isActive = false,
   aiEnabled = false,
   onOpenCopilot,
-  planTier = 'nebula',
 }) => {
   const [activeFilter, setActiveFilter] = useState('All Members');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
@@ -245,7 +243,6 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
 
   const { insight: aiInsight } = useGeminiInsight({
     enabled: aiEnabled && isActive,
-    planTier,
     pageKey: 'volunteers',
     sourceData: insightSource,
     fallback: fallbackInsight,
