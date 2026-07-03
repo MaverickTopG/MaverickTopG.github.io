@@ -3,6 +3,7 @@ import {
   BarChart2,
   ClipboardList,
   Users,
+  CreditCard,
   HelpCircle,
   MessageSquare,
   Calendar,
@@ -190,6 +191,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, planT
                   </AnimatePresence>
                </button>
             ))}
+
+            {!isSubAdminPortal && (
+              <button
+                  onClick={() => onNavigate('billing')}
+                  className={`
+                      flex items-center h-10 text-gray-500 hover:text-white transition-colors group rounded-xl hover:bg-gray-800/30 mt-2
+                      ${currentView === 'billing' ? 'text-white bg-gray-800/50' : ''}
+                      ${isHovered ? 'px-4' : 'pl-4'}
+                  `}
+              >
+                  <div className="w-8 h-8 flex items-center justify-center shrink-0">
+                      <CreditCard className="w-5 h-5" />
+                  </div>
+                  <AnimatePresence>
+                      {isHovered && (
+                          <motion.span
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="ml-4 text-sm font-medium whitespace-nowrap"
+                          >
+                          Billing
+                          </motion.span>
+                      )}
+                  </AnimatePresence>
+              </button>
+            )}
 
             {!isSubAdminPortal && (
               <button
