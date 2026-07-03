@@ -108,7 +108,6 @@ type OpsSignal = {
 
 type UseNebulaeOpsCenterArgs = {
   enabled: boolean;
-  planTier: string;
   orgCode: string;
   orgId: string;
   volunteers: VolunteerRecord[];
@@ -298,25 +297,14 @@ const saveJson = (key: string, value: unknown) => {
   }
 };
 
-const resolveDefaultAutopilot = (planTier: string): AutopilotSettings => {
-  const normalized = String(planTier || '').toLowerCase();
-  if (normalized === 'cosmos') {
-    return {
-      autoInvite: true,
-      autoReminders: true,
-      autoRecognition: false,
-    };
-  }
-  return {
-    autoInvite: false,
-    autoReminders: false,
-    autoRecognition: false,
-  };
-};
+const resolveDefaultAutopilot = (): AutopilotSettings => ({
+  autoInvite: true,
+  autoReminders: true,
+  autoRecognition: false,
+});
 
 export const useNebulaeOpsCenter = ({
   enabled,
-  planTier,
   orgCode,
   orgId,
   volunteers,
@@ -326,13 +314,12 @@ export const useNebulaeOpsCenter = ({
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [signups, setSignups] = useState<SignupRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [autopilot, setAutopilot] = useState<AutopilotSettings>(() => resolveDefaultAutopilot(planTier));
+  const [autopilot, setAutopilot] = useState<AutopilotSettings>(() => resolveDefaultAutopilot());
   const [learning, setLearning] = useState<LearningStore>(() => createDefaultLearningStore());
   const [lastSignal, setLastSignal] = useState<OpsSignal | null>(null);
   const [senderName, setSenderName] = useState<string>('Nebulae AI Ops');
   const runningActionRef = useRef(false);
 
-  const normalizedTier = String(planTier || '').toLowerCase();
   const orgKey = useMemo(
     () => String(orgId || orgCode || 'default').toLowerCase(),
     [orgCode, orgId],
@@ -340,10 +327,10 @@ export const useNebulaeOpsCenter = ({
 
   useEffect(() => {
     const keys = storageKeys(orgKey);
-    const defaults = resolveDefaultAutopilot(planTier);
+    const defaults = resolveDefaultAutopilot();
     setAutopilot(loadJson<AutopilotSettings>(keys.autopilot, defaults));
     setLearning(loadJson<LearningStore>(keys.learning, createDefaultLearningStore()));
-  }, [orgKey, planTier]);
+  }, [orgKey]);
 
   useEffect(() => {
     const keys = storageKeys(orgKey);
@@ -971,8 +958,8 @@ export const useNebulaeOpsCenter = ({
   ) => {
     const automatic = Boolean(options?.automatic);
 
-    if (!enabled || (normalizedTier !== 'nebula' && normalizedTier !== 'cosmos')) {
-      return { ok: false, message: 'Nebulae Ops is available on Nebula and Cosmos tiers only.' };
+    if (!enabled) {
+      return { ok: false, message: 'Nebulae Ops is not available.' };
     }
 
     if (runningActionRef.current) {
@@ -1105,7 +1092,6 @@ export const useNebulaeOpsCenter = ({
   }, [
     enabled,
     eventInsights.staffingRisk,
-    normalizedTier,
     pendingInsight.pendingOlderThan3Days,
     postMessage,
     updateLearningFromRun,
