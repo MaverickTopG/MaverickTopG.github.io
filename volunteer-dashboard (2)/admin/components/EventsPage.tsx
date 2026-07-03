@@ -72,7 +72,6 @@ type DeleteScope = 'single' | 'series';
 
 const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
 const EVENT_REROLL_PREFILL_KEY = 'nexolink:event-reroll-prefill';
-const SUBADMIN_LOGIN_API_PATH = '/api/subAdminLogin';
 const RECURRING_TYPES = new Set(['weekly', 'biweekly', 'monthly']);
 const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
   String(
@@ -593,54 +592,11 @@ export const EventsPage: React.FC<EventsPageProps> = ({
       const db = getFirestoreDb();
       const user = auth.currentUser;
       if (!user) throw new Error('Auth state invalid.');
+      if (!user.email) throw new Error('Unable to verify login password.');
 
-      const subAdminSession = getActiveSubAdminSession();
-      const emailCandidates = Array.from(
-        new Set(
-          [user.email, subAdminSession?.email]
-            .map((value) => String(value || '').trim())
-            .filter(Boolean),
-        ),
-      );
-
-      let verified = false;
-      let authError: any = null;
-
-      for (const candidateEmail of emailCandidates) {
-        try {
-          const credential = EmailAuthProvider.credential(candidateEmail, deletePassword);
-          await reauthenticateWithCredential(user, credential);
-          await user.getIdToken(true);
-          verified = true;
-          break;
-        } catch (err: any) {
-          authError = err;
-        }
-      }
-
-      // Sub-admin sessions can be signed in with custom token, where password reauth
-      // may fail even when credentials are correct. Verify with the same fallback API.
-      if (!verified && subAdminSession?.groupId && emailCandidates.length) {
-        for (const candidateEmail of emailCandidates) {
-          try {
-            const resp = await fetch(SUBADMIN_LOGIN_API_PATH, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: candidateEmail, password: deletePassword }),
-            });
-            if (resp.ok) {
-              verified = true;
-              break;
-            }
-          } catch (_err) {
-            // Ignore network failures here and keep default auth error handling below.
-          }
-        }
-      }
-
-      if (!verified) {
-        throw authError || new Error('Unable to verify login password.');
-      }
+      const credential = EmailAuthProvider.credential(user.email, deletePassword);
+      await reauthenticateWithCredential(user, credential);
+      await user.getIdToken(true);
 
       const shouldDeleteSeries = isRecurringSeriesEvent(deleteTarget) && deleteScope === 'series';
       if (shouldDeleteSeries) {
