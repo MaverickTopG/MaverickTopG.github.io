@@ -39,7 +39,6 @@ export const Header: React.FC<HeaderProps> = ({
   isKioskOpen,
   setIsKioskOpen,
   orgContext,
-  planTier,
   isSubAdminPortal,
   onOpenImpactOverview,
   showImpactOverviewButton = false,
@@ -64,9 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
   const accessCode = orgCode || fallbackAccessCode || '—';
   const auth = getFirebaseAuth();
   const userId = auth.currentUser?.uid || null;
-  const normalizedTier = (planTier || '').toLowerCase();
-  const canUseKiosk = (normalizedTier === 'nebula' || normalizedTier === 'cosmos') && !isSubAdminPortal;
-  const canUseAutoLog = normalizedTier === 'nebula' || normalizedTier === 'cosmos';
+  const canUseKiosk = !isSubAdminPortal;
 
   useEffect(() => {
     if (!orgId) return;
@@ -391,8 +388,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {canUseAutoLog && (
-          <button 
+        <button
             onClick={toggleAutoProcessing}
             className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm border group
               ${autoProcessing 
@@ -402,8 +398,7 @@ export const Header: React.FC<HeaderProps> = ({
             title={autoProcessing ? "Auto-Log Processing Active" : "Activate Auto-Log Processing"}
           >
             <Sparkles className={`w-5 h-5 transition-colors ${autoProcessing ? 'text-gray-900' : 'text-gray-400 group-hover:text-gray-900'}`} />
-          </button>
-        )}
+        </button>
 
         {showImpactOverviewButton && (
           <button
