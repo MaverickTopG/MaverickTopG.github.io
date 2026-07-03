@@ -192,6 +192,10 @@ service cloud.firestore {
     // Nested `match` rules under /organizations/{orgId}/orgAdmins do not reliably
     // apply to collectionGroup() list queries that aren't scoped to a single known
     // orgId, so this needs its own top-level, path-wildcard rule.
+    // Depends on the invariant that every orgAdmins doc's ID equals its own
+    // `userId` field (true for every current writer of this collection) — if
+    // that ever diverges, this list rule and the nested get/read rule above it
+    // would authorize different things for the same document.
     match /{path=**}/orgAdmins/{adminId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
