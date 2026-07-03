@@ -149,14 +149,13 @@ export const AdminApp: React.FC = () => {
   const [orgContext, setOrgContext] = useState<OrgContextState>({ id: '', code: '', name: '', planTier: null });
   const [activeSubAdminSession, setActiveSubAdminSession] = useState<ActiveSubAdminSession | null>(() => readStoredSubAdminSession());
   const [isSubAdmin, setIsSubAdmin] = useState(false);
-  const [planTier, setPlanTier] = useState<string>('orbit');
   const [showOrganizationImpactMode, setShowOrganizationImpactMode] = useState(false);
   const [impactModeToast, setImpactModeToast] = useState<{ isVisible: boolean; message: string }>({
     isVisible: false,
     message: '',
   });
   const [nebulaeContextScope, setNebulaeContextScope] = useState<NebulaeContextScope>('superadmin-only');
-  const aiEnabled = planTier === 'nebula' || planTier === 'cosmos';
+  const aiEnabled = true;
   const [insightUpdatedAt, setInsightUpdatedAt] = useState(() => Date.now());
   const isSubAdminPortal = isSubAdmin || Boolean(activeSubAdminSession?.groupId);
   const showVolunteers = currentView === 'volunteers';
@@ -195,7 +194,6 @@ export const AdminApp: React.FC = () => {
   });
   const nebulaeOps = useNebulaeOpsCenter({
     enabled: aiEnabled,
-    planTier,
     orgCode: metricsOrgCode,
     orgId: metricsOrgId,
     volunteers,
@@ -313,34 +311,6 @@ export const AdminApp: React.FC = () => {
     const db = getFirestoreDb();
     let refreshTimer: number | null = null;
     let active = true;
-    const handlePlanUpdate = (event: Event) => {
-      const detail = (event as CustomEvent).detail || {};
-      if (detail.planTier) {
-        setPlanTier(String(detail.planTier).toLowerCase());
-      }
-    };
-    window.addEventListener('nexolink:plan-updated', handlePlanUpdate);
-
-    const refreshPlanTier = async (user: any) => {
-      try {
-        const token = await user.getIdToken(true);
-        const resp = await fetch('/api/subscriptions', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const tier = (
-          data?.planTier
-          || data?.subscription?.planKey
-          || derivePlanTier(data?.subscription)
-          || 'orbit'
-        ).toString().toLowerCase();
-        const normalized = (tier === 'nebula' || tier === 'cosmos') ? tier : 'orbit';
-        if (active) setPlanTier(normalized);
-      } catch (error) {
-        console.error('Failed to refresh plan tier', error);
-      }
-    };
 
     const refreshOrgContext = async (user: any) => {
       try {
@@ -371,7 +341,6 @@ export const AdminApp: React.FC = () => {
       setUser(u);
       if (!u) {
         setOrgContext({ id: '', code: '', name: '', planTier: null });
-        setPlanTier('orbit');
         setActiveSubAdminSession(null);
         window.sessionStorage.removeItem(SUBADMIN_SESSION_STORAGE_KEY);
         if (refreshTimer) window.clearInterval(refreshTimer);
@@ -385,7 +354,6 @@ export const AdminApp: React.FC = () => {
         setIsSubAdmin(isSubAdminClaim);
         
         await refreshOrgContext(u);
-        await refreshPlanTier(u);
 
         // Robust subadmin session detection
         if (isSubAdminClaim) {
@@ -411,7 +379,6 @@ export const AdminApp: React.FC = () => {
 
         if (refreshTimer) window.clearInterval(refreshTimer);
         refreshTimer = window.setInterval(() => {
-          refreshPlanTier(u);
           refreshOrgContext(u);
         }, 30000);
       } catch (error) {
@@ -423,12 +390,9 @@ export const AdminApp: React.FC = () => {
     return () => {
       active = false;
       if (refreshTimer) window.clearInterval(refreshTimer);
-      window.removeEventListener('nexolink:plan-updated', handlePlanUpdate);
       unsubscribe();
     };
   }, []);
-
-  const isOrbit = (planTier || '').toLowerCase() === 'orbit';
 
   React.useEffect(() => {
     if (authLoading) return;
@@ -438,16 +402,6 @@ export const AdminApp: React.FC = () => {
       setCurrentView(resolveAdminViewFromPath(window.location.pathname));
     }
   }, [authLoading, user, currentView]);
-
-  React.useEffect(() => {
-    if (planTier !== 'orbit') return;
-    if (
-      currentView === 'nebulae' ||
-      currentView === 'messaging'
-    ) {
-      setCurrentView('impact');
-    }
-  }, [planTier, currentView]);
 
   React.useEffect(() => {
     if (!isSubAdminPortal) return;
@@ -612,7 +566,6 @@ export const AdminApp: React.FC = () => {
 
   const { insight: impactAiInsight } = useGeminiInsight({
     enabled: aiEnabled && currentView === 'impact',
-    planTier,
     pageKey: 'impact',
     sourceData: impactSource,
     fallback: impactFallback as any,
@@ -697,7 +650,6 @@ export const AdminApp: React.FC = () => {
         <Sidebar
           currentView={currentView}
           onNavigate={setCurrentView}
-          planTier={planTier}
           portalName={sidebarPortalName}
           portalSubtitle={sidebarPortalSubtitle}
           isSubAdminPortal={isSubAdminPortal}
@@ -710,11 +662,10 @@ export const AdminApp: React.FC = () => {
           <div className={`${isFullBleedView ? 'h-full' : 'max-w-[1600px] mx-auto'} relative`}>
             {/* Header Section */}
             {!isFullBleedView && (
-              <Header 
-                isKioskOpen={isKioskOpen} 
-                setIsKioskOpen={isOrbit ? () => {} : setIsKioskOpen} 
+              <Header
+                isKioskOpen={isKioskOpen}
+                setIsKioskOpen={setIsKioskOpen}
                 orgContext={orgContext}
-                planTier={planTier}
                 isSubAdminPortal={isSubAdminPortal}
                 onOpenImpactOverview={openImpactOverview}
                 showImpactOverviewButton={!isSubAdminPortal}
@@ -827,7 +778,6 @@ export const AdminApp: React.FC = () => {
                   className="h-full"
                 >
                   <NebulaePage
-                    planTier={planTier}
                     aiEnabled={aiEnabled}
                     opsCenter={aiEnabled ? nebulaeOps : null}
                     contextScope={nebulaeContextScope}
@@ -887,7 +837,6 @@ export const AdminApp: React.FC = () => {
                 isActive={showVolunteers}
                 aiEnabled={aiEnabled}
                 onOpenCopilot={() => setCurrentView('nebulae')}
-                planTier={planTier}
               />
             </motion.div>
             <motion.div
@@ -903,7 +852,6 @@ export const AdminApp: React.FC = () => {
                 onNavigate={setCurrentView}
                 isActive={showEvents}
                 aiEnabled={aiEnabled}
-                planTier={planTier}
               />
             </motion.div>
             <motion.div
