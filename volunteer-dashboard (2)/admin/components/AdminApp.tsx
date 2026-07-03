@@ -26,7 +26,7 @@ import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 import { useDashboardMetrics } from '../hooks/useDashboardMetrics';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { resolveOrgContext } from '../lib/orgContext';
+import { resolveOrgAdminContext } from '../lib/orgContext';
 import { doc, getDoc } from 'firebase/firestore';
 
 interface OrgContextState {
@@ -344,19 +344,15 @@ export const AdminApp: React.FC = () => {
 
     const refreshOrgContext = async (user: any) => {
       try {
-        const context = await resolveOrgContext(db, user.uid, user?.email || null);
+        const context = await resolveOrgAdminContext(db, user.uid);
         if (!active) return;
 
         const session = readStoredSubAdminSession();
-        const inferredTier = String(context.planTier || '').toLowerCase();
-        if (['orbit', 'nebula', 'cosmos'].includes(inferredTier)) {
-          setPlanTier(inferredTier);
-        }
         const nextContext: OrgContextState = {
           id: context.orgId || '',
-          code: context.orgCode || '',
+          code: '',
           name: context.orgName || '',
-          planTier: context.planTier || null,
+          planTier: null,
         };
 
         setOrgContext(nextContext);
