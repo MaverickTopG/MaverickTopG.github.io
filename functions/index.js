@@ -4127,6 +4127,27 @@ function generateAccessCode() {
   return result;
 }
 
+const INVITE_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function generateInviteCode() {
+  let code = '';
+  for (let i = 0; i < 6; i += 1) {
+    code += INVITE_CODE_CHARS.charAt(Math.floor(Math.random() * INVITE_CODE_CHARS.length));
+  }
+  return code;
+}
+
+async function createUniqueInviteCode() {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = generateInviteCode();
+    const snap = await db.collection('joinCodes').doc(code).get();
+    if (!snap.exists) {
+      return code;
+    }
+  }
+  return generateInviteCode();
+}
+
 async function createUniqueAccessCode() {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const code = generateAccessCode();
@@ -4154,7 +4175,6 @@ async function verifyCheckoutSession(sessionId) {
 export const createOrganization = onRequest(
   {
     cors: true,
-    secrets: [STRIPE_SECRET_KEY],
   },
   async (req, res) => {
     if (handleCorsPreflight(req, res, ['POST'])) return;
@@ -4169,108 +4189,61 @@ export const createOrganization = onRequest(
       return;
     }
 
-    const { organizationName, sessionId } = req.body || {};
+    const { organizationName } = req.body || {};
     const name = String(organizationName || '').trim();
     if (!name) {
       res.status(400).json({ error: 'Organization name is required.' });
       return;
     }
 
-    let session = null;
-    if (sessionId) {
-      try {
-        session = await verifyCheckoutSession(sessionId);
-      } catch (error) {
-        logger.error('Checkout session verification failed', error);
-        res.status(400).json({ error: 'Unable to verify checkout session.' });
-        return;
-      }
-
-      const paymentStatus = session?.payment_status || '';
-      const sessionStatus = session?.status || '';
-      if (!['paid', 'no_payment_required'].includes(paymentStatus) && sessionStatus !== 'complete') {
-        res.status(400).json({ error: 'Checkout is not completed yet.' });
-        return;
-      }
-
-      const sessionEmail = session?.customer_details?.email || session?.customer_email || '';
-      if (sessionEmail && decodedToken.email && sessionEmail.toLowerCase() !== decodedToken.email.toLowerCase()) {
-        res.status(400).json({ error: 'Checkout email does not match the signed-in account.' });
-        return;
-      }
-    }
-
     try {
-      let resolvedSubscription = session?.subscription || null;
-      if (resolvedSubscription && typeof resolvedSubscription === 'string') {
-        try {
-          resolvedSubscription = await getStripeClient().subscriptions.retrieve(resolvedSubscription, {
-            expand: ['items.data.price', 'items.data.price.product'],
-          });
-        } catch (error) {
-          logger.warn('Unable to expand checkout subscription during org create', { message: error?.message });
-        }
-      }
-      const derivedTier = resolvePlanTierFromSubscription(resolvedSubscription);
-      const schoolPlanSource = resolvedSubscription || {
-        plan: session?.metadata?.plan,
-        planKey: session?.metadata?.plan_key,
-        plan_key: session?.metadata?.plan_key,
-      };
-      const isSchoolPlan = isSchoolSubscriptionPayload(schoolPlanSource);
-      const planKey = resolvedSubscription?.metadata?.plan_key
-        || session?.metadata?.plan_key
-        || null;
-      const orgCode = await createUniqueAccessCode();
+      const inviteCode = await createUniqueInviteCode();
       const orgRef = db.collection('organizations').doc();
+      const now = Timestamp.now();
 
-      const payload = {
+      await orgRef.set({
         name,
-        access_code: orgCode,
-        created_at: Timestamp.now(),
-        created_by: decodedToken.uid,
-        owner_uid: decodedToken.uid,
-        billing_owner_uid: decodedToken.uid,
-        billing_owner_email: (decodedToken.email || '').toLowerCase() || null,
-        source: 'stripe_checkout',
-        stripe_session_id: sessionId || null,
-        stripe_customer_id: session?.customer?.id || session?.customer || null,
-        stripe_subscription_id: resolvedSubscription?.id || session?.subscription || null,
-        plan_tier: derivedTier || null,
-        school_plan_active: isSchoolPlan,
-      };
-      if (planKey) {
-        payload.plan_key = planKey;
-      }
-      if (isSchoolPlan) {
-        payload.default_share_policy = 'required';
-        payload.default_auto_share = true;
-        payload.default_share_status = 'approved';
-      }
-
-      await orgRef.set(payload, { merge: true });
-      await ensureUserOrganizationLink(orgCode, orgRef.id, decodedToken.uid, {
-        email: decodedToken.email || null,
-      }, {
-        name,
+        slug: null,
+        inviteCode,
+        logoURL: null,
+        mission: null,
+        location: null,
+        linkedNonprofitEin: null,
+        adminUserIds: [decodedToken.uid],
+        publicEnabled: false,
+        causes: [],
+        archived: false,
+        createdAt: now,
+        updatedAt: now,
       });
 
-      await db.collection('users').doc(decodedToken.uid).set(
-        {
-          email: decodedToken.email || null,
-          organizationName: name,
-          organizationId: orgRef.id,
-          accessCode: orgCode,
-          plan_tier: derivedTier || null,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        },
-        { merge: true },
-      );
+      await orgRef.collection('orgAdmins').doc(decodedToken.uid).set({
+        userId: decodedToken.uid,
+        orgId: orgRef.id,
+        displayName: decodedToken.name || decodedToken.email || null,
+        email: decodedToken.email || null,
+        role: 'owner',
+        addedBy: decodedToken.uid,
+        createdAt: now,
+      });
+
+      await db.collection('joinCodes').doc(inviteCode).set({
+        orgId: orgRef.id,
+        active: true,
+      });
+
+      await db.collection('publicOrgPages').doc(orgRef.id).set({
+        name,
+        slug: null,
+        mission: null,
+        logoURL: null,
+        causes: [],
+        publicEnabled: false,
+      });
 
       res.json({
         organizationId: orgRef.id,
-        organizationCode: orgCode,
+        organizationCode: inviteCode,
       });
     } catch (error) {
       logger.error('Organization creation failed', error);
