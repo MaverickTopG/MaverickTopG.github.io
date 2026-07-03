@@ -2097,104 +2097,30 @@ export const acceptJoinRequest = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'You must be signed in.');
   }
 
-  const isAdmin = await isAuthorizedAdmin({ uid, ...(request.auth?.token || {}) });
-  if (!isAdmin) {
+  const orgId = String(request.data?.orgId || '').trim();
+  const volunteerId = String(request.data?.volunteerId || '').trim();
+  if (!orgId || !volunteerId) {
+    throw new HttpsError('invalid-argument', 'orgId and volunteerId are required.');
+  }
+
+  const adminSnap = await db.collection('organizations').doc(orgId)
+    .collection('orgAdmins').doc(uid).get();
+  if (!adminSnap.exists) {
     throw new HttpsError('permission-denied', 'Admin access required.');
   }
 
-  const requestId = String(request.data?.requestId || '').trim();
-  if (!requestId) {
-    throw new HttpsError('invalid-argument', 'Request id is required.');
-  }
-
-  const joinSnap = await db.collection('organization_join_requests').doc(requestId).get();
-  if (!joinSnap.exists) {
+  const volunteerRef = db.collection('organizations').doc(orgId)
+    .collection('volunteers').doc(volunteerId);
+  const volunteerSnap = await volunteerRef.get();
+  if (!volunteerSnap.exists) {
     throw new HttpsError('not-found', 'Join request not found.');
   }
-  const joinData = joinSnap.data() || {};
-  const orgId =
-    joinData.orgId
-    || joinData.org_id
-    || joinData.organizationId
-    || joinData.organization_id
-    || null;
-  const orgCode =
-    joinData.orgCode
-    || joinData.org_code
-    || joinData.organizationCode
-    || joinData.organization_code
-    || joinData.accessCode
-    || joinData.access_code
-    || null;
 
-  const effectiveTier = await resolveEffectivePlanTier({ orgId, orgCode, userId: uid });
-  const limits = getPlanLimits(effectiveTier);
-  const isGrandfathered = request.auth?.token?.grandfathered === true;
-  if (!isGrandfathered && limits.volunteerLimit != null) {
-    const count = await countOrganizationMembers({ orgId, orgCode });
-    if (count >= limits.volunteerLimit) {
-      throw new HttpsError(
-        'failed-precondition',
-        `Volunteer limit reached for the ${effectiveTier} plan.`
-      );
-    }
-  }
-
-  const userId = joinData.user_id || joinData.userId || null;
-  const targetGroupId = extractGroupScopeFromData(joinData);
-  const normalizedTargetGroupId = normalizeGroupScopeKey(targetGroupId);
-  const scopedGroupId = normalizedTargetGroupId === SUPER_ADMIN_GROUP_KEY ? null : normalizedTargetGroupId;
-  const scopedGroupName = resolveGroupNameFromData(joinData) || (scopedGroupId ? 'Subadmin Group' : 'Super Admin');
-  if (userId) {
-    const timestamp = Timestamp.now();
-    await db.collection('users').doc(userId).set({
-      organizationCode: orgCode || null,
-      accessCode: orgCode || null,
-      organization_id: orgId || null,
-      organizationName: joinData.organization_name || joinData.organizationName || null,
-      role: 'volunteer',
-      status: 'active',
-      organizationJoinedAt: timestamp,
-      updatedAt: timestamp,
-    }, { merge: true });
-
-    const scopedMembershipId = makeSafeScopedId('membership', userId, orgId || orgCode || 'org', scopedGroupId || SUPER_ADMIN_GROUP_KEY);
-    const membershipPayload = {
-      user_id: userId,
-      userId,
-      user_email: joinData.user_email || joinData.email || null,
-      user_name: joinData.user_name || joinData.userName || null,
-      organization_id: orgId || null,
-      org_id: orgId || null,
-      organizationId: orgId || null,
-      orgId: orgId || null,
-      organizationCode: orgCode || null,
-      orgCode: orgCode || null,
-      accessCode: orgCode || null,
-      organizationName: joinData.organization_name || joinData.organizationName || null,
-      organization_name: joinData.organization_name || joinData.organizationName || null,
-      sub_admin_group_id: scopedGroupId,
-      subAdminGroupId: scopedGroupId,
-      sub_admin_group_name: scopedGroupName,
-      subAdminGroupName: scopedGroupName,
-      status: 'accepted',
-      updatedAt: timestamp,
-      createdAt: timestamp,
-    };
-
-    await db.collection('user_organizations').doc(scopedMembershipId).set(membershipPayload, { merge: true });
-    await db.collection('user_organizations').doc(userId).set({
-      ...membershipPayload,
-      createdAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
-  }
-
-  await joinSnap.ref.set({
-    status: 'accepted',
-    handled_at: Timestamp.now(),
-    handled_by: uid,
-    handled_by_email: request.auth?.token?.email || null,
-  }, { merge: true });
+  await volunteerRef.update({
+    status: 'active',
+    approvedBy: uid,
+    approvedAt: Timestamp.now(),
+  });
 
   return { ok: true };
 });
@@ -4373,7 +4299,7 @@ export const joinOrganization = onRequest(
       return;
     }
 
-    const { accessCode, groupIds } = req.body || {};
+    const { accessCode } = req.body || {};
     const normalizedCode = String(accessCode || '').trim().toUpperCase();
     if (!normalizedCode || normalizedCode.length !== 6) {
       res.status(400).json({ error: 'Please enter a valid 6-character organization code.' });
@@ -4381,68 +4307,55 @@ export const joinOrganization = onRequest(
     }
 
     try {
-      const org = await resolveOrganizationByAccessCode(normalizedCode);
-      if (!org) {
+      const codeSnap = await db.collection('joinCodes').doc(normalizedCode).get();
+      if (!codeSnap.exists || codeSnap.data()?.active === false) {
         res.status(404).json({ error: 'Organization not found. Check the code and try again.' });
         return;
       }
+      const orgId = codeSnap.data()?.orgId;
+      const orgRef = db.collection('organizations').doc(orgId);
+      const orgSnap = await orgRef.get();
+      if (!orgSnap.exists) {
+        res.status(404).json({ error: 'Organization not found. Check the code and try again.' });
+        return;
+      }
+      const orgData = orgSnap.data() || {};
 
-      const targetPayload = await buildJoinTargetsForOrganization({
-        uid: decodedToken.uid,
-        orgId: org.orgId,
-        orgCode: org.orgCode,
-        orgName: org.orgName,
-      });
-
-      const requestedScopeIds = sanitizeJoinRequestGroupIds(groupIds);
-      const defaultScope = targetPayload.hasSubAdminGroups ? [] : [SUPER_ADMIN_GROUP_KEY];
-      const selectedScopeIds = (requestedScopeIds.length ? requestedScopeIds : defaultScope)
-        .filter((scopeId) => targetPayload.targets.some((target) => target.id === scopeId));
-
-      if (!selectedScopeIds.length) {
-        res.status(400).json({ error: 'Select at least one group to request.' });
+      const volunteerRef = orgRef.collection('volunteers').doc(decodedToken.uid);
+      const existing = await volunteerRef.get();
+      if (existing.exists && ['active', 'pending'].includes((existing.data() || {}).status)) {
+        res.status(409).json({ error: 'You have already joined or requested to join this organization.' });
         return;
       }
 
-      const userSnap = await db.collection('users').doc(decodedToken.uid).get().catch(() => null);
-      const userData = userSnap?.exists ? (userSnap.data() || {}) : {};
-      const userName = String(
-        userData.displayName
-        || userData.name
-        || [userData.firstName, userData.lastName].filter(Boolean).join(' ')
-        || decodedToken.name
-        || decodedToken.email
-        || 'Volunteer',
+      const userSnap = await db.collection('users').doc(decodedToken.uid).get();
+      const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+      const displayName = String(
+        userData.displayName || decodedToken.name || decodedToken.email || 'Volunteer',
       ).trim();
-      const userEmail = String(
-        decodedToken.email
-        || userData.email
-        || '',
-      ).trim().toLowerCase();
 
-      const { createdTargets } = await queueOrganizationJoinRequests({
-        uid: decodedToken.uid,
-        email: userEmail,
-        userName,
-        orgId: targetPayload.orgId,
-        orgCode: targetPayload.orgCode,
-        orgName: targetPayload.orgName,
-        selectedGroupScopeIds: selectedScopeIds,
-        availableTargets: targetPayload.targets,
-        blockedScopes: targetPayload.blockedScopes,
+      await volunteerRef.set({
+        userId: decodedToken.uid,
+        orgId,
+        orgName: orgData.name || '',
+        displayName,
+        email: userData.email || decodedToken.email || null,
+        photoURL: userData.photoURL || null,
+        role: 'Volunteer',
+        status: 'pending',
+        joinedAt: Timestamp.now(),
+        approvedBy: null,
+        approvedAt: null,
+        rejectedReason: null,
+        perOrgStats: { hours: 0, events: 0, reliability: 100, lastActiveAt: null },
+        groupIds: [],
+        archived: false,
       });
-
-      if (!createdTargets.length) {
-        res.status(409).json({ error: 'You have already joined or requested these groups.' });
-        return;
-      }
 
       res.json({
-        organizationId: targetPayload.orgId,
-        organizationCode: targetPayload.orgCode,
-        organizationName: targetPayload.orgName || null,
-        createdCount: createdTargets.length,
-        createdTargets,
+        organizationId: orgId,
+        organizationCode: normalizedCode,
+        organizationName: orgData.name || null,
         pendingApproval: true,
       });
     } catch (error) {
