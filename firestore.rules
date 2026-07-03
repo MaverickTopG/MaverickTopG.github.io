@@ -29,50 +29,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/organizations/$(orgId));
     }
 
-    function orgDocAlt(orgId) {
-      return get(/databases/$(database)/documents/orgs/$(orgId));
-    }
-
-    function orgDocVol(orgId) {
-      return get(/databases/$(database)/documents/volunteer_organizations/$(orgId));
-    }
-
     function orgAdminDoc(orgId) {
       return get(/databases/$(database)/documents/organizations/$(orgId)/orgAdmins/$(request.auth.uid));
     }
 
     function isOrgAdmin(orgId) {
       return isSignedIn() && orgAdminDoc(orgId).data != null;
-    }
-
-    function planTierForOrg(orgId) {
-      return orgDoc(orgId).exists() && orgDoc(orgId).data.plan_tier != null
-        ? orgDoc(orgId).data.plan_tier
-        : orgDocAlt(orgId).exists() && orgDocAlt(orgId).data.plan_tier != null
-          ? orgDocAlt(orgId).data.plan_tier
-          : orgDocVol(orgId).exists() && orgDocVol(orgId).data.plan_tier != null
-            ? orgDocVol(orgId).data.plan_tier
-            : 'nebula';
-    }
-
-    function planAllowsMessaging(orgId) {
-      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
-    }
-
-    function planAllowsAi(orgId) {
-      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
-    }
-
-    function planAllowsKiosk(orgId) {
-      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
-    }
-
-    function planAllowsEvents(orgId) {
-      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
-    }
-
-    function planAllowsAutoLogReview(orgId) {
-      return hasGrandfatheredAccess() || planTierForOrg(orgId) != 'orbit';
     }
 
     function docOrgId(data) {
@@ -170,8 +132,7 @@ service cloud.firestore {
 
     match /organizations/{orgId} {
       allow read: if hasFullAccess() || isOrgAdmin(orgId) || isOrgMember(orgId);
-      allow update: if (hasFullAccess() || isOrgMember(orgId))
-        && (!request.resource.data.keys().hasAny(['auto_process_logs']) || request.resource.data.auto_process_logs != true || planAllowsAutoLogReview(orgId));
+      allow update: if hasFullAccess() || isOrgMember(orgId);
       allow create, delete: if hasFullAccess();
 
       match /orgAdmins/{adminId} {
@@ -212,55 +173,32 @@ service cloud.firestore {
 
     match /orgs/{orgId} {
       allow read: if hasFullAccess() || isOrgMember(orgId);
-      allow update: if (hasFullAccess() || isOrgMember(orgId))
-        && (!request.resource.data.keys().hasAny(['auto_process_logs']) || request.resource.data.auto_process_logs != true || planAllowsAutoLogReview(orgId));
+      allow update: if hasFullAccess() || isOrgMember(orgId);
       allow create, delete: if hasFullAccess();
     }
 
     match /events/{eventId} {
       allow read: if isSignedIn() && isOrgMember(docOrgId(resource.data));
-      allow create: if hasFullAccess()
-        && isOrgMember(docOrgId(request.resource.data))
-        && planAllowsEvents(docOrgId(request.resource.data));
-      allow update, delete: if hasFullAccess()
-        && isOrgMember(docOrgId(resource.data))
-        && planAllowsEvents(docOrgId(resource.data));
+      allow create: if hasFullAccess() && isOrgMember(docOrgId(request.resource.data));
+      allow update, delete: if hasFullAccess() && isOrgMember(docOrgId(resource.data));
     }
 
     match /messages/{messageId} {
-      allow read: if isSignedIn()
-        && isOrgMember(docOrgId(resource.data))
-        && planAllowsMessaging(docOrgId(resource.data));
-      allow create: if isSignedIn()
-        && isOrgMember(docOrgId(request.resource.data))
-        && planAllowsMessaging(docOrgId(request.resource.data));
-      allow update, delete: if isSignedIn()
-        && isOrgMember(docOrgId(resource.data))
-        && planAllowsMessaging(docOrgId(resource.data));
+      allow read: if isSignedIn() && isOrgMember(docOrgId(resource.data));
+      allow create: if isSignedIn() && isOrgMember(docOrgId(request.resource.data));
+      allow update, delete: if isSignedIn() && isOrgMember(docOrgId(resource.data));
     }
 
     match /kiosk_sessions/{sessionId} {
-      allow read: if hasFullAccess()
-        && isOrgMember(docOrgId(resource.data))
-        && planAllowsKiosk(docOrgId(resource.data));
-      allow create: if hasFullAccess()
-        && isOrgMember(docOrgId(request.resource.data))
-        && planAllowsKiosk(docOrgId(request.resource.data));
-      allow update, delete: if hasFullAccess()
-        && isOrgMember(docOrgId(resource.data))
-        && planAllowsKiosk(docOrgId(resource.data));
+      allow read: if hasFullAccess() && isOrgMember(docOrgId(resource.data));
+      allow create: if hasFullAccess() && isOrgMember(docOrgId(request.resource.data));
+      allow update, delete: if hasFullAccess() && isOrgMember(docOrgId(resource.data));
     }
 
     match /nebulae_chats/{chatId} {
-      allow read: if isSignedIn()
-        && resource.data.userId == request.auth.uid
-        && planAllowsAi(userOrgId());
-      allow create: if isSignedIn()
-        && request.resource.data.userId == request.auth.uid
-        && planAllowsAi(userOrgId());
-      allow update, delete: if isSignedIn()
-        && resource.data.userId == request.auth.uid
-        && planAllowsAi(userOrgId());
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     match /{document=**} {
