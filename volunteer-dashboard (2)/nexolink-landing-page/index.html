@@ -6,112 +6,535 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NexoLink</title>
   <link rel="icon" type="image/png" href="/logo.png" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap"
-    rel="stylesheet">
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            neon: '#9EFF4F',
-            charcoal: '#0F1115',
-            softGray: '#F9FAFB',
-            sidebar: '#050505',
-            borderLight: 'rgba(15, 17, 21, 0.08)',
-          },
-          fontFamily: {
-            sans: ['Inter', 'sans-serif'],
-            display: ['Plus Jakarta Sans', 'sans-serif'],
-          },
-          boxShadow: {
-            'premium': '0 20px 50px -12px rgba(15, 17, 21, 0.08)',
-            'glass': '0 8px 32px 0 rgba(15, 17, 21, 0.05)',
-          },
-          animation: {
-            'spin-slow': 'spin 12s linear infinite',
-          }
-        }
-      }
-    }
-  </script>
+  <link rel="stylesheet" href="https://fonts.cdnfonts.com/css/pp-neue-montreal" />
   <style>
+    /* ── NexoLink theme ── */
     :root {
-      --neon: #9EFF4F;
+      --base-100: #ece9f5;   /* light lavender — bg section */
+      --base-200: #6d28d9;   /* violet accent — headings, flash */
+      --base-300: #0b0817;   /* deep violet-black — fg, about bg */
     }
 
-    body {
-      background-color: #FFFFFF;
-      color: #0F1115;
-      overflow-x: hidden;
-      -webkit-font-smoothing: antialiased;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    img { width: 100%; height: 100%; object-fit: cover; }
+
+    h1, h3 {
+      text-transform: uppercase;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-weight: 500;
+      line-height: 0.85;
+      letter-spacing: -0.03em;
     }
 
-    .bg-sidebar {
-      background-color: #050505;
+    h1 { font-size: clamp(2rem, 7vw, 12rem); }
+    h3 { font-size: clamp(1.75rem, 4.5vw, 7rem); }
+
+    p {
+      text-transform: uppercase;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      line-height: 1.2;
     }
 
-    .glass {
-      background: rgba(255, 255, 255, 0.7);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.3);
+    /* ── Nav: HUD overlay wrapper ── */
+    .hud-w {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 200;
     }
 
-    .perspective-1000 {
-      perspective: 1000px;
+    /* Brand / Logo — top left */
+    .hud-brand {
+      position: absolute;
+      top: 1.75rem;
+      left: 2rem;
+      pointer-events: all;
+      text-decoration: none;
+      color: #000;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      transition: opacity 0.2s ease;
     }
 
-    .mask-radial {
-      mask-image: radial-gradient(circle, black 40%, transparent 80%);
+    .hud-brand:hover { opacity: 0.65; }
+
+    /* Quick links — top right */
+    .hud-top-nav {
+      position: absolute;
+      top: 1.6rem;
+      right: 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      pointer-events: all;
     }
 
-    .hero-gradient {
-      background: radial-gradient(circle at 50% 50%, rgba(158, 255, 79, 0.05) 0%, rgba(255, 255, 255, 0) 70%);
+    .hud-top-link {
+      text-decoration: none;
+      color: #000;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.72rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      display: flex;
+      align-items: center;
+      gap: 0.2rem;
+      transition: opacity 0.2s ease;
     }
 
-    ::-selection {
-      background: #9EFF4F;
-      color: #0F1115;
+    .hud-top-link:hover { opacity: 0.55; }
+
+    .hud-top-icon { font-size: 0.65rem; opacity: 0.75; }
+
+    .hud-top-btn {
+      text-decoration: none;
+      color: #000;
+      background: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.35);
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.72rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.38rem 0.9rem;
+      border-radius: 6px;
+      transition: border-color 0.2s ease, opacity 0.2s ease;
     }
 
-    /* Hide scrollbars across the site */
-    * {
-      scrollbar-width: none;
-      -ms-overflow-style: none;
+    .hud-top-btn:hover { border-color: rgba(0, 0, 0, 0.7); opacity: 0.8; }
+
+
+    /* ── Section base ── */
+    section {
+      position: relative;
+      width: 100%;
+      height: 100svh;
+      overflow: hidden;
     }
 
-    *::-webkit-scrollbar {
-      width: 0;
-      height: 0;
-      display: none;
+    /* ── About / closing section ── */
+    .vv-about {
+      background-color: var(--base-300);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .vv-about h3 {
+      text-align: center;
+      color: var(--base-100);
+      width: 60%;
+    }
+
+    /* ── Hero section ── */
+    .vv-hero { /* inherits section */ }
+
+    .hero-fg-content,
+    .hero-bg-content {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      transform-origin: center center;
+    }
+
+    /* Foreground */
+    .hero-fg-content {
+      background-color: var(--base-300);
+      clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+      will-change: clip-path, transform;
+      z-index: 2;
+    }
+
+    .hero-fg-img {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: linear-gradient(
+        135deg,
+        #1a0d38 0%,
+        #0b0817 40%,
+        #2e1065 70%,
+        #0b0817 100%
+      );
+      opacity: 0.9;
+    }
+
+    .hero-fg-header {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 95%;
+      padding: 2rem;
+      color: var(--base-100);
+      text-align: center;
+    }
+
+    .hero-fg-overlay-dark,
+    .hero-fg-overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      opacity: 0;
+      will-change: opacity;
+    }
+
+    .hero-fg-overlay-dark { background-color: var(--base-300); }
+    .hero-fg-overlay      { background-color: var(--base-200); }
+
+    /* Background */
+    .hero-bg-content {
+      background-color: var(--base-100);
+      display: flex;
+      z-index: 0;
+    }
+
+    .hero-bg-content-col {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      padding: 2rem;
+    }
+
+    .hero-bg-content-col:nth-child(2) {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .hero-bg-content-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      width: 50%;
+      will-change: transform;
+    }
+
+    .hero-bg-content-copy h3 { color: var(--base-200); }
+    .hero-bg-content-copy p  { color: var(--base-300); }
+
+    /* Outro */
+    .hero-outro-content {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      z-index: 1;
+    }
+
+    .hero-outro-img {
+      flex: 1;
+      height: 100%;
+    }
+
+    .hero-outro-img-top {
+      clip-path: polygon(0% 0%, 100% 0%, 100% 0%, 0% 0%);
+      background: linear-gradient(160deg, #2e1065 0%, #0b0817 50%, #4c1d95 100%);
+    }
+
+    .hero-outro-img-bottom {
+      clip-path: polygon(0% 100%, 100% 100%, 100% 100%, 0% 100%);
+      background: linear-gradient(340deg, #1a0d38 0%, #0b0817 50%, #2e1065 100%);
+    }
+
+    .hero-outro-header {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--base-100);
+      text-align: center;
+      width: 60%;
+    }
+
+    .hero-outro-header h3 {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* SplitText mask equivalent */
+    .hero-outro-header .line {
+      display: block;
+      position: relative;
+      will-change: transform;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 1000px) {
+      .hero-bg-content-copy { width: 100%; }
+
+      .hero-bg-content-col:nth-child(1) .hero-bg-content-copy { margin-top: -50svh; }
+      .hero-bg-content-col:nth-child(2) .hero-bg-content-copy { margin-top: 50svh; }
+
+      .vv-about h3,
+      .hero-outro-header { width: 100%; padding: 2rem; }
+
+      /* HUD responsive */
+      .hud-top-nav { display: none; }
+      .hud-brand { top: 1.25rem; left: 1.25rem; }
+    }
+
+    /* ── App page ── */
+    .app-page { font-family: "PP Neue Montreal", sans-serif; }
+
+    /* Hero */
+    .app-hero {
+      min-height: 100svh;
+      background-color: var(--base-300);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      padding: 8rem 5vw 6rem;
+      gap: 4rem;
+    }
+
+    .app-hero-text {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .app-hero-text h1 {
+      color: var(--base-100);
+      font-size: clamp(2.2rem, 4.5vw, 5.5rem);
+      text-transform: uppercase;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-weight: 500;
+      line-height: 0.9;
+      letter-spacing: -0.03em;
+    }
+
+    .app-hero-sub {
+      color: var(--base-100);
+      opacity: 0.5;
+      font-size: 0.85rem;
+      text-transform: none;
+      letter-spacing: 0.01em;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-weight: 500;
+    }
+
+    .app-hero-phone {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Section label */
+    .app-section-label {
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.7rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      opacity: 0.4;
+    }
+
+    .app-feature--light .app-section-label { color: var(--base-300); }
+    .app-feature--dark  .app-section-label { color: var(--base-100); }
+
+    /* App Store button */
+    .app-store-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      border: 1px solid rgba(236, 233, 245, 0.35);
+      color: var(--base-100);
+      text-decoration: none;
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.78rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      align-self: flex-start;
+      transition: border-color 0.2s ease, opacity 0.2s ease;
+    }
+
+    .app-store-btn:hover { border-color: rgba(236, 233, 245, 0.85); }
+
+    /* Phone frame */
+    .app-phone {
+      border-radius: 44px;
+      overflow: hidden;
+      box-shadow: 0 32px 80px rgba(11, 8, 23, 0.3);
+      width: 100%;
+      max-width: 280px;
+    }
+
+    .app-phone img { display: block; width: 100%; height: auto; }
+
+    .app-phone--small {
+      max-width: 180px;
+      margin-top: 1.5rem;
+      box-shadow: 0 16px 40px rgba(11, 8, 23, 0.12);
+    }
+
+    /* Feature rows */
+    .app-feature {
+      min-height: 90svh;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      padding: 6rem 5vw;
+      gap: 6rem;
+    }
+
+    .app-feature--light { background-color: var(--base-100); }
+    .app-feature--dark  { background-color: var(--base-300); }
+
+    .app-feature--flip .app-feature-phone { order: 2; }
+    .app-feature--flip .app-feature-text  { order: 1; }
+
+    .app-feature-phone { display: flex; justify-content: center; }
+
+    .app-feature-text {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .app-feature-text h2 {
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: clamp(1.8rem, 3.5vw, 4rem);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: -0.03em;
+      line-height: 0.9;
+    }
+
+    .app-feature--light .app-feature-text h2 { color: var(--base-300); }
+    .app-feature--dark  .app-feature-text h2 { color: var(--base-100); }
+
+    .app-feature-text p:not(.app-section-label) {
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.85rem;
+      line-height: 1.65;
+      text-transform: none;
+      max-width: 38ch;
+      font-weight: 500;
+    }
+
+    .app-feature--light .app-feature-text p:not(.app-section-label) { color: var(--base-300); opacity: 0.65; }
+    .app-feature--dark  .app-feature-text p:not(.app-section-label) { color: var(--base-100); opacity: 0.55; }
+
+    /* Bento grid */
+    .app-bento {
+      background-color: var(--base-100);
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1rem;
+      padding: 3rem 5vw;
+    }
+
+    .app-bento-card {
+      border-radius: 20px;
+      padding: 2.5rem;
+      min-height: 320px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .app-bento-card--blue   { background-color: #dbeafe; }
+    .app-bento-card--violet { background-color: rgba(109, 40, 217, 0.1); }
+
+    .app-bento-card--img { padding: 0; background: #eef2ff; }
+
+    .app-bento-card--img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center 20%;
+    }
+
+    .app-bento-stat {
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: clamp(4rem, 7vw, 7rem);
+      font-weight: 600;
+      color: var(--base-300);
+      line-height: 1;
+      letter-spacing: -0.04em;
+      text-transform: none;
+    }
+
+    .app-bento-label {
+      font-family: "PP Neue Montreal", sans-serif;
+      font-size: 0.72rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--base-300);
+      opacity: 0.45;
+      margin-top: 0.4rem;
+    }
+
+    /* CTA */
+    .app-cta {
+      background-color: var(--base-300);
+      min-height: 50svh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2.5rem;
+      padding: 6rem 5vw;
+      text-align: center;
+    }
+
+    .app-cta h2 {
+      font-family: "PP Neue Montreal", sans-serif;
+      color: var(--base-100);
+      font-size: clamp(3rem, 8vw, 10rem);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: -0.03em;
+      line-height: 0.85;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .app-hero {
+        grid-template-columns: 1fr;
+        min-height: auto;
+        padding: 7rem 1.5rem 4rem;
+        gap: 3rem;
+      }
+
+      .app-hero-phone { order: -1; }
+
+      .app-feature {
+        grid-template-columns: 1fr;
+        min-height: auto;
+        padding: 4rem 1.5rem;
+        gap: 3rem;
+      }
+
+      .app-feature--flip .app-feature-phone { order: -1; }
+      .app-feature--flip .app-feature-text  { order: 1; }
+
+      .app-bento {
+        grid-template-columns: 1fr;
+        padding: 2rem 1.5rem;
+      }
+
+      .app-bento-card { min-height: 220px; }
+
+      .app-cta { padding: 4rem 1.5rem; }
     }
   </style>
-  <script>
-    window.PUBLIC_FIREBASE_API_KEY = "AIzaSyC1kY4dlbg9v38ZkuYVPJGnSulMEouvw58";
-    window.PUBLIC_FIREBASE_AUTH_DOMAIN = "nexolink-b8eb5.firebaseapp.com";
-    window.PUBLIC_FIREBASE_PROJECT_ID = "nexolink-b8eb5";
-    window.PUBLIC_FIREBASE_STORAGE_BUCKET = "nexolink-b8eb5.firebasestorage.app";
-    window.PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "247675121621";
-    window.PUBLIC_FIREBASE_APP_ID = "1:247675121621:web:98772b2e0cfbe8a381175c";
-  </script>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.2.0",
-    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
-    "react/": "https://esm.sh/react@18.2.0/",
-    "gsap": "https://esm.sh/gsap@3.12.5",
-    "gsap/ScrollTrigger": "https://esm.sh/gsap@3.12.5/ScrollTrigger",
-    "gsap/": "https://esm.sh/gsap@3.12.5/",
-    "framer-motion": "https://esm.sh/framer-motion@11.0.8?deps=react@18.2.0,react-dom@18.2.0",
-    "lucide-react": "https://esm.sh/lucide-react@0.263.1?deps=react@18.2.0"
-  }
-}
-</script>
 </head>
 
 <body>
