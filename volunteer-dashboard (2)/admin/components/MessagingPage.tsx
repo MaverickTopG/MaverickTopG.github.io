@@ -526,9 +526,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                 </div>
                 <p className="text-xs font-medium">Loading volunteers...</p>
               </div>
-            ) : filteredThreads.map((thread) => {
-              const latest = messagesByThread[thread.id]?.slice(-1)[0];
-              return (
+            ) : filteredThreads.map((thread) => (
                 <button
                   key={thread.id}
                   onClick={() => openThread(thread.id)}
@@ -544,16 +542,15 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                         {thread.title}
                       </span>
                       <span className="text-[10px] font-medium text-gray-400">
-                        {latest ? formatTime(latest.createdAt) : ''}
+                        {thread.lastMessageAt ? formatTime(thread.lastMessageAt) : ''}
                       </span>
                     </div>
                     <p className={`text-xs truncate max-w-[140px] ${activeThreadId === thread.id ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {latest ? latest.body : 'No messages yet'}
+                      {thread.lastMessage || 'No messages yet'}
                     </p>
                   </div>
                 </button>
-              );
-            })}
+              ))}
           </div>
         </div>
       </motion.div>
