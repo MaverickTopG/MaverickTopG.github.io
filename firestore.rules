@@ -146,6 +146,16 @@ service cloud.firestore {
         allow update: if isOrgAdmin(orgId);
         allow delete: if false;
       }
+
+      match /threads/{threadId} {
+        allow read: if isOrgAdmin(orgId) || (isSignedIn() && request.auth.uid in resource.data.participantIds);
+        allow create, update: if isOrgAdmin(orgId);
+
+        match /messages/{messageId} {
+          allow read: if isOrgAdmin(orgId) || (isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/organizations/$(orgId)/threads/$(threadId)).data.participantIds);
+          allow create: if isSignedIn() && (isOrgAdmin(orgId) || request.auth.uid in get(/databases/$(database)/documents/organizations/$(orgId)/threads/$(threadId)).data.participantIds);
+        }
+      }
     }
 
     // Collection-group rule for querying an admin's own orgAdmins membership(s)
@@ -181,12 +191,6 @@ service cloud.firestore {
       allow read: if isSignedIn() && isOrgMember(docOrgId(resource.data));
       allow create: if hasFullAccess() && isOrgMember(docOrgId(request.resource.data));
       allow update, delete: if hasFullAccess() && isOrgMember(docOrgId(resource.data));
-    }
-
-    match /messages/{messageId} {
-      allow read: if isSignedIn() && isOrgMember(docOrgId(resource.data));
-      allow create: if isSignedIn() && isOrgMember(docOrgId(request.resource.data));
-      allow update, delete: if isSignedIn() && isOrgMember(docOrgId(resource.data));
     }
 
     match /kiosk_sessions/{sessionId} {
