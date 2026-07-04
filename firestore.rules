@@ -159,8 +159,7 @@ service cloud.firestore {
 
       match /events/{eventId} {
         allow read: if isSignedIn();
-        allow create, update: if isOrgAdmin(orgId);
-        allow delete: if false;
+        allow create, update, delete: if isOrgAdmin(orgId);
 
         match /shifts/{shiftId} {
           allow read: if isSignedIn();
@@ -170,7 +169,7 @@ service cloud.firestore {
         match /registrations/{regId} {
           allow read: if isOrgAdmin(orgId) || (isSignedIn() && request.auth.uid == regId);
           allow create, update: if isSignedIn() && request.auth.uid == regId;
-          allow delete: if false;
+          allow delete: if isOrgAdmin(orgId);
         }
       }
     }
@@ -196,6 +195,11 @@ service cloud.firestore {
     match /publicOrgPages/{orgId} {
       allow read: if true;
       allow write: if false;
+
+      match /events/{eventId} {
+        allow read: if true;
+        allow write: if isOrgAdmin(orgId);
+      }
     }
 
     match /orgs/{orgId} {

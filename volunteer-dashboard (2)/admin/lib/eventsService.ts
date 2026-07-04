@@ -2,11 +2,13 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
   Timestamp,
+  type DocumentSnapshot,
   type Firestore,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
@@ -104,7 +106,7 @@ const registrationsRef = (db: Firestore, orgId: string, eventId: string) =>
 const publicOrgEventRef = (db: Firestore, orgId: string, eventId: string) =>
   doc(db, 'publicOrgPages', orgId, 'events', eventId);
 
-const mapEvent = (docSnap: QueryDocumentSnapshot, orgId: string): VolunteerEvent => {
+const mapEvent = (docSnap: QueryDocumentSnapshot | DocumentSnapshot, orgId: string): VolunteerEvent => {
   const data = docSnap.data() as Record<string, unknown>;
   return {
     id: docSnap.id,
@@ -319,9 +321,12 @@ const summarizeShifts = (
   };
 };
 
-/** Recomputes startDate/endDate/totalCapacity from an event's current shifts. Pure
- * read-then-write, no transaction (matches EventService.swift's own non-transactional
- * recompute — shift add/edit/delete is an infrequent admin action, not a hot path). */
+/** Recomputes startDate/endDate/totalCapacity from an event's current shifts, then
+ * re-syncs the public mirror (a shift add/edit/delete can turn a mirror-less draft
+ * event, or one with a stale startDate, into one that now qualifies — or no longer
+ * qualifies — for the public mirror). Pure read-then-write, no transaction (matches
+ * EventService.swift's own non-transactional recompute — shift add/edit/delete is an
+ * infrequent admin action, not a hot path). */
 const recomputeEventSummary = async (db: Firestore, orgId: string, eventId: string): Promise<void> => {
   const snap = await getDocs(shiftsRef(db, orgId, eventId));
   const shifts = snap.docs.map((docSnap) => mapShift(docSnap, eventId, orgId));
@@ -336,6 +341,10 @@ const recomputeEventSummary = async (db: Firestore, orgId: string, eventId: stri
     },
     { merge: true },
   );
+  const updatedSnap = await getDoc(doc(eventsRef(db, orgId), eventId));
+  if (updatedSnap.exists()) {
+    await syncPublicMirror(db, mapEvent(updatedSnap, orgId));
+  }
 };
 
 /** Creates a new shift (no `id`) or overwrites an existing one (`id` set), then
