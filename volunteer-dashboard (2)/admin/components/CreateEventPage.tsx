@@ -1,79 +1,132 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ArrowLeft, 
-  Calendar, 
-  Clock, 
-  MapPin, 
-  Users, 
-  AlignLeft, 
-  Image as ImageIcon, 
-  Check, 
-  ChevronDown, 
+import {
+  ArrowLeft,
+  Calendar,
+  Clock,
+  MapPin,
+  Image as ImageIcon,
+  Check,
   Type,
   Plus,
   X,
-  Loader2
+  Loader2,
+  Repeat,
+  Trash2,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
-import { getActiveSubAdminSession, resolveOrgContext } from '../lib/orgContext';
+import { subscribeToOrgAdminContext } from '../lib/orgContext';
+import {
+  createEvent,
+  updateEvent,
+  upsertShift,
+  type EventRecurrence,
+  type EventShift,
+  type EventStatus,
+  type NewEventInput,
+  type ShiftRole,
+  type VolunteerEvent,
+} from '../lib/eventsService';
 
 interface CreateEventPageProps {
   onBack: () => void;
 }
 
-interface Shift {
-  id: string;
-  startTime: string;
-  endTime: string;
-}
-
-const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
-const EVENT_REROLL_PREFILL_KEY = 'nexolink:event-reroll-prefill';
-const RECURRENCE_OPTIONS = [
-  { key: 'one-time', label: 'One-Time' },
-  { key: 'weekly', label: 'Weekly' },
-  { key: 'biweekly', label: 'Biweekly' },
-  { key: 'monthly', label: 'Monthly' },
-] as const;
-
-type RecurrenceType = (typeof RECURRENCE_OPTIONS)[number]['key'];
-
-const normalizeShifts = (rawShifts: unknown, startTime: unknown, endTime: unknown): Shift[] => {
-  const fallback = [{ id: '1', startTime: '', endTime: '' }];
-  if (Array.isArray(rawShifts)) {
-    const normalized = rawShifts
-      .map((raw, index) => {
-        if (!raw || typeof raw !== 'object') return null;
-        const row = raw as Record<string, unknown>;
-        return {
-          id: String(row.id || row.shiftId || `${Date.now()}-${index}`),
-          startTime: String(row.startTime || ''),
-          endTime: String(row.endTime || ''),
-        };
-      })
-      .filter((shift): shift is Shift => Boolean(shift));
-    if (normalized.length > 0) return normalized;
-  }
-
-  if (startTime || endTime) {
-    return [
-      {
-        id: '1',
-        startTime: String(startTime || ''),
-        endTime: String(endTime || ''),
-      },
-    ];
-  }
-
-  return fallback;
+type RoleFormEntry = {
+  localId: string;
+  name: string;
+  capacity: string;
+  originalSignedUpCount: number;
 };
 
-const sanitizePathToken = (value: string) =>
-  value.replace(/[^a-zA-Z0-9._-]/g, '_');
+type ShiftFormEntry = {
+  localId: string;
+  firestoreId?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  repeatCount: string;
+  roles: RoleFormEntry[];
+};
+
+const EVENT_DRAFT_EDIT_KEY = 'nexolink:event-edit-id';
+const RECURRENCE_OPTIONS = [
+  { key: 'one_time' as const, label: 'One-Time' },
+  { key: 'weekly' as const, label: 'Weekly' },
+  { key: 'biweekly' as const, label: 'Biweekly' },
+  { key: 'monthly' as const, label: 'Monthly' },
+];
+
+const makeLocalId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const makeBlankRole = (): RoleFormEntry => ({
+  localId: makeLocalId(),
+  name: '',
+  capacity: '',
+  originalSignedUpCount: 0,
+});
+
+const makeBlankShift = (): ShiftFormEntry => ({
+  localId: makeLocalId(),
+  date: '',
+  startTime: '',
+  endTime: '',
+  repeatCount: '4',
+  roles: [makeBlankRole()],
+});
+
+const sanitizePathToken = (value: string) => value.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+const formatDateForInput = (date: Date): string => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatTimeForInput = (date: Date): string => {
+  const h = String(date.getHours()).padStart(2, '0');
+  const m = String(date.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+};
+
+const shiftToFormEntry = (shift: EventShift): ShiftFormEntry => ({
+  localId: shift.id,
+  firestoreId: shift.id,
+  date: formatDateForInput(shift.date),
+  startTime: formatTimeForInput(shift.startTime),
+  endTime: formatTimeForInput(shift.endTime),
+  repeatCount: '4',
+  roles: Object.entries(shift.roles).map(([roleId, role]) => ({
+    localId: roleId,
+    name: role.name,
+    capacity: String(role.capacity),
+    originalSignedUpCount: role.signedUpCount,
+  })),
+});
+
+const combineDateAndTime = (dateStr: string, timeStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hours, minutes] = (timeStr || '00:00').split(':').map(Number);
+  return new Date(year || 1970, (month || 1) - 1, day || 1, hours || 0, minutes || 0, 0, 0);
+};
+
+const dateOnly = (dateStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year || 1970, (month || 1) - 1, day || 1, 0, 0, 0, 0);
+};
+
+const addRecurrenceInterval = (dateStr: string, recurrence: EventRecurrence, multiplier: number): string => {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const base = new Date(year || 1970, (month || 1) - 1, day || 1);
+  if (recurrence === 'weekly') base.setDate(base.getDate() + 7 * multiplier);
+  else if (recurrence === 'biweekly') base.setDate(base.getDate() + 14 * multiplier);
+  else if (recurrence === 'monthly') base.setMonth(base.getMonth() + multiplier);
+  return formatDateForInput(base);
+};
 
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [activeCategory, setActiveCategory] = useState('Community');
@@ -81,26 +134,17 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [isLoadingDraft, setIsLoadingDraft] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
-  const [orgData, setOrgData] = useState<{
-    orgId: string;
-    orgCode: string;
-    groupId: string;
-    groupName: string;
-  } | null>(null);
-  
-  // Form State
+  const [orgId, setOrgId] = useState('');
+  const [adminUid, setAdminUid] = useState('');
+
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
-  const [maxVolunteers, setMaxVolunteers] = useState('');
   const [coverImageUrl, setCoverImageUrl] = useState('');
   const [coverImagePreview, setCoverImagePreview] = useState('');
-  const [isDateRange, setIsDateRange] = useState(false);
-  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('one-time');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [shifts, setShifts] = useState<Shift[]>([{ id: '1', startTime: '', endTime: '' }]);
-  
+  const [recurrence, setRecurrence] = useState<EventRecurrence>('one_time');
+  const [shifts, setShifts] = useState<ShiftFormEntry[]>([makeBlankShift()]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
   const categories = ['Community', 'Environment', 'Education', 'Health', 'Crisis Relief'];
@@ -108,99 +152,84 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const context = await resolveOrgContext(db, user.uid, user.email || null);
-        const activeSubAdmin = getActiveSubAdminSession();
-        const scopeId = String(activeSubAdmin?.groupId || '').trim();
-        const scopeName = String(activeSubAdmin?.groupName || scopeId || '').trim();
-        setOrgData({
-          orgId: context.orgId || '',
-          orgCode: context.orgCode || '',
-          groupId: scopeId,
-          groupName: scopeName,
-        });
+    let unsubContext: (() => void) | null = null;
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
       }
+      if (!user) {
+        setOrgId('');
+        setAdminUid('');
+        return;
+      }
+      setAdminUid(user.uid);
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
+        setOrgId(context.orgId || '');
+      });
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
+    };
   }, []);
 
   useEffect(() => {
     const draftId = sessionStorage.getItem(EVENT_DRAFT_EDIT_KEY)?.trim() || '';
-    const rerollRaw = sessionStorage.getItem(EVENT_REROLL_PREFILL_KEY) || '';
-    sessionStorage.removeItem(EVENT_REROLL_PREFILL_KEY);
     sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
-    if (!draftId) {
-      if (rerollRaw) {
-        try {
-          const data = JSON.parse(rerollRaw) as Record<string, unknown>;
-          setEditingEventId(null);
-          setTitle(String(data.title || ''));
-          setDescription(String(data.description || ''));
-          setActiveCategory(String(data.category || 'Community') || 'Community');
-          setLocation(String(data.location || ''));
-          setMaxVolunteers(String(data.maxVolunteers || ''));
-          const nextCoverUrl = String(data.coverImageUrl || '');
-          setCoverImageUrl(nextCoverUrl);
-          setCoverImagePreview(nextCoverUrl);
-          const rawRecurrence = String(data.recurrenceType || data.recurrence || 'one-time').toLowerCase();
-          const normalizedRecurrence = RECURRENCE_OPTIONS.some((option) => option.key === rawRecurrence)
-            ? (rawRecurrence as RecurrenceType)
-            : 'one-time';
-          setRecurrenceType(normalizedRecurrence);
-          setIsDateRange(false);
-          setStartDate('');
-          setEndDate('');
-          setShifts(normalizeShifts(data.shifts, null, null));
-        } catch (error) {
-          console.error('Failed to load reroll event payload:', error);
-        }
-      }
-      setEditingEventId(null);
-      return;
-    }
+    if (!draftId || !orgId) return;
 
     let cancelled = false;
     const loadDraft = async () => {
       setIsLoadingDraft(true);
       try {
         const db = getFirestoreDb();
-        const snap = await getDoc(doc(db, 'events', draftId));
-        if (!snap.exists()) {
+        const eventSnap = await getDoc(doc(db, 'organizations', orgId, 'events', draftId));
+        if (!eventSnap.exists()) {
           if (!cancelled) setEditingEventId(null);
           return;
         }
-        const data = snap.data() || {};
+        const data = eventSnap.data() || {};
         if (cancelled) return;
 
-        const nextTitle = String(data.title || '');
-        const nextDescription = String(data.description || '');
-        const nextCategory = String(data.category || 'Community');
-        const nextLocation = String(data.location || '');
-        const nextMaxVolunteers = data.maxVolunteers != null ? String(data.maxVolunteers) : '';
-        const nextCoverUrl = String(data.coverImageUrl || '');
-        const nextStartDate = String(data.startDate || '');
-        const rawEndDate = data.endDate ? String(data.endDate) : '';
-        const hasDateRange = Boolean(rawEndDate && nextStartDate && rawEndDate !== nextStartDate);
-        const nextEndDate = hasDateRange ? rawEndDate : '';
-
         setEditingEventId(draftId);
-        setTitle(nextTitle);
-        setDescription(nextDescription);
-        setActiveCategory(nextCategory || 'Community');
-        setLocation(nextLocation);
-        setMaxVolunteers(nextMaxVolunteers);
-        setCoverImageUrl(nextCoverUrl);
-        setCoverImagePreview(nextCoverUrl);
-        const rawRecurrence = String(data.recurrenceType || data.recurrence || 'one-time').toLowerCase();
-        const normalizedRecurrence = RECURRENCE_OPTIONS.some((option) => option.key === rawRecurrence)
-          ? (rawRecurrence as RecurrenceType)
-          : 'one-time';
-        setRecurrenceType(normalizedRecurrence);
-        setIsDateRange(hasDateRange);
-        setStartDate(nextStartDate);
-        setEndDate(nextEndDate);
-        setShifts(normalizeShifts(data.shifts, data.startTime, data.endTime));
+        setTitle(String(data.title || ''));
+        setDescription(String(data.description || ''));
+        setActiveCategory(String(data.category || 'Community') || 'Community');
+        setLocation(String(data.location || ''));
+        setCoverImageUrl(String(data.coverImageURL || ''));
+        setCoverImagePreview(String(data.coverImageURL || ''));
+        setRecurrence((data.recurrence as EventRecurrence) || 'one_time');
+
+        const shiftsSnap = await getDocs(collection(db, 'organizations', orgId, 'events', draftId, 'shifts'));
+        if (cancelled) return;
+        const loadedShifts = shiftsSnap.docs.map((shiftDoc) => {
+          const shiftData = shiftDoc.data() as Record<string, unknown>;
+          const rawRoles = (shiftData.roles as Record<string, unknown>) || {};
+          const shift: EventShift = {
+            id: shiftDoc.id,
+            eventId: draftId,
+            orgId,
+            date: (shiftData.date as { toDate?: () => Date })?.toDate?.() || new Date(),
+            startTime: (shiftData.startTime as { toDate?: () => Date })?.toDate?.() || new Date(),
+            endTime: (shiftData.endTime as { toDate?: () => Date })?.toDate?.() || new Date(),
+            roles: Object.fromEntries(
+              Object.entries(rawRoles).map(([roleId, value]) => {
+                const roleData = (value as Record<string, unknown>) || {};
+                return [
+                  roleId,
+                  {
+                    name: String(roleData.name || ''),
+                    capacity: Number(roleData.capacity || 0),
+                    signedUpCount: Number(roleData.signedUpCount || 0),
+                  } as ShiftRole,
+                ];
+              }),
+            ),
+          };
+          return shiftToFormEntry(shift);
+        });
+        setShifts(loadedShifts.length > 0 ? loadedShifts : [makeBlankShift()]);
       } catch (error) {
         console.error('Failed to load draft event for edit:', error);
         if (!cancelled) setEditingEventId(null);
@@ -213,7 +242,7 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [orgId]);
 
   useEffect(() => {
     return () => {
@@ -225,7 +254,7 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !orgId) return;
 
     const localUrl = URL.createObjectURL(file);
     if (previewUrlRef.current && previewUrlRef.current.startsWith('blob:')) {
@@ -237,61 +266,9 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
     setIsUploading(true);
     try {
       const storage = getFirebaseStorage();
-      const auth = getFirebaseAuth();
-      const userId = String(auth.currentUser?.uid || 'anonymous');
-      let tokenOrgId = '';
-      let tokenOrgCode = '';
-      try {
-        const tokenResult = await auth.currentUser?.getIdTokenResult();
-        tokenOrgId = String(
-          tokenResult?.claims?.orgId ||
-            tokenResult?.claims?.organizationId ||
-            tokenResult?.claims?.org_id ||
-            tokenResult?.claims?.organization_id ||
-            '',
-        ).trim();
-        tokenOrgCode = String(
-          tokenResult?.claims?.orgCode ||
-            tokenResult?.claims?.organizationCode ||
-            tokenResult?.claims?.linked_org_id ||
-            tokenResult?.claims?.linkedOrgId ||
-            tokenResult?.claims?.access_code ||
-            tokenResult?.claims?.accessCode ||
-            '',
-        ).trim();
-      } catch {
-        // Ignore claim lookup failures and continue with known orgData values.
-      }
       const safeFileName = sanitizePathToken(String(file.name || `cover_${Date.now()}.jpg`));
-      const now = Date.now();
-      const candidateBuckets = Array.from(
-        new Set(
-          [
-            tokenOrgId,
-            tokenOrgCode,
-            String(orgData?.orgId || '').trim(),
-            String(orgData?.orgCode || '').trim(),
-            userId,
-          ]
-            .map((value) => sanitizePathToken(String(value || '').trim()))
-            .filter(Boolean),
-        ),
-      );
-
-      let snapshot: Awaited<ReturnType<typeof uploadBytes>> | null = null;
-      let lastError: unknown = null;
-      for (const bucket of candidateBuckets) {
-        try {
-          const storageRef = ref(storage, `events/${bucket}/cover_${now}_${safeFileName}`);
-          snapshot = await uploadBytes(storageRef, file);
-          break;
-        } catch (err) {
-          lastError = err;
-          const code = String((err as any)?.code || '');
-          if (code !== 'storage/unauthorized') break;
-        }
-      }
-      if (!snapshot) throw lastError || new Error('Upload failed for all org bucket candidates.');
+      const storageRef = ref(storage, `events/${orgId}/cover_${Date.now()}_${safeFileName}`);
+      const snapshot = await uploadBytes(storageRef, file);
       const url = await getDownloadURL(snapshot.ref);
       setCoverImageUrl(url);
       setCoverImagePreview(url);
@@ -307,71 +284,141 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
   };
 
   const addShift = () => {
-    setShifts([...shifts, { id: Math.random().toString(36).substr(2, 9), startTime: '', endTime: '' }]);
+    setShifts((prev) => [...prev, makeBlankShift()]);
   };
 
-  const removeShift = (id: string) => {
-    if (shifts.length > 1) {
-      setShifts(shifts.filter(s => s.id !== id));
+  const removeShift = (localId: string) => {
+    setShifts((prev) => (prev.length > 1 ? prev.filter((s) => s.localId !== localId) : prev));
+  };
+
+  const updateShiftField = (localId: string, field: 'date' | 'startTime' | 'endTime' | 'repeatCount', value: string) => {
+    setShifts((prev) => prev.map((s) => (s.localId === localId ? { ...s, [field]: value } : s)));
+  };
+
+  const addRole = (shiftLocalId: string) => {
+    setShifts((prev) =>
+      prev.map((s) => (s.localId === shiftLocalId ? { ...s, roles: [...s.roles, makeBlankRole()] } : s)),
+    );
+  };
+
+  const removeRole = (shiftLocalId: string, roleLocalId: string) => {
+    setShifts((prev) =>
+      prev.map((s) =>
+        s.localId === shiftLocalId && s.roles.length > 1
+          ? { ...s, roles: s.roles.filter((r) => r.localId !== roleLocalId) }
+          : s,
+      ),
+    );
+  };
+
+  const updateRole = (shiftLocalId: string, roleLocalId: string, field: 'name' | 'capacity', value: string) => {
+    setShifts((prev) =>
+      prev.map((s) =>
+        s.localId === shiftLocalId
+          ? { ...s, roles: s.roles.map((r) => (r.localId === roleLocalId ? { ...r, [field]: value } : r)) }
+          : s,
+      ),
+    );
+  };
+
+  const repeatShift = (shiftLocalId: string) => {
+    const source = shifts.find((s) => s.localId === shiftLocalId);
+    const count = parseInt(source?.repeatCount || '0', 10);
+    if (!source || recurrence === 'one_time' || !source.date || !count || count <= 0) return;
+    const clones: ShiftFormEntry[] = [];
+    for (let i = 1; i <= count; i += 1) {
+      clones.push({
+        localId: makeLocalId(),
+        date: addRecurrenceInterval(source.date, recurrence, i),
+        startTime: source.startTime,
+        endTime: source.endTime,
+        repeatCount: '4',
+        roles: source.roles.map((role) => ({
+          localId: makeLocalId(),
+          name: role.name,
+          capacity: role.capacity,
+          originalSignedUpCount: 0,
+        })),
+      });
     }
+    setShifts((prev) => [...prev, ...clones]);
   };
 
-  const updateShift = (id: string, field: 'startTime' | 'endTime', value: string) => {
-    setShifts(shifts.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
-
-  const handlePublish = async (status: 'published' | 'draft' = 'published') => {
-    if (!orgData) {
+  const handlePublish = async (status: EventStatus = 'published') => {
+    if (!orgId) {
       alert('Organization data is still loading. Please try again.');
       return;
     }
-    if (status === 'published' && (!title || !startDate)) {
-      alert('Please fill in required fields (Title and Start Date) to publish.');
+    if (status === 'published' && !title) {
+      alert('Please fill in a title to publish.');
       return;
     }
 
     setIsSubmitting(true);
     try {
       const db = getFirestoreDb();
-      const eventData = {
+      const input: NewEventInput = {
+        orgId,
         title,
         description,
         category: activeCategory,
         location,
-        maxVolunteers: parseInt(maxVolunteers) || 0,
-        coverImageUrl,
-        isDateRange,
-        startDate,
-        endDate: isDateRange ? endDate : startDate,
-        shifts,
-        recurrenceType,
+        recurrence,
+        coverImageURL: coverImageUrl || null,
+        visibility: 'public',
         status,
-        orgId: orgData.orgId,
-        orgCode: orgData.orgCode,
-        target_group_id: orgData.groupId || null,
-        targetGroupId: orgData.groupId || null,
-        sub_admin_group_id: orgData.groupId || null,
-        subAdminGroupId: orgData.groupId || null,
-        group_scope_id: orgData.groupId || null,
-        target_group_name: orgData.groupName || orgData.groupId || null,
-        targetGroupName: orgData.groupName || orgData.groupId || null,
-        sub_admin_group_name: orgData.groupName || orgData.groupId || null,
-        subAdminGroupName: orgData.groupName || orgData.groupId || null,
-        group_scope_name: orgData.groupName || orgData.groupId || null,
+        createdBy: adminUid || null,
       };
 
-      if (editingEventId) {
-        await updateDoc(doc(db, 'events', editingEventId), {
-          ...eventData,
-          updatedAt: serverTimestamp(),
-        });
+      let eventId = editingEventId;
+      if (eventId) {
+        const existingSnap = await getDoc(doc(db, 'organizations', orgId, 'events', eventId));
+        const existing = existingSnap.data() || {};
+        const fullEvent: VolunteerEvent = {
+          id: eventId,
+          orgId,
+          title,
+          description,
+          category: activeCategory,
+          startDate: null,
+          endDate: null,
+          location,
+          totalCapacity: Number(existing.totalCapacity || 0),
+          totalSignedUp: Number(existing.totalSignedUp || 0),
+          recurrence,
+          coverImageURL: coverImageUrl || null,
+          visibility: 'public',
+          status,
+          createdBy: (existing.createdBy as string) || adminUid || null,
+          createdAt: null,
+          updatedAt: null,
+          archived: false,
+        };
+        await updateEvent(db, fullEvent);
       } else {
-        await addDoc(collection(db, 'events'), {
-          ...eventData,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+        eventId = await createEvent(db, input);
+      }
+
+      for (const shiftEntry of shifts) {
+        if (!shiftEntry.date) continue;
+        const roles: Record<string, ShiftRole> = {};
+        shiftEntry.roles.forEach((role) => {
+          if (!role.name.trim()) return;
+          roles[role.localId] = {
+            name: role.name.trim(),
+            capacity: parseInt(role.capacity, 10) || 0,
+            signedUpCount: role.originalSignedUpCount,
+          };
+        });
+        await upsertShift(db, orgId, eventId, {
+          id: shiftEntry.firestoreId,
+          date: dateOnly(shiftEntry.date),
+          startTime: combineDateAndTime(shiftEntry.date, shiftEntry.startTime),
+          endTime: combineDateAndTime(shiftEntry.date, shiftEntry.endTime),
+          roles,
         });
       }
+
       onBack();
     } catch (error) {
       console.error('Publish failed:', error);
@@ -382,339 +429,307 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
 
   const container = {
     hidden: { opacity: 0 },
-    show: {
-      opacity: 1,
-      transition: { staggerChildren: 0.1 }
-    }
+    show: { opacity: 1, transition: { staggerChildren: 0.1 } },
   };
 
   const item = {
     hidden: { y: 20, opacity: 0 },
-    show: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 50 } }
+    show: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 50 } },
   };
 
   return (
-    <motion.div 
-      variants={container}
-      initial="hidden"
-      animate="show"
-      className="w-full flex flex-col gap-6 mt-8 pb-10"
-    >
-      
-      {/* Header */}
+    <motion.div variants={container} initial="hidden" animate="show" className="w-full flex flex-col gap-6 mt-8 pb-10">
       <motion.div variants={item} className="flex items-center gap-4">
-         <button 
-            onClick={onBack}
-            className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-gray-100 shadow-sm hover:bg-gray-50 transition-colors group"
-         >
-             <ArrowLeft className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
-         </button>
-         <div>
-            <h2 className="text-3xl font-medium text-gray-900 tracking-tight">
-              {editingEventId ? 'Edit Event' : 'Create Event'}
-            </h2>
-            <p className="text-gray-500 font-medium">
-              {isLoadingDraft
-                ? 'Loading last saved draft...'
-                : editingEventId
-                  ? 'Update your saved draft details.'
-                  : 'Coordinate a new volunteer opportunity.'}
-            </p>
-         </div>
+        <button
+          onClick={onBack}
+          className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-gray-100 shadow-sm hover:bg-gray-50 transition-colors group"
+        >
+          <ArrowLeft className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
+        </button>
+        <div>
+          <h2 className="text-3xl font-medium text-gray-900 tracking-tight">
+            {editingEventId ? 'Edit Event' : 'Create Event'}
+          </h2>
+          <p className="text-gray-500 font-medium">
+            {isLoadingDraft
+              ? 'Loading last saved draft...'
+              : editingEventId
+                ? 'Update your saved draft details.'
+                : 'Coordinate a new volunteer opportunity.'}
+          </p>
+        </div>
       </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Main Form */}
-          <motion.div variants={item} className="lg:col-span-2 flex flex-col gap-6">
-              
-              <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100">
-                  <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center">
-                          <Type className="w-4 h-4 text-gray-900" />
-                      </div>
-                      Event Details
-                  </h3>
-                  
-                  <div className="space-y-6">
-                      {/* Title */}
-                      <div className="space-y-2">
-                          <label className="text-sm font-bold text-gray-900 ml-1">Event Title</label>
-                          <input 
-                              type="text" 
-                              value={title}
-                              onChange={(e) => setTitle(e.target.value)}
-                              placeholder="e.g. City Park Restoration" 
-                              className="w-full h-14 px-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
-                          />
-                      </div>
+        <motion.div variants={item} className="lg:col-span-2 flex flex-col gap-6">
+          <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100">
+            <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center">
+                <Type className="w-4 h-4 text-gray-900" />
+              </div>
+              Event Details
+            </h3>
 
-                      {/* Description */}
-                      <div className="space-y-2">
-                          <label className="text-sm font-bold text-gray-900 ml-1">Description</label>
-                          <textarea 
-                              value={description}
-                              onChange={(e) => setDescription(e.target.value)}
-                              placeholder="Describe the event, objectives, and what volunteers should expect..." 
-                              className="w-full h-32 p-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all resize-none font-medium leading-relaxed"
-                          />
-                      </div>
-
-                      {/* Category Pills */}
-                      <div className="space-y-2">
-                          <label className="text-sm font-bold text-gray-900 ml-1">Category</label>
-                          <div className="flex flex-wrap gap-2">
-                              {categories.map((cat) => (
-                                  <button
-                                    key={cat}
-                                    onClick={() => setActiveCategory(cat)}
-                                    className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border ${
-                                        activeCategory === cat 
-                                        ? 'bg-gray-900 text-white border-gray-900 shadow-lg shadow-gray-900/10' 
-                                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                                    }`}
-                                  >
-                                      {cat}
-                                  </button>
-                              ))}
-                          </div>
-                      </div>
-                  </div>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-900 ml-1">Event Title</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. City Park Restoration"
+                  className="w-full h-14 px-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
+                />
               </div>
 
-              {/* Logistics */}
-              <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100">
-                  <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center">
-                          <MapPin className="w-4 h-4 text-gray-900" />
-                      </div>
-                      Date & Logistics
-                  </h3>
-                  
-                  <div className="space-y-6">
-                      <div className="flex flex-col md:flex-row gap-6">
-                          <div className="flex-1 space-y-2">
-                              <div className="flex justify-between items-center mb-1">
-                                  <label className="text-sm font-bold text-gray-900 ml-1">
-                                      {isDateRange ? 'Start Date' : 'Date'}
-                                  </label>
-                                  <button 
-                                      onClick={() => setIsDateRange(!isDateRange)}
-                                      className="text-xs font-bold text-lime-600 hover:text-lime-700"
-                                  >
-                                      {isDateRange ? 'Switch to Single Day' : 'Switch to Date Range'}
-                                  </button>
-                              </div>
-                              <div className="relative">
-                                  <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                                  <input 
-                                      type="date" 
-                                      value={startDate}
-                                      onChange={(e) => setStartDate(e.target.value)}
-                                      className="w-full h-14 pl-12 pr-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
-                                  />
-                              </div>
-                          </div>
-                          
-                          <AnimatePresence>
-                              {isDateRange && (
-                                <motion.div 
-                                    initial={{ opacity: 0, x: -20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0, x: -20 }}
-                                    className="flex-1 space-y-2"
-                                >
-                                    <label className="text-sm font-bold text-gray-900 ml-1">End Date</label>
-                                    <div className="relative">
-                                        <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                                        <input 
-                                            type="date" 
-                                            value={endDate}
-                                            onChange={(e) => setEndDate(e.target.value)}
-                                            className="w-full h-14 pl-12 pr-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
-                                        />
-                                    </div>
-                                </motion.div>
-                              )}
-                          </AnimatePresence>
-                      </div>
-
-                      {/* Multiple Shifts */}
-                      <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-gray-900 ml-1">Available Shifts</label>
-                              <button 
-                                  onClick={addShift}
-                                  className="text-xs font-bold text-lime-600 hover:text-lime-700 flex items-center gap-1"
-                              >
-                                  <Plus className="w-3 h-3" />
-                                  Add Shift
-                              </button>
-                          </div>
-                          <div className="space-y-3">
-                              {shifts.map((shift, idx) => (
-                                  <div key={shift.id} className="flex gap-4 items-center">
-                                      <div className="flex-1 relative">
-                                          <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                          <input 
-                                              type="time" 
-                                              value={shift.startTime}
-                                              onChange={(e) => updateShift(shift.id, 'startTime', e.target.value)}
-                                              className="w-full h-12 pl-12 pr-5 bg-gray-50 rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
-                                          />
-                                      </div>
-                                      <div className="text-gray-400 font-bold">—</div>
-                                      <div className="flex-1 relative">
-                                          <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                          <input 
-                                              type="time" 
-                                              value={shift.endTime}
-                                              onChange={(e) => updateShift(shift.id, 'endTime', e.target.value)}
-                                              className="w-full h-12 pl-12 pr-5 bg-gray-50 rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
-                                          />
-                                      </div>
-                                      {shifts.length > 1 && (
-                                          <button 
-                                              onClick={() => removeShift(shift.id)}
-                                              className="p-2 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-lg transition-colors"
-                                          >
-                                              <X className="w-4 h-4" />
-                                          </button>
-                                      )}
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-
-                      <div className="space-y-2">
-                          <label className="text-sm font-bold text-gray-900 ml-1">Location</label>
-                          <div className="relative">
-                              <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                              <input 
-                                  type="text" 
-                                  value={location}
-                                  onChange={(e) => setLocation(e.target.value)}
-                                  placeholder="e.g. 123 Community Center Dr."
-                                  className="w-full h-14 pl-12 pr-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
-                              />
-                          </div>
-                      </div>
-                  </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-900 ml-1">Description</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Describe the event, objectives, and what volunteers should expect..."
+                  className="w-full h-32 p-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all resize-none font-medium leading-relaxed"
+                />
               </div>
 
-          </motion.div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-900 ml-1">Category</label>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setActiveCategory(cat)}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border ${
+                        activeCategory === cat
+                          ? 'bg-gray-900 text-white border-gray-900 shadow-lg shadow-gray-900/10'
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* Sidebar Settings */}
-          <motion.div variants={item} className="flex flex-col gap-6">
-              
-              {/* Media Upload */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-gray-100">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4 ml-1">Cover Image</h3>
-                  <input 
-                      type="file" 
-                      ref={fileInputRef}
-                      onChange={handleImageUpload}
-                      accept="image/*"
-                      className="hidden" 
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-900 ml-1">Location</label>
+                <div className="relative">
+                  <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    type="text"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="e.g. 123 Community Center Dr."
+                    className="w-full h-14 pl-12 pr-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
                   />
-                  <div 
-                      onClick={() => !isUploading && fileInputRef.current?.click()}
-                      className={`border-2 border-dashed border-gray-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:bg-gray-50 hover:border-lime-300 transition-all cursor-pointer group h-64 relative overflow-hidden ${isUploading ? 'cursor-not-allowed opacity-50' : ''}`}
-                  >
-                      {coverImagePreview || coverImageUrl ? (
-                          <>
-                              <img src={coverImagePreview || coverImageUrl} className="absolute inset-0 w-full h-full object-cover" />
-                              <div className={`absolute inset-0 ${isUploading ? 'bg-black/40 opacity-100' : 'bg-black/40 opacity-0 group-hover:opacity-100'} transition-opacity flex items-center justify-center`}>
-                                  {isUploading ? <Loader2 className="w-8 h-8 text-white animate-spin" /> : <ImageIcon className="w-8 h-8 text-white" />}
-                              </div>
-                          </>
-                      ) : (
-                          <>
-                              <div className="w-16 h-16 bg-lime-50 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                  {isUploading ? <Loader2 className="w-8 h-8 text-lime-600 animate-spin" /> : <ImageIcon className="w-8 h-8 text-lime-600" />}
-                              </div>
-                              <p className="font-bold text-gray-900 text-sm">Click to upload</p>
-                              <p className="text-[10px] text-gray-400 mt-1">SVG, PNG, JPG or GIF</p>
-                          </>
-                      )}
-                  </div>
+                </div>
               </div>
+            </div>
+          </div>
 
-              {/* Requirements */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-gray-100">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4 ml-1">Requirements</h3>
-                  
-                  <div className="space-y-4">
-                      <div className="space-y-2">
-                          <label className="text-sm font-bold text-gray-900 ml-1">Max Volunteers</label>
-                          <div className="relative">
-                              <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                              <input 
-                                  type="number" 
-                                  value={maxVolunteers}
-                                  onChange={(e) => setMaxVolunteers(e.target.value)}
-                                  placeholder="0"
-                                  className="w-full h-14 pl-12 pr-5 bg-gray-50 rounded-2xl border-none text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-lime-300 outline-none transition-all font-medium"
-                              />
-                          </div>
+          <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center">
+                  <Calendar className="w-4 h-4 text-gray-900" />
+                </div>
+                Shifts &amp; Roles
+              </h3>
+              <button
+                onClick={addShift}
+                className="text-xs font-bold text-lime-600 hover:text-lime-700 flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                Add Shift
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {shifts.map((shift, shiftIdx) => (
+                <div key={shift.localId} className="p-6 bg-gray-50/70 rounded-3xl border border-gray-100 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                      Shift {shiftIdx + 1}
+                    </span>
+                    {shifts.length > 1 && (
+                      <button
+                        onClick={() => removeShift(shift.localId)}
+                        className="p-1.5 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col md:flex-row gap-4">
+                    <div className="flex-1 relative">
+                      <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="date"
+                        value={shift.date}
+                        onChange={(e) => updateShiftField(shift.localId, 'date', e.target.value)}
+                        className="w-full h-12 pl-11 pr-4 bg-white rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="flex-1 relative">
+                      <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="time"
+                        value={shift.startTime}
+                        onChange={(e) => updateShiftField(shift.localId, 'startTime', e.target.value)}
+                        className="w-full h-12 pl-11 pr-4 bg-white rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="flex-1 relative">
+                      <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="time"
+                        value={shift.endTime}
+                        onChange={(e) => updateShiftField(shift.localId, 'endTime', e.target.value)}
+                        className="w-full h-12 pl-11 pr-4 bg-white rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-gray-500 uppercase tracking-widest ml-1">Roles</label>
+                      <button
+                        onClick={() => addRole(shift.localId)}
+                        className="text-xs font-bold text-lime-600 hover:text-lime-700 flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add Role
+                      </button>
+                    </div>
+                    {shift.roles.map((role) => (
+                      <div key={role.localId} className="flex gap-3 items-center">
+                        <input
+                          type="text"
+                          value={role.name}
+                          onChange={(e) => updateRole(shift.localId, role.localId, 'name', e.target.value)}
+                          placeholder="Role name, e.g. Bookshelver"
+                          className="flex-1 h-11 px-4 bg-white rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
+                        />
+                        <input
+                          type="number"
+                          value={role.capacity}
+                          onChange={(e) => updateRole(shift.localId, role.localId, 'capacity', e.target.value)}
+                          placeholder="Capacity"
+                          className="w-28 h-11 px-4 bg-white rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
+                        />
+                        {shift.roles.length > 1 && (
+                          <button
+                            onClick={() => removeRole(shift.localId, role.localId)}
+                            className="p-2 hover:bg-red-50 text-gray-300 hover:text-red-500 rounded-lg transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
+                    ))}
                   </div>
-              </div>
 
-              {/* Recurrence */}
-              <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-gray-100">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4 ml-1">Recurrence</h3>
-                  <div className="space-y-3">
-                      <div className="flex flex-wrap gap-2">
-                          {RECURRENCE_OPTIONS.map((option) => (
-                              <button
-                                  key={option.key}
-                                  type="button"
-                                  onClick={() => setRecurrenceType(option.key)}
-                                  className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
-                                      recurrenceType === option.key
-                                        ? 'bg-lime-100 text-lime-800 border-lime-300'
-                                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                                  }`}
-                              >
-                                  {option.label}
-                              </button>
-                          ))}
-                      </div>
-                      <p className="text-xs font-medium text-gray-500 ml-1">
-                          {recurrenceType === 'one-time'
-                            ? 'This event runs once and then ends.'
-                            : recurrenceType === 'weekly'
-                              ? 'A new event instance will auto-create every 7 days.'
-                              : recurrenceType === 'biweekly'
-                                ? 'A new event instance will auto-create every 14 days.'
-                                : 'A new event instance will auto-create each month.'}
-                      </p>
+                  {recurrence !== 'one_time' && (
+                    <div className="flex items-center gap-3 pt-2">
+                      <input
+                        type="number"
+                        min={1}
+                        value={shift.repeatCount}
+                        onChange={(e) => updateShiftField(shift.localId, 'repeatCount', e.target.value)}
+                        className="w-20 h-10 px-3 bg-white rounded-xl border-none text-sm font-medium focus:ring-2 focus:ring-lime-300 outline-none transition-all"
+                      />
+                      <button
+                        onClick={() => repeatShift(shift.localId)}
+                        disabled={!shift.date}
+                        className="text-xs font-bold text-lime-600 hover:text-lime-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                      >
+                        <Repeat className="w-3.5 h-3.5" />
+                        Repeat {RECURRENCE_OPTIONS.find((o) => o.key === recurrence)?.label.toLowerCase()}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div variants={item} className="flex flex-col gap-6">
+          <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-gray-100">
+            <h3 className="text-lg font-bold text-gray-900 mb-4 ml-1">Cover Image</h3>
+            <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+            <div
+              onClick={() => !isUploading && fileInputRef.current?.click()}
+              className={`border-2 border-dashed border-gray-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:bg-gray-50 hover:border-lime-300 transition-all cursor-pointer group h-64 relative overflow-hidden ${isUploading ? 'cursor-not-allowed opacity-50' : ''}`}
+            >
+              {coverImagePreview || coverImageUrl ? (
+                <>
+                  <img src={coverImagePreview || coverImageUrl} className="absolute inset-0 w-full h-full object-cover" />
+                  <div
+                    className={`absolute inset-0 ${isUploading ? 'bg-black/40 opacity-100' : 'bg-black/40 opacity-0 group-hover:opacity-100'} transition-opacity flex items-center justify-center`}
+                  >
+                    {isUploading ? <Loader2 className="w-8 h-8 text-white animate-spin" /> : <ImageIcon className="w-8 h-8 text-white" />}
                   </div>
-              </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 bg-lime-50 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    {isUploading ? <Loader2 className="w-8 h-8 text-lime-600 animate-spin" /> : <ImageIcon className="w-8 h-8 text-lime-600" />}
+                  </div>
+                  <p className="font-bold text-gray-900 text-sm">Click to upload</p>
+                  <p className="text-[10px] text-gray-400 mt-1">SVG, PNG, JPG or GIF</p>
+                </>
+              )}
+            </div>
+          </div>
 
-              {/* Action Buttons */}
-              <div className="flex flex-col gap-3">
-                  <button 
-                      onClick={() => handlePublish('published')}
-                      disabled={isSubmitting || isUploading || isLoadingDraft}
-                      className="w-full h-14 bg-gray-900 hover:bg-black text-white rounded-2xl font-bold text-lg shadow-xl shadow-gray-900/10 hover:-translate-y-1 disabled:opacity-50 disabled:translate-y-0 transition-all flex items-center justify-center gap-2"
+          <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-gray-100">
+            <h3 className="text-lg font-bold text-gray-900 mb-4 ml-1">Recurrence</h3>
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {RECURRENCE_OPTIONS.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setRecurrence(option.key)}
+                    className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
+                      recurrence === option.key
+                        ? 'bg-lime-100 text-lime-800 border-lime-300'
+                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                    }`}
                   >
-                      {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                      {editingEventId ? 'Update Event' : 'Publish Event'}
+                    {option.label}
                   </button>
-                  <button 
-                      onClick={() => handlePublish('draft')}
-                      disabled={isSubmitting || isUploading || isLoadingDraft}
-                      className="w-full h-14 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-2xl font-bold transition-colors disabled:opacity-50"
-                  >
-                      {editingEventId ? 'Save Draft Changes' : 'Save as Draft'}
-                  </button>
+                ))}
               </div>
+              <p className="text-xs font-medium text-gray-500 ml-1">
+                {recurrence === 'one_time'
+                  ? 'This event runs once and then ends.'
+                  : `Informational label for this program, and sets the interval each shift's "Repeat" button uses (${recurrence === 'weekly' ? 'every 7 days' : recurrence === 'biweekly' ? 'every 14 days' : 'every month'}).`}
+              </p>
+            </div>
+          </div>
 
-          </motion.div>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => handlePublish('published')}
+              disabled={isSubmitting || isUploading || isLoadingDraft}
+              className="w-full h-14 bg-gray-900 hover:bg-black text-white rounded-2xl font-bold text-lg shadow-xl shadow-gray-900/10 hover:-translate-y-1 disabled:opacity-50 disabled:translate-y-0 transition-all flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+              {editingEventId ? 'Update Event' : 'Publish Event'}
+            </button>
+            <button
+              onClick={() => handlePublish('draft')}
+              disabled={isSubmitting || isUploading || isLoadingDraft}
+              className="w-full h-14 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-2xl font-bold transition-colors disabled:opacity-50"
+            >
+              {editingEventId ? 'Save Draft Changes' : 'Save as Draft'}
+            </button>
+          </div>
+        </motion.div>
       </div>
-
     </motion.div>
   );
 };
