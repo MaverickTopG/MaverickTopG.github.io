@@ -137,7 +137,9 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate, isActive = f
   useEffect(() => {
     if (!orgId || !selectedEvent) return;
     const db = getFirestoreDb();
+    let requestId = 0;
     const unsubscribe = observeRegistrations(db, orgId, selectedEvent.id, (rows) => {
+      const thisRequestId = ++requestId;
       Promise.all(
         rows.map(async (row) => {
           let volunteerEmail = '';
@@ -150,6 +152,7 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate, isActive = f
           return { ...row, volunteerEmail };
         }),
       ).then((withEmails) => {
+        if (thisRequestId !== requestId) return;
         setRegistrationsByEvent((prev) => ({ ...prev, [selectedEvent.id]: withEmails }));
       });
     });
