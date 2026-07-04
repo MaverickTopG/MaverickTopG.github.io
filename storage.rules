@@ -45,7 +45,7 @@ service firebase.storage {
       return hasPaidAccess() || hasFullAccess();
     }
 
-    match /messages/{orgSegment}/{fileName} {
+    match /messages/{orgId}/{threadId}/{fileName} {
       // Messaging attachments must work for authenticated portal users.
       // Scope and recipient restrictions are enforced at Firestore message docs.
       allow read, write: if isSignedIn() && planAllowsMessaging();
