@@ -21,26 +21,20 @@ import {
   X,
 } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
-  getDownloadURL,
-  ref,
-  uploadBytes,
-} from 'firebase/storage';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseStorage } from '../lib/firebase';
-import { getActiveSubAdminSession, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
-
-type Attachment = {
-  url: string;
-  type: string;
-  name: string;
-};
+import { subscribeToOrgAdminContext } from '../lib/orgContext';
+import {
+  ensureDirectThread,
+  ensureGroupThread,
+  sendFile,
+  sendImage,
+  sendText,
+  subscribeToMessages,
+  subscribeToThreads,
+  type MessageThread,
+  type ThreadMessage,
+} from '../lib/messagingService';
 
 type Volunteer = {
   id: string;
@@ -49,52 +43,7 @@ type Volunteer = {
   role: string;
 };
 
-type Message = {
-  id: string;
-  threadId: string;
-  senderId: string;
-  senderName: string;
-  text: string;
-  createdAt: Date;
-  attachment?: Attachment;
-};
-
-type ThreadMeta = {
-  id: string;
-  name: string;
-  type: 'group' | 'direct';
-  recipientId?: string;
-};
-
-const normalizeScopeToken = (value?: string) => {
-  const raw = String(value || '').trim();
-  if (!raw) return 'super-admin';
-  return raw.replace(/[^a-zA-Z0-9_-]/g, '_');
-};
-const resolveRecordScopeId = (data: Record<string, unknown> = {}) =>
-  String(
-    data.target_group_id
-    || data.targetGroupId
-    || data.sub_admin_group_id
-    || data.subAdminGroupId
-    || data.group_scope_id
-    || data.groupScopeId
-    || data.groupId
-    || data.group_id
-    || '',
-  ).trim();
 const normalizeNameValue = (value: unknown) => String(value || '').trim();
-const normalizeRoleValue = (value: unknown) => String(value || '').trim().toLowerCase();
-const isAdminLikeRole = (value: unknown) => {
-  const role = normalizeRoleValue(value);
-  if (!role) return false;
-  return (
-    role.includes('admin')
-    || role.includes('owner')
-    || role.includes('super')
-    || role.includes('organization')
-  );
-};
 
 const resolvePersonNameFromRecord = (record: Record<string, unknown> = {}) => {
   const first = normalizeNameValue(record.firstName || record.first_name);
@@ -109,26 +58,14 @@ const resolvePersonNameFromRecord = (record: Record<string, unknown> = {}) => {
     normalizeNameValue(record.fullName);
   if (displayLike) return displayLike;
 
-  const genericName = normalizeNameValue(record.name);
-  if (!genericName) return '';
-
-  const orgLikeNames = [
-    record.organizationName,
-    record.organization_name,
-    record.orgName,
-    record.org_name,
-    record.orgDisplayName,
-  ]
-    .map((value) => normalizeNameValue(value).toLowerCase())
-    .filter(Boolean);
-
-  if (!orgLikeNames.includes(genericName.toLowerCase())) return genericName;
-  return '';
+  return normalizeNameValue(record.name);
 };
 
-const ALL_VOLUNTEERS_THREAD = (orgCode: string, scopeToken: string) => `org-${orgCode}-scope-${scopeToken}-all`;
-const DIRECT_VOLUNTEER_THREAD = (orgCode: string, scopeToken: string, volunteerId: string) =>
-  `org-${orgCode}-scope-${scopeToken}-user-${volunteerId}`;
+const getExtension = (fileName: string) => {
+  const idx = fileName.lastIndexOf('.');
+  return idx >= 0 ? fileName.slice(idx + 1).toLowerCase() : '';
+};
+
 const MESSAGE_TARGET_KEY = 'nexolink:message-target';
 
 interface MessagingPageProps {
@@ -136,17 +73,12 @@ interface MessagingPageProps {
 }
 
 export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true }) => {
-  const [orgCode, setOrgCode] = useState('');
   const [orgId, setOrgId] = useState('');
   const [senderName, setSenderName] = useState('Coordinator');
   const [adminUid, setAdminUid] = useState('');
-  const [adminEmail, setAdminEmail] = useState('');
-  const [users, setUsers] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
-  const [joinRequests, setJoinRequests] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
-  const [orgAdminIds, setOrgAdminIds] = useState<string[]>([]);
-  const [orgAdminEmails, setOrgAdminEmails] = useState<string[]>([]);
-  const [threads, setThreads] = useState<ThreadMeta[]>([]);
-  const [messagesByThread, setMessagesByThread] = useState<Record<string, Message[]>>({});
+  const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
+  const [threads, setThreads] = useState<MessageThread[]>([]);
+  const [messagesByThread, setMessagesByThread] = useState<Record<string, ThreadMessage[]>>({});
   const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [inputValue, setInputValue] = useState('');
   const [search, setSearch] = useState('');
@@ -154,7 +86,6 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
-  const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const emojiPickerRef = useRef<HTMLDivElement | null>(null);
@@ -178,34 +109,26 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubContext: (() => void) | null = null;
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
+      }
       if (!user) {
-        setOrgCode('');
         setOrgId('');
-        setUsers([]);
-        setJoinRequests([]);
+        setAdminUid('');
+        setVolunteers([]);
         setThreads([]);
         setMessagesByThread({});
-        setAdminUid('');
-        setAdminEmail('');
+        setActiveThreadId('');
+        setLoading(false);
         return;
       }
       setAdminUid(user.uid);
-      setAdminEmail(user.email || '');
-      const context = await resolveOrgContext(db, user.uid, user.email || null);
-      setOrgCode(context.orgCode || '');
-      setOrgId(context.orgId || '');
-      
-      const adminData = await (async () => {
-        try {
-          const { resolveOrgAdmins } = await import('../lib/orgContext');
-          return await resolveOrgAdmins(db, context.orgId, context.orgCode);
-        } catch {
-          return { adminIds: [], adminEmails: [] };
-        }
-      })();
-      setOrgAdminIds(adminData.adminIds);
-      setOrgAdminEmails(adminData.adminEmails);
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
+        setOrgId(context.orgId || '');
+      });
 
       const snapshot = await getDoc(doc(db, 'users', user.uid));
       const data = snapshot.data() || {};
@@ -217,21 +140,13 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
       );
       setLoading(false);
     });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const syncScope = () => setSubAdminScopeKey(getActiveSubAdminSession()?.groupId || '');
-    window.addEventListener('nexolink:subadmin-session', syncScope);
-    window.addEventListener('storage', syncScope);
     return () => {
-      window.removeEventListener('nexolink:subadmin-session', syncScope);
-      window.removeEventListener('storage', syncScope);
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
     };
   }, []);
 
   const [emojiSearch, setEmojiSearch] = useState('');
-  const threadScopeToken = useMemo(() => normalizeScopeToken(subAdminScopeKey), [subAdminScopeKey]);
 
   // Helper to map emojis to searchable tags
   const getEmojiTags = (emoji: string) => {
@@ -260,235 +175,87 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
   const filteredEmojis = useMemo(() => {
     if (!emojiSearch.trim()) return EMOJIS;
     const term = emojiSearch.toLowerCase();
-    return EMOJIS.filter(emoji => 
-      getEmojiTags(emoji).includes(term) || 
+    return EMOJIS.filter(emoji =>
+      getEmojiTags(emoji).includes(term) ||
       emoji.includes(term)
     );
   }, [emojiSearch, EMOJIS]);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if (!orgId) {
+      setVolunteers([]);
+      return;
+    }
     const db = getFirestoreDb();
-    const unsubUsers = subscribeToOrgCollection({
-      db,
-      collectionName: 'users',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setUsers(rows);
+    const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+    const q = query(volunteersRef, where('status', '==', 'active'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const rows: Volunteer[] = snap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as Record<string, unknown>;
+            return {
+              id: docSnap.id,
+              name: String(data.displayName || data.email || 'Volunteer'),
+              email: String(data.email || ''),
+              role: String(data.role || 'Volunteer'),
+              archived: Boolean(data.archived),
+            };
+          })
+          .filter((row) => !row.archived)
+          .map(({ archived, ...row }) => row);
+        setVolunteers(rows.sort((a, b) => a.name.localeCompare(b.name)));
       },
-    });
-
-    const unsubJoinRequests = subscribeToOrgCollection({
-      db,
-      collectionName: 'organization_join_requests',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setJoinRequests(rows);
+      (error) => {
+        console.error('Failed to load volunteers for messaging', error);
       },
-    });
-
-    return () => {
-      unsubUsers();
-      unsubJoinRequests();
-    };
-  }, [orgCode, orgId]);
-
-  const buildVolunteerKey = (email: string, name: string, fallback: string) => {
-    if (email) return `email:${email.toLowerCase().trim()}`;
-    if (name) return `name:${name.toLowerCase().trim()}`;
-    return `id:${fallback}`;
-  };
-
-  const volunteers = useMemo(() => {
-    const volunteerMap = new Map<string, Volunteer>();
-    const keyByUserId = new Map<string, string>();
-    const keyByEmail = new Map<string, string>();
-    const keyByName = new Map<string, string>();
-    const scopedJoinRequests = joinRequests.filter((row) => {
-      const scope = resolveRecordScopeId(row.data || {});
-      if (subAdminScopeKey) return scope === subAdminScopeKey;
-      return !scope;
-    });
-    const allowedUserIds = new Set<string>();
-    const allowedEmails = new Set<string>();
-    const allowedNames = new Set<string>();
-    scopedJoinRequests.forEach((row) => {
-      const data = row.data || {};
-      const status = String(data.status || '').toLowerCase();
-      if (status !== 'accepted') return;
-      const userId = String(data.user_id || data.userId || '').trim();
-      const email = String(data.user_email || data.email || '').trim().toLowerCase();
-      const name = resolvePersonNameFromRecord(data).toLowerCase();
-      if (userId) allowedUserIds.add(userId);
-      if (email) allowedEmails.add(email);
-      if (name) allowedNames.add(name);
-    });
-
-    // First pass: Users collection (Primary source)
-    users.forEach((row) => {
-      const data = row.data || {};
-      const email = String(data.email || '').trim();
-      const name = resolvePersonNameFromRecord(data) || email || 'Volunteer';
-      const isOrgAdmin =
-        orgAdminIds.includes(row.id) || orgAdminEmails.includes(email.toLowerCase());
-      
-      // Strict filters for organizations and admins
-      if (orgId && row.id === orgId) return;
-      if (adminUid && row.id === adminUid) return;
-      if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      const userEmail = email.toLowerCase();
-      const userName = name.toLowerCase();
-      const isAllowed = allowedUserIds.has(row.id)
-        || (userEmail ? allowedEmails.has(userEmail) : false)
-        || (userName ? allowedNames.has(userName) : false);
-      if (!isAllowed && !isOrgAdmin) return;
-
-      const key = buildVolunteerKey(email, name, row.id);
-      keyByUserId.set(row.id, key);
-      if (email) keyByEmail.set(email.toLowerCase(), key);
-      if (name) keyByName.set(name.toLowerCase(), key);
-
-      volunteerMap.set(key, {
-        id: row.id,
-        name,
-        email,
-        role: isOrgAdmin || isAdminLikeRole(data.role) ? 'Admin' : String(data.role || 'Volunteer'),
-      });
-    });
-
-    // Second pass: Join Requests (Fallback source for pairing)
-    scopedJoinRequests.forEach((row) => {
-      const data = row.data || {};
-      const status = String(data.status || '').toLowerCase();
-      if (status !== 'accepted') return;
-
-      const userId = String(data.user_id || data.userId || '').trim();
-      const email = String(data.user_email || data.email || '').trim();
-      const name = resolvePersonNameFromRecord(data) || email || 'Volunteer';
-      
-      if (orgId && userId === orgId) return;
-      if (adminUid && userId === adminUid) return;
-      if (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) return;
-      
-      // Check if we already have this person via any identifier
-      const existingKey = (userId && keyByUserId.get(userId))
-        || (email && keyByEmail.get(email.toLowerCase()))
-        || (name && keyByName.get(name.toLowerCase()));
-
-      if (existingKey && volunteerMap.has(existingKey)) return;
-
-      const key = buildVolunteerKey(email, name, userId || row.id);
-      volunteerMap.set(key, {
-        id: userId || key,
-        name,
-        email,
-        role: isAdminLikeRole(data.requested_role) || isAdminLikeRole(data.role)
-          ? 'Admin'
-          : String(data.requested_role || data.role || 'Volunteer'),
-      });
-    });
-
-    return Array.from(volunteerMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, joinRequests, orgId, adminUid, adminEmail, orgAdminIds, orgAdminEmails, subAdminScopeKey]);
+    );
+    return () => unsubscribe();
+  }, [orgId]);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if (!orgId || !adminUid) return;
     const db = getFirestoreDb();
-    const unsubscribe = subscribeToOrgCollection({
-      db,
-      collectionName: 'messages',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        const grouped: Record<string, Message[]> = {};
-        const processedIds = new Set<string>();
+    const participantIds = Array.from(new Set([adminUid, ...volunteers.map((v) => v.id)]));
+    ensureGroupThread(db, orgId, 'All Volunteers', participantIds).catch((error) => {
+      console.error('Failed to ensure All Volunteers thread', error);
+    });
+  }, [orgId, adminUid, volunteers]);
 
-        rows.forEach((docSnap) => {
-          if (processedIds.has(docSnap.id)) return;
-          processedIds.add(docSnap.id);
-
-          const data = docSnap.data || {};
-          const messageScope = resolveRecordScopeId(data);
-          const rawCreated = data.createdAt || data.created_at || null;
-          let createdAt = new Date();
-          
-          if (rawCreated) {
-            if (typeof (rawCreated as any).toDate === 'function') {
-              createdAt = (rawCreated as any).toDate();
-            } else if (typeof rawCreated === 'object' && (rawCreated as any).seconds) {
-              createdAt = new Date((rawCreated as any).seconds * 1000);
-            } else {
-              const parsed = new Date(String(rawCreated));
-              if (!Number.isNaN(parsed.getTime())) createdAt = parsed;
-            }
-          }
-
-          const threadId = String(data.threadId || '');
-          if (!threadId) return;
-          if (subAdminScopeKey) {
-            const matchesScopeField = messageScope === subAdminScopeKey;
-            const matchesScopedThread = threadId.includes(`scope-${threadScopeToken}-`);
-            if (!matchesScopeField && !matchesScopedThread) return;
-          } else {
-            const hasScopedThread =
-              threadId.includes('scope-') && !threadId.includes(`scope-${threadScopeToken}-`);
-            if (messageScope || hasScopedThread) return;
-          }
-          const entry: Message = {
-            id: docSnap.id,
-            threadId,
-            senderId: String(data.senderId || ''),
-            senderName: String(data.senderName || 'Coordinator'),
-            text: String(data.text || ''),
-            createdAt,
-            attachment: data.attachment ? (data.attachment as Attachment) : undefined,
-          };
-          grouped[threadId] = grouped[threadId] || [];
-          grouped[threadId].push(entry);
-        });
-        Object.values(grouped).forEach((list) => list.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()));
-        setMessagesByThread(grouped);
-      },
+  useEffect(() => {
+    if (!orgId) {
+      setThreads([]);
+      return;
+    }
+    const db = getFirestoreDb();
+    const unsubscribe = subscribeToThreads(db, orgId, (rows) => {
+      setThreads(rows);
+      setActiveThreadId((current) => current || rows[0]?.id || '');
     });
     return () => unsubscribe();
-  }, [orgCode, orgId, subAdminScopeKey, threadScopeToken]);
+  }, [orgId]);
 
   useEffect(() => {
-    if (!orgCode) return;
-    const allThread: ThreadMeta = {
-      id: ALL_VOLUNTEERS_THREAD(orgCode, threadScopeToken),
-      name: 'All Volunteers',
-      type: 'group',
-    };
-    const directThreads = volunteers.map((v) => ({
-      id: DIRECT_VOLUNTEER_THREAD(orgCode, threadScopeToken, v.id),
-      name: v.name,
-      type: 'direct' as const,
-      recipientId: v.id,
-    }));
-    setThreads([allThread, ...directThreads]);
-    if (!activeThreadId) {
-      setActiveThreadId(allThread.id);
-    }
-  }, [orgCode, volunteers, activeThreadId, threadScopeToken]);
+    if (!orgId || !activeThreadId) return;
+    const db = getFirestoreDb();
+    const unsubscribe = subscribeToMessages(db, orgId, activeThreadId, (rows) => {
+      setMessagesByThread((prev) => ({ ...prev, [activeThreadId]: rows }));
+    });
+    return () => unsubscribe();
+  }, [orgId, activeThreadId]);
 
   const filteredThreads = useMemo(() => {
     if (!search.trim()) return threads;
-    return threads.filter((thread) => thread.name.toLowerCase().includes(search.toLowerCase()));
+    return threads.filter((thread) => thread.title.toLowerCase().includes(search.toLowerCase()));
   }, [threads, search]);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const activeMessages = messagesByThread[activeThreadId] || [];
+  const allVolunteersThread = threads.find((thread) => thread.kind === 'group' && thread.title === 'All Volunteers');
 
   useEffect(() => {
-    setActiveThreadId('');
-    setShowNewChat(false);
-  }, [threadScopeToken, orgCode]);
-
-  useEffect(() => {
-    if (!isActive || !orgCode || !threads.length || !volunteers.length) return;
+    if (!isActive || !orgId || !adminUid || !volunteers.length) return;
     const raw = sessionStorage.getItem(MESSAGE_TARGET_KEY);
     if (!raw) return;
 
@@ -502,61 +269,64 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
     }
 
     const targetId = (target?.id || '').trim();
-    let resolvedId = targetId;
+    let resolved = volunteers.find((vol) => vol.id === targetId);
 
-    if (!resolvedId && target?.email) {
-      const match = volunteers.find(
+    if (!resolved && target?.email) {
+      resolved = volunteers.find(
         (vol) => vol.email && vol.email.toLowerCase() === target?.email?.toLowerCase(),
       );
-      if (match) resolvedId = match.id;
     }
 
-    if (!resolvedId && target?.name) {
-      const match = volunteers.find(
+    if (!resolved && target?.name) {
+      resolved = volunteers.find(
         (vol) => vol.name && vol.name.toLowerCase() === target?.name?.toLowerCase(),
       );
-      if (match) resolvedId = match.id;
     }
 
-    if (!resolvedId) return;
+    if (!resolved) return;
 
-    const threadId = DIRECT_VOLUNTEER_THREAD(orgCode, threadScopeToken, resolvedId);
-    if (!threads.some((thread) => thread.id === threadId)) return;
-
-    setActiveThreadId(threadId);
-    setShowNewChat(false);
-    setSearch('');
+    const volunteer = resolved;
     sessionStorage.removeItem(MESSAGE_TARGET_KEY);
-    window.setTimeout(() => messageInputRef.current?.focus(), 0);
-  }, [isActive, orgCode, threads, volunteers, threadScopeToken]);
+    const db = getFirestoreDb();
+    ensureDirectThread(db, orgId, volunteer.name, [adminUid, volunteer.id])
+      .then((thread) => {
+        setActiveThreadId(thread.id);
+        setShowNewChat(false);
+        setSearch('');
+        window.setTimeout(() => messageInputRef.current?.focus(), 0);
+      })
+      .catch((error) => {
+        console.error('Failed to open direct thread from message target', error);
+      });
+  }, [isActive, orgId, adminUid, volunteers]);
 
-  const getFileIcon = (type: string) => {
-    if (type.includes('pdf')) return <FileText className="w-4 h-4" />;
-    if (type.includes('sheet') || type.includes('csv')) return <FileSpreadsheet className="w-4 h-4" />;
-    if (type.includes('word') || type.includes('officedocument')) return <FileText className="w-4 h-4" />;
-    if (type.includes('code') || type.includes('javascript')) return <FileCode className="w-4 h-4" />;
+  const getFileIcon = (extension: string) => {
+    if (extension === 'pdf') return <FileText className="w-4 h-4" />;
+    if (extension === 'csv' || extension === 'xlsx' || extension === 'xls') return <FileSpreadsheet className="w-4 h-4" />;
+    if (extension === 'doc' || extension === 'docx') return <FileText className="w-4 h-4" />;
+    if (extension === 'js' || extension === 'ts' || extension === 'json') return <FileCode className="w-4 h-4" />;
     return <FileIcon className="w-4 h-4" />;
   };
 
-  const MessageAttachment = ({ attachment }: { attachment: { url: string; name: string; type: string } }) => {
+  const MessageAttachment = ({ url, kind, fileName }: { url: string; kind: 'image' | 'file'; fileName: string }) => {
   const [loadError, setLoadError] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [imgLoading, setImgLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
 
   const downloadAttachment = async () => {
     if (isDownloading) return;
     setIsDownloading(true);
     try {
-      const response = await fetch(attachment.url);
+      const response = await fetch(url);
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const objectUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = url;
-      link.download = attachment.name || 'download';
+      link.href = objectUrl;
+      link.download = fileName || 'download';
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(objectUrl);
     } catch (error) {
       console.error('Failed to download attachment', error);
     } finally {
@@ -564,29 +334,26 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
     }
   };
 
-  if (!attachment.type.startsWith('image/')) {
+  if (kind !== 'image') {
+    const extension = getExtension(fileName);
     return (
-      <button 
+      <button
         type="button"
         onClick={downloadAttachment}
         className="flex items-center gap-3 p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 transition-all group text-left w-full"
       >
         <div className={`p-2 rounded-xl ${
-          attachment.type.includes('pdf') ? 'bg-red-50 text-red-500' :
-          attachment.type.includes('sheet') || attachment.type.includes('csv') ? 'bg-emerald-50 text-emerald-500' :
-          attachment.type.includes('word') || attachment.type.includes('officedocument') ? 'bg-blue-50 text-blue-500' :
+          extension === 'pdf' ? 'bg-red-50 text-red-500' :
+          extension === 'csv' || extension === 'xlsx' || extension === 'xls' ? 'bg-emerald-50 text-emerald-500' :
+          extension === 'doc' || extension === 'docx' ? 'bg-blue-50 text-blue-500' :
           'bg-gray-50 text-gray-500'
         }`}>
-          {attachment.type.includes('pdf') ? <FileText className="w-5 h-5" /> :
-           attachment.type.includes('sheet') || attachment.type.includes('csv') ? <FileSpreadsheet className="w-5 h-5" /> :
-           attachment.type.includes('word') || attachment.type.includes('officedocument') ? <FileText className="w-5 h-5" /> :
-           attachment.type.includes('code') || attachment.type.includes('javascript') ? <FileCode className="w-5 h-5" /> :
-           <FileIcon className="w-5 h-5" />}
+          {getFileIcon(extension)}
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-bold text-gray-900 truncate pr-4">{attachment.name}</span>
+          <span className="text-sm font-bold text-gray-900 truncate pr-4">{fileName}</span>
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-            {attachment.type.split('/')[1]?.toUpperCase() || 'FILE'}
+            {extension ? extension.toUpperCase() : 'FILE'}
           </span>
         </div>
         {isDownloading ? (
@@ -600,12 +367,12 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
 
   return (
     <div className="relative group overflow-hidden rounded-2xl border border-gray-100 shadow-sm bg-gray-50 flex items-center justify-center min-h-[140px] w-full max-w-sm">
-      {loading && !loadError && (
+      {imgLoading && !loadError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 z-10">
           <div className="w-8 h-8 border-2 border-lime-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
       )}
-      
+
       {loadError ? (
         <div className="flex flex-col items-center justify-center p-8 gap-3 bg-gray-50 w-full text-center">
           <div className="w-12 h-12 rounded-full bg-lime-50 flex items-center justify-center">
@@ -620,20 +387,20 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
           </div>
         </div>
       ) : (
-        <img 
-          src={attachment.url} 
-          alt={attachment.name} 
-          className={`max-w-full max-h-80 object-cover transition-opacity duration-300 ${loading ? 'opacity-0' : 'opacity-100'}`}
-          onLoad={() => setLoading(false)}
+        <img
+          src={url}
+          alt={fileName || 'Attachment'}
+          className={`max-w-full max-h-80 object-cover transition-opacity duration-300 ${imgLoading ? 'opacity-0' : 'opacity-100'}`}
+          onLoad={() => setImgLoading(false)}
           onError={() => {
             setLoadError(true);
-            setLoading(false);
+            setImgLoading(false);
           }}
         />
       )}
-      
-      {!loadError && !loading && (
-        <button 
+
+      {!loadError && !imgLoading && (
+        <button
           type="button"
           onClick={downloadAttachment}
           className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -663,70 +430,48 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showEmojiPicker]);
 
-  const uploadFiles = async (files: File[]) => {
-    const storage = getFirebaseStorage();
-    const results: Attachment[] = [];
-    for (const file of files) {
-      const storageRef = ref(storage, `messages/org-${orgId}/${Date.now()}_${file.name}`);
-      const snapshot = await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(snapshot.ref);
-      results.push({
-        url,
-        name: file.name,
-        type: file.type,
-      });
+  const handleStartDirectChat = async (volunteer: Volunteer) => {
+    if (!orgId || !adminUid) return;
+    const db = getFirestoreDb();
+    try {
+      const thread = await ensureDirectThread(db, orgId, volunteer.name, [adminUid, volunteer.id]);
+      openThread(thread.id);
+    } catch (error) {
+      console.error('Failed to start direct chat', error);
     }
-    return results;
   };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if ((!inputValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) || !activeThread || !orgCode) return;
-    
+    const trimmedText = inputValue.trim();
+    if ((!trimmedText && attachedImages.length === 0 && attachedFiles.length === 0) || !activeThreadId || !orgId) return;
+
     setIsUploading(true);
     try {
       const db = getFirestoreDb();
-      const allFiles = [...attachedImages, ...attachedFiles];
-      const uploadedAttachments = await uploadFiles(allFiles);
+      const storage = getFirebaseStorage();
+      const senderId = getFirebaseAuth().currentUser?.uid || adminUid;
 
-      // Create a message document for each attachment if no text, or one message with first attachment + text
-      // For simplicity, we'll just send one message with the first attachment if multiple exist, or just the text
-      // Ideally we'd loop, but matching user's "attach anything" request usually means one message.
-      
-      const messageData: any = {
-        orgCode,
-        orgId,
-        threadId: activeThread.id,
-        type: activeThread.type,
-        recipientId: activeThread.recipientId || null,
-        senderId: getFirebaseAuth().currentUser?.uid || 'admin',
-        senderName,
-        text: inputValue.trim(),
-        createdAt: serverTimestamp(),
-      };
-      if (subAdminScopeKey) {
-        const activeScope = getActiveSubAdminSession();
-        const scopeName = String(activeScope?.groupName || '').trim();
-        messageData.target_group_id = subAdminScopeKey;
-        messageData.targetGroupId = subAdminScopeKey;
-        messageData.sub_admin_group_id = subAdminScopeKey;
-        messageData.subAdminGroupId = subAdminScopeKey;
-        if (scopeName) {
-          messageData.target_group_name = scopeName;
-          messageData.targetGroupName = scopeName;
-          messageData.sub_admin_group_name = scopeName;
-          messageData.subAdminGroupName = scopeName;
+      if (attachedImages.length === 0 && attachedFiles.length === 0) {
+        await sendText(db, orgId, activeThreadId, senderId, senderName, trimmedText);
+      } else {
+        // If no image is attached, the typed text has nowhere to ride as a
+        // caption (sendFile has no caption param, matching iOS exactly), so
+        // send it as its own text message first rather than dropping it.
+        if (attachedImages.length === 0 && trimmedText) {
+          await sendText(db, orgId, activeThreadId, senderId, senderName, trimmedText);
+        }
+        let firstImageCaptionApplied = false;
+        for (const file of attachedImages) {
+          const caption = !firstImageCaptionApplied ? trimmedText : '';
+          await sendImage(db, storage, orgId, activeThreadId, senderId, senderName, file, caption);
+          firstImageCaptionApplied = true;
+        }
+        for (const file of attachedFiles) {
+          await sendFile(db, storage, orgId, activeThreadId, senderId, senderName, file);
         }
       }
 
-      if (uploadedAttachments.length > 0) {
-        // Just take the first one for this specific message document
-        // In a more complex app, we'd send multiple or use an attachments array
-        messageData.attachment = uploadedAttachments[0];
-      }
-
-      await addDoc(collection(db, 'messages'), messageData);
-      
       setInputValue('');
       setAttachedImages([]);
       setAttachedFiles([]);
@@ -796,14 +541,14 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                   <div className="flex-1 text-left min-w-0">
                     <div className="flex justify-between items-center mb-0.5">
                       <span className={`font-bold text-sm truncate ${activeThreadId === thread.id ? 'text-white' : 'text-gray-900'}`}>
-                        {thread.name}
+                        {thread.title}
                       </span>
                       <span className="text-[10px] font-medium text-gray-400">
                         {latest ? formatTime(latest.createdAt) : ''}
                       </span>
                     </div>
                     <p className={`text-xs truncate max-w-[140px] ${activeThreadId === thread.id ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {latest ? latest.text : 'No messages yet'}
+                      {latest ? latest.body : 'No messages yet'}
                     </p>
                   </div>
                 </button>
@@ -817,11 +562,11 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white/80 backdrop-blur-md z-10 sticky top-0">
           <div className="flex items-center gap-4">
             <div>
-              <h3 className="font-bold text-gray-900 text-lg">{activeThread?.name || 'Select a chat'}</h3>
+              <h3 className="font-bold text-gray-900 text-lg">{activeThread?.title || 'Select a chat'}</h3>
               <div className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 bg-lime-500 rounded-full animate-pulse"></span>
                 <span className="text-xs text-gray-500 font-medium">
-                  {activeThread?.type === 'group' ? 'Group message' : 'Direct message'}
+                  {activeThread?.kind === 'group' ? 'Group message' : 'Direct message'}
                 </span>
               </div>
             </div>
@@ -839,12 +584,16 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
               className={`flex gap-4 ${msg.senderId === getFirebaseAuth().currentUser?.uid ? 'flex-row-reverse' : ''}`}
             >
               <div className={`flex flex-col gap-1 max-w-[70%] ${msg.senderId === getFirebaseAuth().currentUser?.uid ? 'items-end' : 'items-start'}`}>
-                {msg.attachment && (
+                {msg.attachmentURL && (msg.kind === 'image' || msg.kind === 'file') && (
                   <div className="mb-2 w-full">
-                    <MessageAttachment attachment={msg.attachment} />
+                    <MessageAttachment
+                      url={msg.attachmentURL}
+                      kind={msg.kind === 'image' ? 'image' : 'file'}
+                      fileName={msg.body || (msg.kind === 'image' ? 'photo.jpg' : 'file')}
+                    />
                   </div>
                 )}
-                {msg.text && (
+                {msg.body && msg.kind !== 'file' && (
                   <div
                     className={`p-4 rounded-2xl text-sm font-medium leading-relaxed shadow-sm ${
                       msg.senderId === getFirebaseAuth().currentUser?.uid
@@ -852,12 +601,12 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                         : 'bg-white text-gray-700 border border-gray-100 rounded-tl-none'
                     }`}
                   >
-                    {msg.text}
+                    {msg.body}
                   </div>
                 )}
                 <div className="flex items-center gap-1.5 px-1">
-                  {msg.senderId !== getFirebaseAuth().currentUser?.uid && activeThread?.type === 'group' && (
-                    <span className="text-[10px] text-lime-600 font-black uppercase tracking-wider mr-1">{msg.senderName}</span>
+                  {msg.senderId !== getFirebaseAuth().currentUser?.uid && activeThread?.kind === 'group' && (
+                    <span className="text-[10px] text-lime-600 font-black uppercase tracking-wider mr-1">{msg.senderName || 'Coordinator'}</span>
                   )}
                   <span className="text-[10px] text-gray-400 font-bold">{formatTime(msg.createdAt)}</span>
                   {msg.senderId === getFirebaseAuth().currentUser?.uid && (
@@ -911,7 +660,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                         <div className="px-1 pb-4 mb-4 border-b border-gray-50 flex flex-col gap-3">
                           <div className="flex justify-between items-center mb-1">
                             <span className="text-sm font-bold text-gray-900">Choose an Emoji</span>
-                            <button 
+                            <button
                               onClick={() => setShowEmojiPicker(false)}
                               className="p-2 hover:bg-gray-50 rounded-full text-gray-400 transition-colors"
                             >
@@ -1013,7 +762,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                   key={`${file.name}-${file.lastModified}`}
                   className="px-3 py-1.5 bg-lime-50 text-[10px] font-bold text-lime-700 rounded-full flex items-center gap-2 border border-lime-200"
                 >
-                  {getFileIcon(file.type)}
+                  {getFileIcon(getExtension(file.name))}
                   {file.name}
                   <button
                     type="button"
@@ -1055,8 +804,9 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
               <p className="text-sm text-gray-500 mb-6">Message the entire group or a specific volunteer.</p>
               <div className="flex flex-col gap-3">
                 <button
-                  onClick={() => openThread(ALL_VOLUNTEERS_THREAD(orgCode, threadScopeToken))}
-                  className="w-full flex items-center gap-3 p-4 rounded-2xl bg-gray-900 text-white hover:bg-black"
+                  onClick={() => allVolunteersThread && openThread(allVolunteersThread.id)}
+                  disabled={!allVolunteersThread}
+                  className="w-full flex items-center gap-3 p-4 rounded-2xl bg-gray-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Users className="w-5 h-5" />
                   <span className="font-semibold">All Volunteers</span>
@@ -1065,7 +815,7 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
                   {volunteers.map((volunteer) => (
                     <button
                       key={volunteer.id}
-                      onClick={() => openThread(DIRECT_VOLUNTEER_THREAD(orgCode, threadScopeToken, volunteer.id))}
+                      onClick={() => handleStartDirectChat(volunteer)}
                       className="w-full flex items-center justify-between p-3 rounded-2xl hover:bg-gray-50 text-left"
                     >
                       <div>
@@ -1085,5 +835,5 @@ export const MessagingPage: React.FC<MessagingPageProps> = ({ isActive = true })
   );
 };
 
-const formatTime = (date: Date) =>
-  date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const formatTime = (date: Date | null) =>
+  date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
