@@ -156,6 +156,23 @@ service cloud.firestore {
           allow create: if isSignedIn() && (isOrgAdmin(orgId) || request.auth.uid in get(/databases/$(database)/documents/organizations/$(orgId)/threads/$(threadId)).data.participantIds);
         }
       }
+
+      match /events/{eventId} {
+        allow read: if isSignedIn();
+        allow create, update: if isOrgAdmin(orgId);
+        allow delete: if false;
+
+        match /shifts/{shiftId} {
+          allow read: if isSignedIn();
+          allow create, update, delete: if isOrgAdmin(orgId);
+        }
+
+        match /registrations/{regId} {
+          allow read: if isOrgAdmin(orgId) || (isSignedIn() && request.auth.uid == regId);
+          allow create, update: if isSignedIn() && request.auth.uid == regId;
+          allow delete: if false;
+        }
+      }
     }
 
     // Collection-group rule for querying an admin's own orgAdmins membership(s)
