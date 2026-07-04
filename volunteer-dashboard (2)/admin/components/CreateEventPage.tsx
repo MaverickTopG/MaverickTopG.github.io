@@ -121,11 +121,20 @@ const dateOnly = (dateStr: string): Date => {
 
 const addRecurrenceInterval = (dateStr: string, recurrence: EventRecurrence, multiplier: number): string => {
   const [year, month, day] = dateStr.split('-').map(Number);
-  const base = new Date(year || 1970, (month || 1) - 1, day || 1);
-  if (recurrence === 'weekly') base.setDate(base.getDate() + 7 * multiplier);
-  else if (recurrence === 'biweekly') base.setDate(base.getDate() + 14 * multiplier);
-  else if (recurrence === 'monthly') base.setMonth(base.getMonth() + multiplier);
-  return formatDateForInput(base);
+  if (recurrence === 'weekly' || recurrence === 'biweekly') {
+    const base = new Date(year || 1970, (month || 1) - 1, day || 1);
+    base.setDate(base.getDate() + (recurrence === 'weekly' ? 7 : 14) * multiplier);
+    return formatDateForInput(base);
+  }
+  if (recurrence === 'monthly') {
+    const targetMonthIndex = (month || 1) - 1 + multiplier;
+    const targetYear = (year || 1970) + Math.floor(targetMonthIndex / 12);
+    const normalizedMonthIndex = ((targetMonthIndex % 12) + 12) % 12;
+    const daysInTargetMonth = new Date(targetYear, normalizedMonthIndex + 1, 0).getDate();
+    const clampedDay = Math.min(day || 1, daysInTargetMonth);
+    return formatDateForInput(new Date(targetYear, normalizedMonthIndex, clampedDay));
+  }
+  return dateStr;
 };
 
 export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
