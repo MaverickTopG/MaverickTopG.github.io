@@ -185,8 +185,8 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({ onBack }) => {
 
   useEffect(() => {
     const draftId = sessionStorage.getItem(EVENT_DRAFT_EDIT_KEY)?.trim() || '';
-    sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
     if (!draftId || !orgId) return;
+    sessionStorage.removeItem(EVENT_DRAFT_EDIT_KEY);
 
     let cancelled = false;
     const loadDraft = async () => {
