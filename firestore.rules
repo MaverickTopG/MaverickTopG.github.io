@@ -187,6 +187,16 @@ service cloud.firestore {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
+    // Collection-group rule for a volunteer querying their own org membership(s)
+    // across all orgs (used by OrgsService.fetchMembershipsForUser/observeMemberships,
+    // which back EventsView's "my orgs" discovery). Same rationale as the orgAdmins
+    // rule above: nested match rules under /organizations/{orgId}/volunteers don't
+    // apply to collectionGroup() list queries. Depends on the same invariant: every
+    // volunteers doc's ID equals its own `userId` field.
+    match /{path=**}/volunteers/{volunteerId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
     match /joinCodes/{code} {
       allow read: if isSignedIn();
       allow write: if false;
