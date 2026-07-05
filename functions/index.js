@@ -331,6 +331,115 @@ export const autoApproveVolunteerLogs = onDocumentWritten('volunteer_logs/{logId
   });
 });
 
+const ORG_AUTO_APPROVE_MAX_HOURS = 12;
+const ORG_AUTO_APPROVE_HISTORY_WINDOW_MS = 35 * 24 * 60 * 60 * 1000;
+
+async function isQuestionableOrgHourLog(orgId, log) {
+  const hours = Number(log.hours);
+  if (!Number.isFinite(hours) || hours <= 0) return true;
+  if (hours > ORG_AUTO_APPROVE_MAX_HOURS) return true;
+
+  const dateMs = new Date(log.date).getTime();
+  if (Number.isFinite(dateMs) && dateMs > Date.now() + 24 * 60 * 60 * 1000) return true;
+
+  const userId = log.userId;
+  if (!userId) return true;
+
+  // `date` is a zero-padded "YYYY-MM-DD" string (HourLog.date), which sorts
+  // correctly with a lexicographic range query -- matches the old heuristic's
+  // use of the logged work date (not the record's createdAt) for recency.
+  const cutoffDate = new Date(Date.now() - ORG_AUTO_APPROVE_HISTORY_WINDOW_MS).toISOString().slice(0, 10);
+  const historySnap = await db
+    .collection('organizations').doc(orgId).collection('hourLogs')
+    .where('userId', '==', userId)
+    .where('status', '==', 'verified')
+    .where('date', '>=', cutoffDate)
+    .get();
+  const history = historySnap.docs
+    .map((d) => Number(d.data().hours))
+    .filter((h) => Number.isFinite(h) && h > 0);
+  if (history.length >= 3) {
+    const avg = history.reduce((sum, h) => sum + h, 0) / history.length;
+    if (avg > 0 && hours >= avg * 3) return true;
+  }
+  return false;
+}
+
+async function verifyOrgHourLog(orgId, logId, verifiedBy) {
+  const logRef = db.collection('organizations').doc(orgId).collection('hourLogs').doc(logId);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(logRef);
+    if (!snap.exists) return;
+    const log = snap.data();
+    if (log.status !== 'pending') return;
+    tx.update(logRef, {
+      status: 'verified', verifiedBy, verifiedAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    });
+    tx.update(db.collection('users').doc(log.userId), {
+      'stats.totalHoursPending': FieldValue.increment(-log.hours),
+      'stats.totalHoursVerified': FieldValue.increment(log.hours),
+    });
+  });
+}
+
+async function rejectOrgHourLog(orgId, logId, reason) {
+  const logRef = db.collection('organizations').doc(orgId).collection('hourLogs').doc(logId);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(logRef);
+    if (!snap.exists) return;
+    const log = snap.data();
+    if (log.status !== 'pending') return;
+    tx.update(logRef, {
+      status: 'rejected', rejectedReason: reason, updatedAt: Timestamp.now(),
+    });
+    tx.update(db.collection('users').doc(log.userId), {
+      'stats.totalHoursPending': FieldValue.increment(-log.hours),
+    });
+  });
+}
+
+async function assertOrgAdmin(uid, orgId) {
+  const snap = await db.collection('organizations').doc(orgId).collection('orgAdmins').doc(uid).get();
+  if (!snap.exists) throw new HttpsError('permission-denied', 'Not an admin of this organization.');
+}
+
+export const autoApproveOrgHourLogs = onDocumentWritten(
+  'organizations/{orgId}/hourLogs/{logId}',
+  async (event) => {
+    const after = event.data?.after;
+    if (!after || !after.exists) return;
+    const log = after.data() || {};
+    if (log.status !== 'pending') return;
+
+    const { orgId, logId } = event.params;
+    const orgSnap = await db.collection('organizations').doc(orgId).get();
+    if (!orgSnap.exists || orgSnap.data().autoApproveHours !== true) return;
+
+    if (await isQuestionableOrgHourLog(orgId, log)) return;
+    await verifyOrgHourLog(orgId, logId, 'auto');
+  },
+);
+
+export const verifyHourLog = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  const { orgId, logId } = request.data || {};
+  if (!orgId || !logId) throw new HttpsError('invalid-argument', 'orgId and logId are required.');
+  await assertOrgAdmin(uid, orgId);
+  await verifyOrgHourLog(orgId, logId, uid);
+  return { ok: true };
+});
+
+export const rejectHourLog = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  const { orgId, logId, reason } = request.data || {};
+  if (!orgId || !logId) throw new HttpsError('invalid-argument', 'orgId and logId are required.');
+  await assertOrgAdmin(uid, orgId);
+  await rejectOrgHourLog(orgId, logId, String(reason || ''));
+  return { ok: true };
+});
+
 export const consumeNebulaePrompt = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
