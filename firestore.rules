@@ -99,6 +99,12 @@ service cloud.firestore {
       allow read: if isSignedIn() && (request.auth.uid == userId || hasFullAccess());
       allow update: if isSignedIn() && (request.auth.uid == userId || hasFullAccess());
       allow delete: if hasFullAccess();
+
+      match /personalLogs/{logId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && request.auth.uid == userId && request.resource.data.userId == userId;
+        allow update, delete: if false;
+      }
     }
 
     match /user_organizations/{userId} {
@@ -171,6 +177,19 @@ service cloud.firestore {
           allow create, update: if isSignedIn() && request.auth.uid == regId;
           allow delete: if isOrgAdmin(orgId);
         }
+      }
+
+      match /hourLogs/{logId} {
+        allow read: if isOrgAdmin(orgId) || (isSignedIn() && resource.data.userId == request.auth.uid);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      match /checkIns/{sessionId} {
+        allow read: if isOrgAdmin(orgId) || (isSignedIn() && resource.data.userId == request.auth.uid);
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+        allow delete: if false;
       }
     }
 
