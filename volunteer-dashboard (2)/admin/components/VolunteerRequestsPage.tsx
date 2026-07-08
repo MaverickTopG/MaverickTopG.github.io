@@ -1,17 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Calendar, Clock } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
-import {
-  doc,
-  getDoc,
-  onSnapshot,
-  serverTimestamp,
-  updateDoc,
-} from 'firebase/firestore';
-import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { getActiveSubAdminSession, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
 import { collection, onSnapshot as onFirestoreSnapshot, query as firestoreQuery, where as firestoreWhere } from 'firebase/firestore';
+import { getFirebaseAuth, getFirebaseFunctions, getFirestoreDb } from '../lib/firebase';
+import { getActiveSubAdminSession, resolveOrgContext } from '../lib/orgContext';
+import { subscribePendingHourLogs, verifyHourLog, rejectHourLog } from '../lib/hourLogsService';
 
 interface Request {
   id: string;
@@ -34,86 +28,10 @@ export const VolunteerRequestsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [userMap, setUserMap] = useState<Record<string, { name: string; role: string }>>({});
   const [userId, setUserId] = useState('');
-  const [autoProcessingEnabled, setAutoProcessingEnabled] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [denyPromptId, setDenyPromptId] = useState<string | null>(null);
+  const [denyReason, setDenyReason] = useState('');
   const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
-  const autoProcessingIdsRef = useRef<Set<string>>(new Set());
-  const maxAutoApproveHours = 12;
-  const historyWindowMs = 35 * 24 * 60 * 60 * 1000;
-
-  const resolveLogUserId = (log: Record<string, unknown>) => {
-    return String(log.user_id || log.volunteer_id || log.userId || log.volunteerId || '').trim();
-  };
-
-  const resolveLogHours = (log: Record<string, unknown>) => {
-    return Number((log as { hours_contributed?: unknown; hours?: unknown }).hours_contributed ?? (log as { hours?: unknown }).hours ?? 0);
-  };
-
-  const resolveLogDateValue = (log: Record<string, unknown>) => {
-    return (
-      (log as { date?: unknown }).date
-      || (log as { created_at?: unknown }).created_at
-      || (log as { createdAt?: unknown }).createdAt
-    );
-  };
-
-  const isQuestionableLog = (log: Record<string, unknown>, historyByUser?: Map<string, number[]>) => {
-    const hours = resolveLogHours(log);
-    if (!Number.isFinite(hours) || hours <= 0) return true;
-    if (hours > maxAutoApproveHours) return true;
-
-    const flagKeys = [
-      'flagged',
-      'questionable',
-      'needs_review',
-      'requires_review',
-      'review_required',
-      'manual_review',
-      'review_status',
-      'approval_status',
-      'approvalStatus',
-    ];
-    const flagged = flagKeys.some((key) => {
-      const value = (log as Record<string, unknown>)[key];
-      if (typeof value === 'boolean') return value;
-      if (typeof value === 'string') {
-        const normalized = value.toLowerCase();
-        return normalized.includes('flag') || normalized.includes('review') || normalized.includes('question');
-      }
-      return false;
-    });
-    if (flagged) return true;
-
-    const dateMs = resolveTimestampMillis(resolveLogDateValue(log));
-    if (dateMs > Date.now() + 24 * 60 * 60 * 1000) return true;
-
-    const userId = resolveLogUserId(log);
-    if (userId && historyByUser && historyByUser.has(userId)) {
-      const history = historyByUser.get(userId) || [];
-      if (history.length >= 3) {
-        const avg = history.reduce((sum, value) => sum + value, 0) / history.length;
-        if (avg > 0 && avg <= 2.5 && hours >= avg * 3) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  };
-
-  const shouldAutoApproveLog = (log: Record<string, unknown>, historyByUser?: Map<string, number[]>) =>
-    !isQuestionableLog(log, historyByUser);
-
-  const autoApproveLog = async (logId: string) => {
-    const db = getFirestoreDb();
-    const logRef = doc(db, 'volunteer_logs', logId);
-    await updateDoc(logRef, {
-      approve: 'approved',
-      status: 'approved',
-      approved_at: serverTimestamp(),
-      auto_approved: true,
-    });
-  };
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -145,201 +63,111 @@ export const VolunteerRequestsPage: React.FC = () => {
     };
   }, []);
 
+  // Volunteer directory (name/role enrichment for hour-log requests), same doc shape VolunteersPage.tsx reads.
   useEffect(() => {
-    if (!orgId && !userId) return;
+    if (!orgId) return;
     const db = getFirestoreDb();
-    let unsubscribe: (() => void) | null = null;
-    let active = true;
-
-    const attachListener = (ref: ReturnType<typeof doc>) => {
-      unsubscribe = onSnapshot(ref, (snap) => {
-        if (!active) return;
-        const data = snap.data() || {};
-        setAutoProcessingEnabled(!!(data as { auto_process_logs?: boolean }).auto_process_logs);
+    const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+    const unsubscribe = onFirestoreSnapshot(volunteersRef, (snap) => {
+      const map: Record<string, { name: string; role: string }> = {};
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as Record<string, unknown>;
+        const name = String(data.displayName || data.email || 'Volunteer').trim();
+        map[docSnap.id] = { name, role: String(data.role || 'Volunteer') };
       });
-    };
-
-    const resolveAutoProcessing = async () => {
-      try {
-        const collections = ['volunteer_organizations', 'organizations', 'orgs'];
-        if (orgId) {
-          for (const coll of collections) {
-            const ref = doc(db, coll, orgId);
-            const snap = await getDoc(ref);
-            if (snap.exists()) {
-              if (!active) return;
-              const data = snap.data() || {};
-              setAutoProcessingEnabled(!!(data as { auto_process_logs?: boolean }).auto_process_logs);
-              attachListener(ref);
-              return;
-            }
-          }
-        }
-        if (userId) {
-          const userRef = doc(db, 'users', userId);
-          const userSnap = await getDoc(userRef);
-          if (userSnap.exists()) {
-            if (!active) return;
-            const data = userSnap.data() || {};
-            setAutoProcessingEnabled(!!(data as { auto_process_logs?: boolean }).auto_process_logs);
-            attachListener(userRef);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to resolve auto-processing settings', err);
-      }
-    };
-
-    resolveAutoProcessing();
-
-    return () => {
-      active = false;
-      if (unsubscribe) unsubscribe();
-    };
-  }, [orgId, userId]);
+      setUserMap(map);
+    });
+    return () => unsubscribe();
+  }, [orgId]);
 
   useEffect(() => {
-    if (!orgCode && !orgId) return;
+    if (!orgId) return;
     const db = getFirestoreDb();
-
-    const unsubUsers = subscribeToOrgCollection({
-      db,
-      collectionName: 'users',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        const map: Record<string, { name: string; role: string }> = {};
-        rows.forEach((row) => {
-          const data = row.data || {};
-          const first = (data.firstName || data.name || '').toString().trim();
-          const last = (data.lastName || data.last_name || '').toString().trim();
-          const email = (data.email || '').toString().trim();
-          const name = [first, last].filter(Boolean).join(' ').trim() || email || 'Volunteer';
-          map[row.id] = { name, role: (data.role || 'Volunteer').toString() };
-        });
-        setUserMap(map);
-      },
-    });
-
-    const unsubLogs = subscribeToOrgCollection({
-      db,
-      collectionName: 'volunteer_logs',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        const historyByUser = new Map<string, number[]>();
-        const now = Date.now();
-        rows.forEach((row) => {
-          const log = row.data || {};
-          const status = resolveLogStatus(log);
-          if (status !== 'approved') return;
-          const userId = resolveLogUserId(log);
-          if (!userId) return;
-          const hours = resolveLogHours(log);
-          if (!Number.isFinite(hours) || hours <= 0) return;
-          const dateMs = resolveTimestampMillis(resolveLogDateValue(log));
-          if (!dateMs || now - dateMs > historyWindowMs) return;
-          const list = historyByUser.get(userId) || [];
-          list.push(hours);
-          historyByUser.set(userId, list);
-        });
-
-        const pending: Request[] = [];
-        rows.forEach((row) => {
-          const log = row.data || {};
-          const status = resolveLogStatus(log);
-          if (status !== 'pending') return;
-          if (autoProcessingEnabled && shouldAutoApproveLog(log, historyByUser)) {
-            const logId = row.id;
-            if (!autoProcessingIdsRef.current.has(logId)) {
-              autoProcessingIdsRef.current.add(logId);
-              autoApproveLog(logId)
-                .catch((err) => {
-                  console.error('Auto-approve failed', err);
-                })
-                .finally(() => {
-                  autoProcessingIdsRef.current.delete(logId);
-                });
-            }
-            return;
-          }
-          const hours = Number(log.hours_contributed ?? log.hours ?? 0);
-          const dateLabel = formatDateLabel(log.date);
-          const nameFallback = (log.volunteer_name || log.name || '').toString().trim();
-          const userId = (log.user_id || log.volunteer_id || '') as string;
-          const userProfile = userMap[userId] || { name: '', role: '' };
-          const displayName = userProfile.name || nameFallback || 'Volunteer';
-          const role =
-            log.role
-            || log.volunteer_role
-            || log.requested_role
-            || userProfile.role
-            || 'Volunteer';
-
-          pending.push({
-            id: row.id,
-            type: 'hours',
-            userId,
-            name: displayName,
-            role: role.toString(),
-            task: (log.volunteering_task || log.task || log.site || 'Volunteer shift').toString(),
-            hours: Number.isNaN(hours) ? 0 : hours,
-            date: formatDateLabel(log.created_at || log.createdAt || log.date),
-            description: (log.description || log.notes || log.summary || '').toString(),
-            createdAtMs: resolveTimestampMillis(log.created_at || log.createdAt || log.date),
-          });
-        });
-        setRequests((prev) => mergeRequests(prev, pending, 'hours'));
-        setLoading(false);
-      },
-    });
-
-    let unsubJoinRequests = () => {};
-    if (orgId) {
-      const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
-      const pendingQuery = firestoreQuery(volunteersRef, firestoreWhere('status', '==', 'pending'));
-      unsubJoinRequests = onFirestoreSnapshot(pendingQuery, (snap) => {
-        const pending: Request[] = [];
-        snap.forEach((docSnap) => {
-          const data = docSnap.data() as Record<string, unknown>;
-          const joinedAt = data.joinedAt;
-          const createdAtMs = resolveTimestampMillis(joinedAt);
-          const name = String(data.displayName || data.email || 'Volunteer').trim();
-          pending.push({
-            id: docSnap.id,
-            type: 'join',
-            userId: String(data.userId || ''),
-            name,
-            role: 'Volunteer',
-            task: 'Wants to join as a Volunteer',
-            hours: 0,
-            date: joinedAt ? formatDateLabel(joinedAt) : '—',
-            description: '',
-            createdAtMs,
-          });
-        });
-        setRequests((prev) => mergeRequests(prev, pending, 'join'));
-        setLoading(false);
+    const unsubscribe = subscribePendingHourLogs(db, orgId, (logs) => {
+      const pending: Request[] = logs.map((log) => {
+        const userProfile = userMap[log.userId] || { name: '', role: '' };
+        return {
+          id: log.id,
+          type: 'hours',
+          userId: log.userId,
+          name: userProfile.name || 'Volunteer',
+          role: userProfile.role || 'Volunteer',
+          task: log.description || 'Volunteer shift',
+          hours: log.hours,
+          date: formatDateLabel(log.createdAtMs || log.date),
+          description: '',
+          createdAtMs: log.createdAtMs,
+        };
       });
-    }
+      setRequests((prev) => mergeRequests(prev, pending, 'hours'));
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [orgId, userMap]);
 
-    return () => {
-      unsubUsers();
-      unsubLogs();
-      unsubJoinRequests();
-    };
-  }, [orgCode, orgId, userMap, autoProcessingEnabled, subAdminScopeKey]);
-
-  const handleAction = async (id: string, action: 'accept' | 'deny', type: Request['type']) => {
+  useEffect(() => {
+    if (!orgId) return;
     const db = getFirestoreDb();
+    const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+    const pendingQuery = firestoreQuery(volunteersRef, firestoreWhere('status', '==', 'pending'));
+    const unsubJoinRequests = onFirestoreSnapshot(pendingQuery, (snap) => {
+      const pending: Request[] = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as Record<string, unknown>;
+        const joinedAt = data.joinedAt;
+        const createdAtMs = resolveTimestampMillis(joinedAt);
+        const name = String(data.displayName || data.email || 'Volunteer').trim();
+        pending.push({
+          id: docSnap.id,
+          type: 'join',
+          userId: String(data.userId || ''),
+          name,
+          role: 'Volunteer',
+          task: 'Wants to join as a Volunteer',
+          hours: 0,
+          date: joinedAt ? formatDateLabel(joinedAt) : '—',
+          description: '',
+          createdAtMs,
+        });
+      });
+      setRequests((prev) => mergeRequests(prev, pending, 'join'));
+      setLoading(false);
+    });
+
+    return () => unsubJoinRequests();
+  }, [orgId, subAdminScopeKey]);
+
+  const handleAccept = async (id: string) => {
     setActionError(null);
-    if (type !== 'hours') return;
-    const logRef = doc(db, 'volunteer_logs', id);
-    await updateDoc(logRef, {
-      approve: action === 'accept' ? 'approved' : 'denied',
-      status: action === 'accept' ? 'approved' : 'denied',
-      approved_at: serverTimestamp(),
-    });
+    try {
+      const functionsInstance = getFirebaseFunctions();
+      await verifyHourLog(functionsInstance, orgId, id);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Unable to approve this request.');
+    }
+  };
+
+  const handleDenyClick = (id: string) => {
+    setActionError(null);
+    setDenyReason('');
+    setDenyPromptId(id);
+  };
+
+  const handleDenyCancel = () => {
+    setDenyPromptId(null);
+    setDenyReason('');
+  };
+
+  const handleDenyConfirm = async (id: string) => {
+    setActionError(null);
+    try {
+      const functionsInstance = getFirebaseFunctions();
+      await rejectHourLog(functionsInstance, orgId, id, denyReason.trim() || 'Denied by admin');
+      setDenyPromptId(null);
+      setDenyReason('');
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Unable to deny this request.');
+    }
   };
 
   const container = {
@@ -356,7 +184,7 @@ export const VolunteerRequestsPage: React.FC = () => {
   };
 
   return (
-    <motion.div 
+    <motion.div
       variants={container}
       initial="hidden"
       animate="show"
@@ -367,7 +195,7 @@ export const VolunteerRequestsPage: React.FC = () => {
           {actionError}
         </div>
       )}
-      
+
       {/* List */}
       <div className="flex flex-col gap-4">
         <AnimatePresence mode="popLayout">
@@ -430,22 +258,49 @@ export const VolunteerRequestsPage: React.FC = () => {
 
                         {/* Actions */}
                         {req.type === 'hours' ? (
-                          <div className="flex items-center gap-3 w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
-                               <button 
-                                  onClick={() => handleAction(req.id, 'accept', req.type)}
-                                  className="flex-1 md:flex-none h-12 px-6 bg-lime-300 hover:bg-lime-400 text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-lime-300/20 hover:-translate-y-0.5"
-                               >
-                                  <Check className="w-5 h-5" />
-                                  <span className="md:hidden lg:inline">Approve</span>
-                               </button>
-                               <button 
-                                  onClick={() => handleAction(req.id, 'deny', req.type)}
-                                  className="flex-1 md:flex-none h-12 px-4 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-100 hover:text-red-600 text-gray-500 rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
-                               >
-                                  <X className="w-5 h-5" />
-                                  <span className="md:hidden lg:inline">Deny</span>
-                               </button>
-                          </div>
+                          denyPromptId === req.id ? (
+                            <div className="flex flex-col gap-2 w-full md:w-64 mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
+                              <input
+                                autoFocus
+                                type="text"
+                                value={denyReason}
+                                onChange={(e) => setDenyReason(e.target.value)}
+                                placeholder="Reason for denial (optional)"
+                                className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:border-gray-900"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleDenyConfirm(req.id)}
+                                  className="flex-1 h-10 px-4 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-all"
+                                >
+                                  Confirm Deny
+                                </button>
+                                <button
+                                  onClick={handleDenyCancel}
+                                  className="h-10 px-4 bg-white border border-gray-200 hover:bg-gray-50 text-gray-500 rounded-lg font-bold text-sm transition-all"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3 w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
+                                 <button
+                                    onClick={() => handleAccept(req.id)}
+                                    className="flex-1 md:flex-none h-12 px-6 bg-lime-300 hover:bg-lime-400 text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-lime-300/20 hover:-translate-y-0.5"
+                                 >
+                                    <Check className="w-5 h-5" />
+                                    <span className="md:hidden lg:inline">Approve</span>
+                                 </button>
+                                 <button
+                                    onClick={() => handleDenyClick(req.id)}
+                                    className="flex-1 md:flex-none h-12 px-4 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-100 hover:text-red-600 text-gray-500 rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
+                                 >
+                                    <X className="w-5 h-5" />
+                                    <span className="md:hidden lg:inline">Deny</span>
+                                 </button>
+                            </div>
+                          )
                         ) : (
                           <div className="w-full md:w-auto mt-4 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-gray-100">
                             <p className="text-xs font-semibold text-gray-500">Review in Notifications to accept or decline.</p>
@@ -455,7 +310,7 @@ export const VolunteerRequestsPage: React.FC = () => {
                     </motion.div>
                 ))
             ) : (
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     className="flex flex-col items-center justify-center py-20 text-center"
@@ -471,22 +326,6 @@ export const VolunteerRequestsPage: React.FC = () => {
       </div>
     </motion.div>
   );
-};
-
-const resolveLogStatus = (log: Record<string, unknown>) => {
-  const value = String(
-    log.approve
-      || log.status
-      || log.state
-      || log.approval_status
-      || log.approvalStatus
-      || log.request_status
-      || log.requestStatus
-      || 'pending',
-  ).toLowerCase();
-  if (['approved', 'accepted'].includes(value)) return 'approved';
-  if (['denied', 'declined', 'rejected'].includes(value)) return 'denied';
-  return 'pending';
 };
 
 const resolveTimestampMillis = (value: unknown) => {
@@ -515,7 +354,9 @@ const mergeRequests = (prev: Request[], next: Request[], type: Request['type']) 
 const formatDateLabel = (value: unknown) => {
   if (!value) return '—';
   let date: Date | null = null;
-  if (typeof (value as { toDate?: () => Date }).toDate === 'function') {
+  if (typeof value === 'number') {
+    date = new Date(value);
+  } else if (typeof (value as { toDate?: () => Date }).toDate === 'function') {
     date = (value as { toDate: () => Date }).toDate();
   } else if (typeof value === 'object' && value !== null && (value as { seconds?: number }).seconds) {
     date = new Date((value as { seconds: number }).seconds * 1000);
