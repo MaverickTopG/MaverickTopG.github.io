@@ -379,6 +379,11 @@ async function verifyOrgHourLog(orgId, logId, verifiedBy) {
       'stats.totalHoursPending': FieldValue.increment(-log.hours),
       'stats.totalHoursVerified': FieldValue.increment(log.hours),
     });
+    tx.set(
+      db.collection('organizations').doc(orgId).collection('volunteers').doc(log.userId),
+      { perOrgStats: { hours: FieldValue.increment(log.hours) } },
+      { merge: true },
+    );
   });
 }
 
@@ -438,6 +443,124 @@ export const rejectHourLog = onCall(async (request) => {
   await assertOrgAdmin(uid, orgId);
   await rejectOrgHourLog(orgId, logId, String(reason || ''));
   return { ok: true };
+});
+
+async function findActiveVolunteerByEmail(orgId, email) {
+  const snap = await db
+    .collection('organizations').doc(orgId).collection('volunteers')
+    .where('email', '==', email)
+    .where('status', '==', 'active')
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, data: snap.docs[0].data() };
+}
+
+export const kioskCheckIn = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  const orgId = String(request.data?.orgId || '').trim();
+  const email = String(request.data?.email || '').trim().toLowerCase();
+  const task = String(request.data?.task || '').trim();
+  if (!orgId || !email || !task) {
+    throw new HttpsError('invalid-argument', 'orgId, email, and task are required.');
+  }
+  await assertOrgAdmin(uid, orgId);
+
+  const volunteer = await findActiveVolunteerByEmail(orgId, email);
+  if (!volunteer) {
+    throw new HttpsError('not-found', 'Email not affiliated with this organization');
+  }
+
+  const sessionsRef = db.collection('organizations').doc(orgId).collection('kioskSessions');
+  const activeSnap = await sessionsRef
+    .where('userId', '==', volunteer.id)
+    .where('checkOutAt', '==', null)
+    .limit(1)
+    .get();
+  if (!activeSnap.empty) {
+    throw new HttpsError('already-exists', 'Already signed in');
+  }
+
+  const sessionRef = sessionsRef.doc();
+  await sessionRef.set({
+    userId: volunteer.id,
+    orgId,
+    displayName: volunteer.data.displayName || volunteer.data.email || 'Volunteer',
+    email,
+    task,
+    checkInAt: Timestamp.now(),
+    checkOutAt: null,
+    hourLogId: null,
+  });
+
+  return { ok: true, displayName: volunteer.data.displayName || '' };
+});
+
+export const kioskCheckOut = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+  const orgId = String(request.data?.orgId || '').trim();
+  const email = String(request.data?.email || '').trim().toLowerCase();
+  if (!orgId || !email) {
+    throw new HttpsError('invalid-argument', 'orgId and email are required.');
+  }
+  await assertOrgAdmin(uid, orgId);
+
+  const volunteer = await findActiveVolunteerByEmail(orgId, email);
+  if (!volunteer) {
+    throw new HttpsError('not-found', 'Email not affiliated with this organization');
+  }
+
+  const sessionsRef = db.collection('organizations').doc(orgId).collection('kioskSessions');
+  const activeSnap = await sessionsRef
+    .where('userId', '==', volunteer.id)
+    .where('checkOutAt', '==', null)
+    .limit(1)
+    .get();
+  if (activeSnap.empty) {
+    throw new HttpsError('not-found', 'No active session found');
+  }
+  const sessionDoc = activeSnap.docs[0];
+  const session = sessionDoc.data();
+
+  const checkOutAt = Timestamp.now();
+  const rawHours = (checkOutAt.toMillis() - session.checkInAt.toMillis()) / 3600000;
+  const hours = Math.round(rawHours * 100) / 100;
+  const dateStr = new Date().toISOString().slice(0, 10);
+
+  const orgSnap = await db.collection('organizations').doc(orgId).get();
+  const orgName = orgSnap.exists ? (orgSnap.data().name || '') : '';
+
+  const logRef = db.collection('organizations').doc(orgId).collection('hourLogs').doc();
+  await db.runTransaction(async (tx) => {
+    tx.set(logRef, {
+      userId: volunteer.id,
+      orgId,
+      orgName,
+      eventId: null,
+      hours,
+      description: session.task || 'Kiosk Service',
+      reflection: null,
+      date: dateStr,
+      startedAt: session.checkInAt,
+      endedAt: checkOutAt,
+      status: 'pending',
+      source: 'kiosk',
+      createdAt: checkOutAt,
+      updatedAt: checkOutAt,
+    });
+    tx.update(db.collection('users').doc(volunteer.id), {
+      'stats.totalHoursPending': FieldValue.increment(hours),
+      'stats.totalSessions': FieldValue.increment(1),
+    });
+    tx.update(sessionDoc.ref, {
+      checkOutAt,
+      hourLogId: logRef.id,
+    });
+  });
+
+  return { ok: true, hours };
 });
 
 export const consumeNebulaePrompt = onCall(async (request) => {
