@@ -12,23 +12,12 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { 
+import { getFirebaseAuth, getFirebaseFunctions } from '../lib/firebase';
+import {
   EmailAuthProvider,
   reauthenticateWithCredential
 } from 'firebase/auth';
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  addDoc, 
-  serverTimestamp, 
-  deleteDoc, 
-  doc, 
-  limit,
-  Timestamp 
-} from 'firebase/firestore';
+import { kioskCheckIn, kioskCheckOut } from '../lib/hourLogsService';
 import { Toast } from './Toast';
 
 interface KioskModalProps {
@@ -77,138 +66,23 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
 
     setIsSubmitting(true);
     setError('');
-    const db = getFirestoreDb();
+    const functionsInstance = getFirebaseFunctions();
     const cleanEmail = email.trim().toLowerCase();
 
     try {
-      // 1. Verify Affiliation
-      const usersRef = collection(db, 'users');
-      let q = query(
-        usersRef, 
-        where('email', '==', cleanEmail),
-        where('organization_id', '==', orgContext.id)
-      );
-      let userSnap = await getDocs(q);
-
-      if (userSnap.empty) {
-        q = query(
-          usersRef,
-          where('email', '==', cleanEmail),
-          where('organization_code', '==', orgContext.code)
-        );
-        userSnap = await getDocs(q);
-        if (userSnap.empty) {
-          setError('Email not affiliated with this organization');
-          setIsSubmitting(false);
-          return;
-        }
-      }
-
-      const userData = userSnap.docs[0].data();
-      const userId = userSnap.docs[0].id;
-
       if (mode === 'signin') {
-        const sessionsRef = collection(db, 'kiosk_sessions');
-        const scopedGroupId: string | null = null;
-        const scopedGroupName = 'Super Admin';
-        const sessQ = query(
-          sessionsRef,
-          where('email', '==', cleanEmail),
-          where('org_id', '==', orgContext.id)
-        );
-        const sessSnap = await getDocs(sessQ);
-        if (!sessSnap.empty) {
-          setError('Already signed in');
-          setIsSubmitting(false);
-          return;
-        }
-
-        await addDoc(sessionsRef, {
-          user_id: userId,
-          email: cleanEmail,
-          first_name: userData.firstName || '',
-          last_name: userData.lastName || '',
-          org_id: orgContext.id,
-          org_code: orgContext.code,
-          org_name: orgContext.name,
-          task: task.trim(),
-          target_group_id: scopedGroupId,
-          targetGroupId: scopedGroupId,
-          target_group_name: scopedGroupName,
-          targetGroupName: scopedGroupName,
-          sub_admin_group_id: scopedGroupId,
-          subAdminGroupId: scopedGroupId,
-          sub_admin_group_name: scopedGroupName,
-          subAdminGroupName: scopedGroupName,
-          sign_in_time: serverTimestamp(),
-          created_at: serverTimestamp()
-        });
-
+        const result = await kioskCheckIn(functionsInstance, orgContext.id, cleanEmail, task.trim());
         setVerifiedMessage('Check-in confirmed');
-        showToast(`Welcome, ${userData.firstName}!`);
+        showToast(`Welcome, ${result.displayName || 'volunteer'}!`);
       } else {
-        const sessionsRef = collection(db, 'kiosk_sessions');
-        const sessQ = query(
-          sessionsRef,
-          where('email', '==', cleanEmail),
-          where('org_id', '==', orgContext.id),
-          limit(1)
-        );
-        const sessSnap = await getDocs(sessQ);
-
-        if (sessSnap.empty) {
-          setError('No active session found');
-          setIsSubmitting(false);
-          return;
-        }
-
-        const sessionDoc = sessSnap.docs[0];
-        const sessionData = sessionDoc.data();
-        const signInTime = sessionData.sign_in_time as Timestamp;
-        const signOutTime = Date.now();
-        
-        const durationMs = signOutTime - signInTime.toMillis();
-        const rawHours = durationMs / 3600000;
-        const roundedHours = Math.round(rawHours * 100) / 100;
-
-        const logsRef = collection(db, 'volunteer_logs');
-        const logDate = new Date();
-        
-        await addDoc(logsRef, {
-          user_id: userId,
-          email: cleanEmail,
-          firstName: userData.firstName || '',
-          lastName: userData.lastName || '',
-          site: sessionData.task || 'Kiosk Service',
-          hours_contributed: roundedHours,
-          date: `${logDate.getMonth() + 1}/${logDate.getDate()}/${logDate.getFullYear()}`,
-          time: logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          organization_id: orgContext.id,
-          organization_name: orgContext.name,
-          target_group_id: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
-          targetGroupId: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
-          target_group_name: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
-          targetGroupName: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
-          sub_admin_group_id: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
-          subAdminGroupId: sessionData.target_group_id || sessionData.targetGroupId || sessionData.sub_admin_group_id || sessionData.subAdminGroupId || null,
-          sub_admin_group_name: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
-          subAdminGroupName: sessionData.target_group_name || sessionData.targetGroupName || sessionData.sub_admin_group_name || sessionData.subAdminGroupName || 'Super Admin',
-          approve: 'accepted',
-          source: 'kiosk',
-          created_at: serverTimestamp(),
-          sign_in_time: signInTime,
-          sign_out_time: serverTimestamp()
-        });
-
-        await deleteDoc(doc(db, 'kiosk_sessions', sessionDoc.id));
-
-        setVerifiedMessage(`${roundedHours} hours recorded`);
-        showToast(`Goodbye! Recorded ${roundedHours} hrs.`);
+        const result = await kioskCheckOut(functionsInstance, orgContext.id, cleanEmail);
+        setVerifiedMessage(`${result.hours} hours recorded`);
+        showToast(`Goodbye! Recorded ${result.hours} hrs.`);
       }
 
       setIsSubmitting(false);
       setIsSuccess(true);
-      
+
       // Clear inputs immediately for the next person
       setEmail('');
       setTask('');
@@ -218,9 +92,10 @@ export const KioskModal: React.FC<KioskModalProps> = ({ isOpen, onClose, orgCont
         setVerifiedMessage('');
       }, 3500);
 
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Kiosk operation failed', err);
-      setError('System error. Please try again.');
+      const message = err instanceof Error ? err.message : '';
+      setError(message || 'System error. Please try again.');
       setIsSubmitting(false);
     }
   };
