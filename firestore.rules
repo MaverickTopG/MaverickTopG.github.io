@@ -192,10 +192,6 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      match /kioskSessions/{sessionId} {
-        allow read: if isOrgAdmin(orgId);
-        allow write: if false;
-      }
     }
 
     // Collection-group rule for querying an admin's own orgAdmins membership(s)

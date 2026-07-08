@@ -9,7 +9,6 @@ import {
   FileSpreadsheet, 
   FileText,
   Copy,
-  Monitor,
   BarChart3,
 } from 'lucide-react';
 
@@ -25,8 +24,6 @@ import { collection, onSnapshot as onFirestoreSnapshot, query as firestoreQuery,
 import { Toast } from './Toast';
 
 interface HeaderProps {
-  isKioskOpen: boolean;
-  setIsKioskOpen: (open: boolean) => void;
   orgContext: { id: string; code: string; name: string };
   planTier?: string;
   isSubAdminPortal?: boolean;
@@ -36,8 +33,6 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  isKioskOpen,
-  setIsKioskOpen,
   orgContext,
   isSubAdminPortal,
   onOpenImpactOverview,
@@ -63,7 +58,6 @@ export const Header: React.FC<HeaderProps> = ({
   const accessCode = orgCode || fallbackAccessCode || '—';
   const auth = getFirebaseAuth();
   const userId = auth.currentUser?.uid || null;
-  const canUseKiosk = !isSubAdminPortal;
 
   useEffect(() => {
     if (!orgId) return;
@@ -338,16 +332,6 @@ export const Header: React.FC<HeaderProps> = ({
              </>
           )}
         </button>
-
-        {canUseKiosk && (
-          <button 
-            onClick={() => setIsKioskOpen(true)}
-            className="w-12 h-12 bg-white rounded-full flex items-center justify-center hover:bg-gray-50 transition-all shadow-sm border border-gray-100 group"
-            aria-label="Kiosk"
-          >
-            <Monitor className="w-5 h-5 text-gray-400 group-hover:text-gray-900 transition-colors" />
-          </button>
-        )}
 
         <button
             onClick={toggleAutoProcessing}

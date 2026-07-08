@@ -65,32 +65,3 @@ export const rejectHourLog = async (
   const call = httpsCallable(functionsInstance, 'rejectHourLog');
   await call({ orgId, logId, reason });
 };
-
-/** Admin-only. Checks a volunteer in at the Kiosk terminal via the kioskCheckIn Cloud Function. */
-export const kioskCheckIn = async (
-  functionsInstance: Functions,
-  orgId: string,
-  email: string,
-  task: string,
-): Promise<{ displayName: string }> => {
-  const call = httpsCallable<
-    { orgId: string; email: string; task: string },
-    { ok: boolean; displayName: string }
-  >(functionsInstance, 'kioskCheckIn');
-  const result = await call({ orgId, email, task });
-  return { displayName: result.data.displayName || '' };
-};
-
-/** Admin-only. Checks a volunteer out at the Kiosk terminal via the kioskCheckOut Cloud Function. */
-export const kioskCheckOut = async (
-  functionsInstance: Functions,
-  orgId: string,
-  email: string,
-): Promise<{ hours: number }> => {
-  const call = httpsCallable<{ orgId: string; email: string }, { ok: boolean; hours: number }>(
-    functionsInstance,
-    'kioskCheckOut',
-  );
-  const result = await call({ orgId, email });
-  return { hours: result.data.hours };
-};

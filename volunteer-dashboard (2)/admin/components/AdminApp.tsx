@@ -6,7 +6,6 @@ import { PromoCard } from './PromoCard';
 import { AnalyticsChart } from './AnalyticsChart';
 import { RightPanel } from './RightPanel';
 import { VolunteersPage } from './VolunteersPage';
-import { BillingPage } from './BillingPage';
 import { AccountPage } from './AccountPage';
 import { CreateSubAdminPage } from './CreateSubAdminPage';
 import { SupportPage } from './SupportPage';
@@ -15,7 +14,6 @@ import { VolunteerRequestsPage } from './VolunteerRequestsPage';
 import { EventsPage } from './EventsPage';
 import { CreateEventPage } from './CreateEventPage';
 import { NebulaePage } from './NebulaePage';
-import { KioskModal } from './KioskModal';
 import { AiInsightWidget } from './AiInsightWidget';
 import { SignInPage } from './SignInPage';
 import { Toast } from './Toast';
@@ -47,19 +45,6 @@ interface ActiveSubAdminSession {
 }
 
 const SUBADMIN_SESSION_STORAGE_KEY = 'nexolink_active_sub_admin_session';
-
-const DEFAULT_ORBIT_PRICE_ORG_MONTHLY = 'price_1SykFNHbGg7F5Ky7KypyxNOa';
-const DEFAULT_ORBIT_PRICE_ORG_YEARLY = 'price_1SykGwHbGg7F5Ky7UwpYUilP';
-const DEFAULT_ORBIT_PRICE_SCHOOL_MONTHLY = 'price_1SykGwHbGg7F5Ky7cKrxejRT';
-const DEFAULT_ORBIT_PRICE_SCHOOL_YEARLY = 'price_1SykGwHbGg7F5Ky7uQQIQWZr';
-const DEFAULT_NEBULA_PRICE_ORG_MONTHLY = 'price_1SykHFHbGg7F5Ky7fAX535eH';
-const DEFAULT_NEBULA_PRICE_ORG_YEARLY = 'price_1SykIOHbGg7F5Ky7Mlkx1McR';
-const DEFAULT_NEBULA_PRICE_SCHOOL_MONTHLY = 'price_1SykIOHbGg7F5Ky7rHxtzTGr';
-const DEFAULT_NEBULA_PRICE_SCHOOL_YEARLY = 'price_1SykIOHbGg7F5Ky7bxPaZPKe';
-const DEFAULT_COSMOS_PRICE_ORG_MONTHLY = 'price_1SykIdHbGg7F5Ky7U7BUG1B0';
-const DEFAULT_COSMOS_PRICE_ORG_YEARLY = 'price_1SykJaHbGg7F5Ky7HI8bt66o';
-const DEFAULT_COSMOS_PRICE_SCHOOL_MONTHLY = 'price_1SykJaHbGg7F5Ky7AlBLBDns';
-const DEFAULT_COSMOS_PRICE_SCHOOL_YEARLY = 'price_1SykJaHbGg7F5Ky7VOTb79OH';
 
 const container: any = {
   hidden: { opacity: 0 },
@@ -95,7 +80,6 @@ const ADMIN_VIEW_TO_PATH: Record<string, string> = {
   'create-event': '/admin/create-event',
   nebulae: '/admin/nebulae',
   support: '/admin/support',
-  billing: '/admin/billing',
   account: '/admin/account',
   'create-subadmin': '/admin/account/create-subadmin',
 };
@@ -113,11 +97,8 @@ const ADMIN_PATH_TO_VIEW: Record<string, string> = {
   '/admin/nebulae': 'nebulae',
   '/admin/cluster': 'nebulae',
   '/admin/support': 'support',
-  '/admin/billing': 'billing',
   '/admin/account': 'account',
   '/admin/account/create-subadmin': 'create-subadmin',
-  // Backward-compatible aliases.
-  '/admin/create': 'billing',
 };
 
 const resolveAdminViewFromPath = (pathname: string) => {
@@ -143,7 +124,6 @@ export const AdminApp: React.FC = () => {
   const [currentView, setCurrentView] = useState(() =>
     typeof window === 'undefined' ? 'impact' : resolveAdminViewFromPath(window.location.pathname)
   );
-  const [isKioskOpen, setIsKioskOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [orgContext, setOrgContext] = useState<OrgContextState>({ id: '', code: '', name: '', planTier: null });
@@ -162,17 +142,15 @@ export const AdminApp: React.FC = () => {
   const showEvents = currentView === 'events';
   const showRequests = currentView === 'requests';
   const showMessaging = currentView === 'messaging';
-  const showBilling = !isSubAdminPortal && currentView === 'billing';
   const isFullBleedView =
     currentView === 'nebulae' ||
     currentView === 'create-subadmin';
-  const showPreloaded = showVolunteers || showEvents || showRequests || showMessaging || showBilling;
+  const showPreloaded = showVolunteers || showEvents || showRequests || showMessaging;
   const isSyncingFromPopStateRef = React.useRef(false);
   const volunteersControls = useAnimation();
   const eventsControls = useAnimation();
   const requestsControls = useAnimation();
   const messagingControls = useAnimation();
-  const billingControls = useAnimation();
   const {
     orgCode: metricsOrgCode,
     orgId: metricsOrgId,
@@ -201,64 +179,6 @@ export const AdminApp: React.FC = () => {
     contextScope: nebulaeContextScope,
   });
 
-  const stripePriceIds = useMemo(() => {
-    const globalConfig = (window as unknown as Record<string, string | undefined>);
-    return {
-      orbitOrgMonthly: globalConfig.ORBIT_PRICE_ORG_MONTHLY || (import.meta as any).env.ORBIT_PRICE_ORG_MONTHLY || DEFAULT_ORBIT_PRICE_ORG_MONTHLY,
-      orbitOrgYearly: globalConfig.ORBIT_PRICE_ORG_YEARLY || (import.meta as any).env.ORBIT_PRICE_ORG_YEARLY || DEFAULT_ORBIT_PRICE_ORG_YEARLY,
-      orbitSchoolMonthly: globalConfig.ORBIT_PRICE_SCHOOL_MONTHLY || (import.meta as any).env.ORBIT_PRICE_SCHOOL_MONTHLY || DEFAULT_ORBIT_PRICE_SCHOOL_MONTHLY,
-      orbitSchoolYearly: globalConfig.ORBIT_PRICE_SCHOOL_YEARLY || (import.meta as any).env.ORBIT_PRICE_SCHOOL_YEARLY || DEFAULT_ORBIT_PRICE_SCHOOL_YEARLY,
-      nebulaOrgMonthly: globalConfig.NEBULA_PRICE_ORG_MONTHLY || (import.meta as any).env.NEBULA_PRICE_ORG_MONTHLY || DEFAULT_NEBULA_PRICE_ORG_MONTHLY,
-      nebulaOrgYearly: globalConfig.NEBULA_PRICE_ORG_YEARLY || (import.meta as any).env.NEBULA_PRICE_ORG_YEARLY || DEFAULT_NEBULA_PRICE_ORG_YEARLY,
-      nebulaSchoolMonthly: globalConfig.NEBULA_PRICE_SCHOOL_MONTHLY || (import.meta as any).env.NEBULA_PRICE_SCHOOL_MONTHLY || DEFAULT_NEBULA_PRICE_SCHOOL_MONTHLY,
-      nebulaSchoolYearly: globalConfig.NEBULA_PRICE_SCHOOL_YEARLY || (import.meta as any).env.NEBULA_PRICE_SCHOOL_YEARLY || DEFAULT_NEBULA_PRICE_SCHOOL_YEARLY,
-      cosmosOrgMonthly: globalConfig.COSMOS_PRICE_ORG_MONTHLY || (import.meta as any).env.COSMOS_PRICE_ORG_MONTHLY || DEFAULT_COSMOS_PRICE_ORG_MONTHLY,
-      cosmosOrgYearly: globalConfig.COSMOS_PRICE_ORG_YEARLY || (import.meta as any).env.COSMOS_PRICE_ORG_YEARLY || DEFAULT_COSMOS_PRICE_ORG_YEARLY,
-      cosmosSchoolMonthly: globalConfig.COSMOS_PRICE_SCHOOL_MONTHLY || (import.meta as any).env.COSMOS_PRICE_SCHOOL_MONTHLY || DEFAULT_COSMOS_PRICE_SCHOOL_MONTHLY,
-      cosmosSchoolYearly: globalConfig.COSMOS_PRICE_SCHOOL_YEARLY || (import.meta as any).env.COSMOS_PRICE_SCHOOL_YEARLY || DEFAULT_COSMOS_PRICE_SCHOOL_YEARLY,
-    };
-  }, []);
-
-  const derivePlanTier = (subscription: any) => {
-    const key = (
-      subscription?.metadata?.plan_key
-      || subscription?.metadata?.planKey
-      || subscription?.plan?.metadata?.plan_key
-      || subscription?.plan?.metadata?.planKey
-    );
-    if (typeof key === 'string') {
-      const normalized = key.toLowerCase();
-      if (['orbit', 'nebula', 'cosmos'].includes(normalized)) return normalized;
-    }
-    const priceId = subscription?.items?.data?.[0]?.price?.id
-      || subscription?.plan?.id
-      || subscription?.plan
-      || null;
-    if (!priceId) return null;
-    const orbitIds = [
-      stripePriceIds.orbitOrgMonthly,
-      stripePriceIds.orbitOrgYearly,
-      stripePriceIds.orbitSchoolMonthly,
-      stripePriceIds.orbitSchoolYearly
-    ];
-    const nebulaIds = [
-      stripePriceIds.nebulaOrgMonthly,
-      stripePriceIds.nebulaOrgYearly,
-      stripePriceIds.nebulaSchoolMonthly,
-      stripePriceIds.nebulaSchoolYearly
-    ];
-    const cosmosIds = [
-      stripePriceIds.cosmosOrgMonthly,
-      stripePriceIds.cosmosOrgYearly,
-      stripePriceIds.cosmosSchoolMonthly,
-      stripePriceIds.cosmosSchoolYearly
-    ];
-    if (orbitIds.includes(priceId)) return 'orbit';
-    if (nebulaIds.includes(priceId)) return 'nebula';
-    if (cosmosIds.includes(priceId)) return 'cosmos';
-    return null;
-  };
-
   React.useEffect(() => {
     const handlePopState = () => {
       isSyncingFromPopStateRef.current = true;
@@ -274,7 +194,7 @@ export const AdminApp: React.FC = () => {
       isSyncingFromPopStateRef.current = false;
       return;
     }
-    const blockedSubAdminViews = new Set(['billing', 'account', 'create-subadmin']);
+    const blockedSubAdminViews = new Set(['account', 'create-subadmin']);
     const effectiveView = isSubAdminPortal && blockedSubAdminViews.has(currentView) ? 'impact' : currentView;
     const targetPath = ADMIN_VIEW_TO_PATH[effectiveView] || '/admin';
     const currentPath = normalizeDashboardPath(window.location.pathname.toLowerCase());
@@ -405,7 +325,7 @@ export const AdminApp: React.FC = () => {
 
   React.useEffect(() => {
     if (!isSubAdminPortal) return;
-    if (currentView === 'billing' || currentView === 'account' || currentView === 'create-subadmin') {
+    if (currentView === 'account' || currentView === 'create-subadmin') {
       setCurrentView('impact');
     }
     setShowOrganizationImpactMode(false);
@@ -447,15 +367,6 @@ export const AdminApp: React.FC = () => {
       messagingControls.start({ opacity: 0, y: -20, transition: { duration: 0.3 } });
     }
   }, [messagingControls, showMessaging]);
-
-  React.useEffect(() => {
-    if (showBilling) {
-      billingControls.set({ opacity: 0, y: 20 });
-      billingControls.start({ opacity: 1, y: 0, transition: { duration: 0.3 } });
-    } else {
-      billingControls.start({ opacity: 0, y: -20, transition: { duration: 0.3 } });
-    }
-  }, [billingControls, showBilling]);
 
   const formatted = useMemo(() => {
     const formatNumber = (value: number, fraction = 0) =>
@@ -646,15 +557,13 @@ export const AdminApp: React.FC = () => {
   return (
     <div className="flex w-full h-screen bg-[#F3F4F6] overflow-hidden">
       {/* Left Sidebar */}
-      {!isKioskOpen && (
-        <Sidebar
-          currentView={currentView}
-          onNavigate={setCurrentView}
-          portalName={sidebarPortalName}
-          portalSubtitle={sidebarPortalSubtitle}
-          isSubAdminPortal={isSubAdminPortal}
-        />
-      )}
+      <Sidebar
+        currentView={currentView}
+        onNavigate={setCurrentView}
+        portalName={sidebarPortalName}
+        portalSubtitle={sidebarPortalSubtitle}
+        isSubAdminPortal={isSubAdminPortal}
+      />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
@@ -663,8 +572,6 @@ export const AdminApp: React.FC = () => {
             {/* Header Section */}
             {!isFullBleedView && (
               <Header
-                isKioskOpen={isKioskOpen}
-                setIsKioskOpen={setIsKioskOpen}
                 orgContext={orgContext}
                 isSubAdminPortal={isSubAdminPortal}
                 onOpenImpactOverview={openImpactOverview}
@@ -876,28 +783,9 @@ export const AdminApp: React.FC = () => {
             >
               <MessagingPage isActive={showMessaging} />
             </motion.div>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={billingControls}
-              className={`w-full ${showBilling ? '' : 'pointer-events-none'}`}
-              style={{
-                display: showBilling ? 'block' : 'none',
-              }}
-              aria-hidden={!showBilling}
-            >
-              <BillingPage />
-            </motion.div>
           </div>
         </main>
       </div>
-      {/* Kiosk Modal */}
-      {!isSubAdminPortal && isKioskOpen && (
-        <KioskModal 
-          isOpen={isKioskOpen} 
-          onClose={() => setIsKioskOpen(false)} 
-          orgContext={orgContext}
-        />
-      )}
       <Toast
         isVisible={impactModeToast.isVisible}
         message={impactModeToast.message}
