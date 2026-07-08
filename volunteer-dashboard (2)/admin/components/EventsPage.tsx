@@ -287,22 +287,30 @@ export const EventsPage: React.FC<EventsPageProps> = ({ onNavigate, isActive = f
     return `Live refresh · ${time}`;
   }, [insightUpdatedAt]);
 
-  const understaffedItems = eventInsights.understaffed.length
-    ? eventInsights.understaffed.map((s) => ({
-        label: s.event.title,
-        value: `${s.event.totalSignedUp}/${s.event.totalCapacity}`,
-        tone: 'warning' as const,
-        helper: `${s.openSlots} open · ${s.percent}%`,
-      }))
-    : [{ label: 'All staffed', value: 'OK', tone: 'ok' as const }];
+  const understaffedItems = useMemo(
+    () =>
+      eventInsights.understaffed.length
+        ? eventInsights.understaffed.map((s) => ({
+            label: s.event.title,
+            value: `${s.event.totalSignedUp}/${s.event.totalCapacity}`,
+            tone: 'warning' as const,
+            helper: `${s.openSlots} open · ${s.percent}%`,
+          }))
+        : [{ label: 'All staffed', value: 'OK', tone: 'ok' as const }],
+    [eventInsights.understaffed],
+  );
 
-  const overstaffedItems = eventInsights.overstaffed.length
-    ? eventInsights.overstaffed.map((s) => ({
-        label: s.event.title,
-        value: `+${Math.max(s.event.totalSignedUp - s.event.totalCapacity, 0)}`,
-        tone: 'alert' as const,
-      }))
-    : [{ label: 'No overruns', value: 'OK', tone: 'ok' as const }];
+  const overstaffedItems = useMemo(
+    () =>
+      eventInsights.overstaffed.length
+        ? eventInsights.overstaffed.map((s) => ({
+            label: s.event.title,
+            value: `+${Math.max(s.event.totalSignedUp - s.event.totalCapacity, 0)}`,
+            tone: 'alert' as const,
+          }))
+        : [{ label: 'No overruns', value: 'OK', tone: 'ok' as const }],
+    [eventInsights.overstaffed],
+  );
 
   const fallbackInsight = useMemo(
     () => ({

@@ -196,22 +196,30 @@ export const VolunteersPage: React.FC<VolunteersPageProps> = ({
     return `Live refresh · ${time}`;
   }, [insightUpdatedAt]);
 
-  const burnoutItems = volunteerInsights.burnoutHighlights.length
-    ? volunteerInsights.burnoutHighlights.map((volunteer) => ({
-        label: volunteer.name,
-        value: volunteer.risk === 'high' ? 'High' : 'Mod',
-        tone: volunteer.risk === 'high' ? 'alert' : 'warning',
-        helper: `${volunteer.hours.toFixed(0)}h`,
-      }))
-    : [{ label: 'All clear', value: 'OK', tone: 'ok' as const }];
+  const burnoutItems = useMemo(
+    () =>
+      volunteerInsights.burnoutHighlights.length
+        ? volunteerInsights.burnoutHighlights.map((volunteer) => ({
+            label: volunteer.name,
+            value: volunteer.risk === 'high' ? 'High' : 'Mod',
+            tone: volunteer.risk === 'high' ? 'alert' : 'warning',
+            helper: `${volunteer.hours.toFixed(0)}h`,
+          }))
+        : [{ label: 'All clear', value: 'OK', tone: 'ok' as const }],
+    [volunteerInsights.burnoutHighlights],
+  );
 
-  const reliabilityItems = volunteerInsights.reliability.length
-    ? volunteerInsights.reliability.map((volunteer) => ({
-        label: volunteer.name,
-        value: `${volunteer.hours.toFixed(0)}h`,
-        tone: 'ok' as const,
-      }))
-    : [{ label: 'No leaders yet', value: '—', tone: 'info' as const }];
+  const reliabilityItems = useMemo(
+    () =>
+      volunteerInsights.reliability.length
+        ? volunteerInsights.reliability.map((volunteer) => ({
+            label: volunteer.name,
+            value: `${volunteer.hours.toFixed(0)}h`,
+            tone: 'ok' as const,
+          }))
+        : [{ label: 'No leaders yet', value: '—', tone: 'info' as const }],
+    [volunteerInsights.reliability],
+  );
 
   const fallbackInsight = useMemo(
     () => ({
