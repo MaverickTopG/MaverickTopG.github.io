@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getFirebaseAuth, getFirestoreDb, getFirebaseFunctions } from '../lib/firebase';
 import { getActiveSubAdminSession, subscribeToOrgCollection, fetchOrgCollectionDocs } from '../lib/orgContext';
@@ -124,46 +124,23 @@ export const Header: React.FC<HeaderProps> = ({
     return () => unsubscribe();
   }, [orgId]);
 
-  // Initial fetch for Auto-Processing state
+  // Initial fetch + live subscription for Auto-Processing state (Organization.autoApproveHours).
   useEffect(() => {
-    if (!orgId && !userId) return;
+    if (!orgId) return;
     const db = getFirestoreDb();
-    const fetchSettings = async () => {
-      try {
-        const collections = ['volunteer_organizations', 'organizations', 'orgs'];
-        let resolved = false;
-        if (orgId) {
-          for (const coll of collections) {
-            const docRef = doc(db, coll, orgId);
-            const snap = await getDoc(docRef);
-            if (snap.exists()) {
-              const data = snap.data();
-              setAutoProcessing(!!data.auto_process_logs);
-              resolved = true;
-              break;
-            }
-          }
-        }
-        if (!resolved && userId) {
-          const userRef = doc(db, 'users', userId);
-          const userSnap = await getDoc(userRef);
-          if (userSnap.exists()) {
-            const data = userSnap.data();
-            setAutoProcessing(!!data.auto_process_logs);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to fetch auto-log settings', err);
-      }
-    };
-    fetchSettings();
-  }, [orgId, userId]);
+    const orgRef = doc(db, 'organizations', orgId);
+    const unsubscribe = onSnapshot(orgRef, (snap) => {
+      const data = snap.data() || {};
+      setAutoProcessing(!!(data as { autoApproveHours?: boolean }).autoApproveHours);
+    });
+    return () => unsubscribe();
+  }, [orgId]);
 
   const toggleAutoProcessing = async () => {
-    if (!orgId && !userId) return;
+    if (!orgId) return;
     const newState = !autoProcessing;
     const db = getFirestoreDb();
-    
+
     try {
       setAutoProcessing(newState);
       setToast({
@@ -171,29 +148,13 @@ export const Header: React.FC<HeaderProps> = ({
         message: newState ? 'Activating auto log processing...' : 'Deactivating auto log processing...',
         type: 'success',
       });
-      
-      const collections = ['volunteer_organizations', 'organizations', 'orgs'];
-      let updated = false;
-      if (orgId) {
-        for (const coll of collections) {
-          const docRef = doc(db, coll, orgId);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            await setDoc(docRef, { auto_process_logs: newState }, { merge: true });
-            updated = true;
-            break;
-          }
-        }
-      }
-      if (!updated && userId) {
-        const userRef = doc(db, 'users', userId);
-        await setDoc(userRef, { auto_process_logs: newState }, { merge: true });
-      }
+
+      await updateDoc(doc(db, 'organizations', orgId), { autoApproveHours: newState });
 
       setToast({
         isVisible: true,
-        message: newState 
-          ? 'Auto Volunteer Log Processing Activated' 
+        message: newState
+          ? 'Auto Volunteer Log Processing Activated'
           : 'Auto Volunteer Log Processing Deactivated',
         type: 'success'
       });
