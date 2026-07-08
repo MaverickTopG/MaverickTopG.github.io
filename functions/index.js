@@ -365,8 +365,93 @@ async function isQuestionableOrgHourLog(orgId, log) {
   return false;
 }
 
+async function recordAuditLog(orgId, actorId, action, targetType, targetId, meta) {
+  const ref = db.collection('organizations').doc(orgId).collection('auditLogs').doc();
+  await ref.set({
+    orgId, actorId, action, targetType,
+    targetId: targetId || null,
+    meta: meta || {},
+    createdAt: Timestamp.now(),
+  });
+}
+
+async function notifyUser(uid, kind, title, body, orgId) {
+  const ref = db.collection('users').doc(uid).collection('notifications').doc();
+  await ref.set({
+    userId: uid, kind, title, body,
+    deeplink: null,
+    orgId: orgId || null,
+    read: false,
+    createdAt: Timestamp.now(),
+  });
+}
+
+function formatHours(h) {
+  const n = Number(h) || 0;
+  return n === Math.round(n) ? String(Math.round(n)) : n.toFixed(1);
+}
+
+// Recomputes the official, verified-only transcript at users/{uid}/meta/transcript.
+// Mirrors NexoKit's TranscriptService.rebuild(uid:), which this Cloud Function replaces
+// as the source of hour-log verify/reject side effects.
+async function rebuildTranscript(uid) {
+  const [orgSnap, personalSnap] = await Promise.all([
+    db.collectionGroup('hourLogs').where('userId', '==', uid).get(),
+    db.collection('users').doc(uid).collection('personalLogs').get(),
+  ]);
+  const logs = [...orgSnap.docs, ...personalSnap.docs]
+    .map((d) => d.data())
+    .filter((log) => log.status === 'verified');
+
+  const verifiedHours = logs.reduce((sum, log) => sum + (Number(log.hours) || 0), 0);
+  const orgIds = new Set(logs.map((log) => log.orgId).filter(Boolean));
+  const eventIds = new Set(logs.map((log) => log.eventId).filter(Boolean));
+
+  const byCategory = {};
+  for (const log of logs) {
+    const key = log.description || '';
+    byCategory[key] = (byCategory[key] || 0) + (Number(log.hours) || 0);
+  }
+  const categories = Object.entries(byCategory)
+    .map(([label, hours]) => ({ label, hours }))
+    .sort((a, b) => b.hours - a.hours);
+
+  const userSnap = await db.collection('users').doc(uid).get();
+  const reliability = userSnap.exists ? (userSnap.data().stats?.reliability ?? 100) : 100;
+  const sealThreshold = 100;
+  const certificates = [
+    { title: '25 Hour Milestone', subtitle: 'Earned at 25 verified hours', earned: verifiedHours >= 25 },
+    { title: '100 Hour Milestone', subtitle: 'Earned at 100 verified hours', earned: verifiedHours >= 100 },
+    { title: 'Service Seal Eligible', subtitle: 'Requires 100 hrs', earned: verifiedHours >= sealThreshold },
+    { title: 'Reliable Volunteer', subtitle: '92%+ attendance', earned: reliability >= 92 },
+  ];
+
+  const transcript = {
+    userId: uid,
+    verifiedHours,
+    eventsCompleted: eventIds.size,
+    orgsServed: orgIds.size,
+    reliability,
+    categories,
+    certificates,
+    serviceSealEligible: verifiedHours >= sealThreshold,
+    serviceSealThreshold: sealThreshold,
+    verificationId: `NX-${uid.slice(0, 6).toUpperCase()}`,
+    updatedAt: Timestamp.now(),
+  };
+
+  await db.collection('users').doc(uid).collection('meta').doc('transcript').set(transcript, { merge: true });
+  await db.collection('users').doc(uid).update({
+    'stats.eventsCompleted': eventIds.size,
+    'stats.orgsServed': orgIds.size,
+  });
+
+  return transcript;
+}
+
 async function verifyOrgHourLog(orgId, logId, verifiedBy) {
   const logRef = db.collection('organizations').doc(orgId).collection('hourLogs').doc(logId);
+  let verifiedLog = null;
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(logRef);
     if (!snap.exists) return;
@@ -384,11 +469,27 @@ async function verifyOrgHourLog(orgId, logId, verifiedBy) {
       { perOrgStats: { hours: FieldValue.increment(log.hours) } },
       { merge: true },
     );
+    verifiedLog = log;
+  });
+
+  if (!verifiedLog) return;
+
+  await recordAuditLog(orgId, verifiedBy, 'hours.verified', 'hourLog', logId, {
+    hours: String(verifiedLog.hours), volunteer: verifiedLog.userId,
+  });
+  await notifyUser(
+    verifiedLog.userId, 'hours_verified', 'Hours verified',
+    `${formatHours(verifiedLog.hours)} hrs for ${verifiedLog.description} were verified.`,
+    orgId,
+  );
+  await rebuildTranscript(verifiedLog.userId).catch((err) => {
+    logger.error('Transcript rebuild failed', err);
   });
 }
 
-async function rejectOrgHourLog(orgId, logId, reason) {
+async function rejectOrgHourLog(orgId, logId, reason, rejectedBy) {
   const logRef = db.collection('organizations').doc(orgId).collection('hourLogs').doc(logId);
+  let rejectedLog = null;
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(logRef);
     if (!snap.exists) return;
@@ -400,6 +501,21 @@ async function rejectOrgHourLog(orgId, logId, reason) {
     tx.update(db.collection('users').doc(log.userId), {
       'stats.totalHoursPending': FieldValue.increment(-log.hours),
     });
+    rejectedLog = log;
+  });
+
+  if (!rejectedLog) return;
+
+  await recordAuditLog(orgId, rejectedBy, 'hours.rejected', 'hourLog', logId, {
+    hours: String(rejectedLog.hours), volunteer: rejectedLog.userId,
+  });
+  await notifyUser(
+    rejectedLog.userId, 'hours_rejected', 'Hours not approved',
+    `Your ${formatHours(rejectedLog.hours)} hrs for ${rejectedLog.description} weren't approved.${reason ? ` (${reason})` : ''}`,
+    orgId,
+  );
+  await rebuildTranscript(rejectedLog.userId).catch((err) => {
+    logger.error('Transcript rebuild failed', err);
   });
 }
 
@@ -441,7 +557,7 @@ export const rejectHourLog = onCall(async (request) => {
   const { orgId, logId, reason } = request.data || {};
   if (!orgId || !logId) throw new HttpsError('invalid-argument', 'orgId and logId are required.');
   await assertOrgAdmin(uid, orgId);
-  await rejectOrgHourLog(orgId, logId, String(reason || ''));
+  await rejectOrgHourLog(orgId, logId, String(reason || ''), uid);
   return { ok: true };
 });
 

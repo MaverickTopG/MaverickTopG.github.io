@@ -105,6 +105,17 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.auth.uid == userId && request.resource.data.userId == userId;
         allow update, delete: if false;
       }
+
+      match /notifications/{notificationId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow update: if isSignedIn() && request.auth.uid == userId;
+        allow create, delete: if false;
+      }
+
+      match /meta/transcript {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow write: if false;
+      }
     }
 
     match /user_organizations/{userId} {
@@ -190,6 +201,11 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
         allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
         allow delete: if false;
+      }
+
+      match /auditLogs/{entryId} {
+        allow read: if isOrgAdmin(orgId);
+        allow write: if false;
       }
 
     }
