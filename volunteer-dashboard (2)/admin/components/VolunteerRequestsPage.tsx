@@ -4,7 +4,7 @@ import { Check, X, Calendar, Clock } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, onSnapshot as onFirestoreSnapshot, query as firestoreQuery, where as firestoreWhere } from 'firebase/firestore';
 import { getFirebaseAuth, getFirebaseFunctions, getFirestoreDb } from '../lib/firebase';
-import { getActiveSubAdminSession, resolveOrgContext } from '../lib/orgContext';
+import { getActiveSubAdminSession, subscribeToOrgAdminContext } from '../lib/orgContext';
 import { subscribePendingHourLogs, verifyHourLog, rejectHourLog } from '../lib/hourLogsService';
 
 interface Request {
@@ -22,7 +22,6 @@ interface Request {
 
 export const VolunteerRequestsPage: React.FC = () => {
   const [requests, setRequests] = useState<Request[]>([]);
-  const [orgCode, setOrgCode] = useState('');
   const [orgId, setOrgId] = useState('');
   const [orgName, setOrgName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -36,21 +35,33 @@ export const VolunteerRequestsPage: React.FC = () => {
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubContext: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
+      }
       if (!user) {
-        setOrgCode('');
         setUserId('');
+        setOrgId('');
+        setOrgName('');
         setRequests([]);
         setLoading(false);
         return;
       }
       setUserId(user.uid);
-      const context = await resolveOrgContext(db, user.uid, user.email || null);
-      setOrgCode(context.orgCode || '');
-      setOrgId(context.orgId || '');
-      setOrgName(context.orgName || '');
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
+        setOrgId(context.orgId || '');
+        setOrgName(context.orgName || '');
+        if (!context.orgId) setLoading(false);
+      });
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
+    };
   }, []);
 
   useEffect(() => {
