@@ -2,15 +2,10 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { MoreHorizontal, ArrowUpRight, MessageSquare, Users, Activity, Clock, Database, FileSpreadsheet, X, Download, CheckCircle2, Upload, Calendar, Globe, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged } from 'firebase/auth';
-import {
-  collection,
-  doc,
-  serverTimestamp,
-  writeBatch,
-} from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import * as XLSX from 'xlsx';
-import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { fetchOrgCollectionDocs, resolveOrgContext } from '../lib/orgContext';
+import { getFirebaseAuth, getFirebaseFunctions, getFirestoreDb } from '../lib/firebase';
+import { subscribeToOrgAdminContext } from '../lib/orgContext';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -35,7 +30,6 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [monthlyGoalHours, setMonthlyGoalHours] = useState(20);
   const [goalInput, setGoalInput] = useState('20');
-  const [orgCode, setOrgCode] = useState('');
   const [orgId, setOrgId] = useState('');
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -54,22 +48,26 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubContext: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
+      }
       if (!user) {
-        setOrgCode('');
         setOrgId('');
         return;
       }
-      try {
-        const context = await resolveOrgContext(db, user.uid, user.email || null);
-        setOrgCode(context.orgCode || '');
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
         setOrgId(context.orgId || '');
-      } catch (error) {
-        console.error('Failed to load organization code', error);
-      }
+      });
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
+    };
   }, []);
 
   const bars = useMemo(() => {
@@ -137,8 +135,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
         };
       }).filter((row) => row.name && row.hours && row.date);
 
-      if (!orgCode && !orgId) {
-        setImportStatus('Organization code not found. Please re-login.');
+      if (!orgId) {
+        setImportStatus('Organization not found. Please re-login.');
         return;
       }
 
@@ -147,80 +145,28 @@ export const RightPanel: React.FC<RightPanelProps> = ({
         return;
       }
 
-      const db = getFirestoreDb();
-      const existingSnapshot = await fetchOrgCollectionDocs(
-        db,
-        'users',
-        orgCode || null,
-        orgId || null,
-      );
-      const existingMap = new Map<string, string>();
-      existingSnapshot.forEach((docSnap) => {
-        const user = docSnap.data || {};
-        const first = String(user.firstName || user.name || '').trim();
-        const last = String(user.lastName || user.last_name || '').trim();
-        const name = [first, last].filter(Boolean).join(' ').trim();
-        if (name) existingMap.set(name.toLowerCase(), docSnap.id);
-      });
-
-      let batch = writeBatch(db);
-      let batchCount = 0;
-      const flushBatch = async () => {
-        if (batchCount === 0) return;
-        await batch.commit();
-        batch = writeBatch(db);
-        batchCount = 0;
-      };
-      const userIdByName = new Map(existingMap);
-
-      for (const row of normalized) {
-        const displayName = row.name.trim();
-        const key = displayName.toLowerCase();
-        let userId = userIdByName.get(key);
-        if (!userId) {
-          const userRef = doc(collection(db, 'users'));
-          const [firstName, ...rest] = displayName.split(' ');
-          const lastName = rest.join(' ').trim();
-          batch.set(userRef, {
-            firstName: firstName || displayName,
-            lastName,
-            email: '',
-            role: 'volunteer',
-            organizationCode: orgCode || '',
-            accessCode: orgCode || '',
-            organization_id: orgId || orgCode || '',
-            createdAt: serverTimestamp(),
-          });
-          batchCount += 1;
-          userId = userRef.id;
-          userIdByName.set(key, userId);
-        }
-
-        const logRef = doc(collection(db, 'volunteer_logs'));
+      const rows = normalized.map((row) => {
         const parsedHours = parseFloat(row.hours);
         const parsedDate = new Date(row.date);
-        batch.set(logRef, {
-          user_id: userId,
-          organization_id: orgId || orgCode || '',
-          organization_code: orgCode || '',
-          org_access_code: orgCode || '',
-          volunteer_name: displayName,
-          volunteering_task: row.task || 'Imported hours',
-          hours_contributed: Number.isNaN(parsedHours) ? 0 : parsedHours,
-          date: Number.isNaN(parsedDate.getTime()) ? row.date : parsedDate.toISOString(),
-          approve: 'approved',
-          source: 'import',
-          created_at: serverTimestamp(),
-        });
-        batchCount += 1;
+        return {
+          name: row.name.trim(),
+          task: row.task || 'Imported hours',
+          hours: Number.isNaN(parsedHours) ? 0 : parsedHours,
+          date: Number.isNaN(parsedDate.getTime()) ? row.date : parsedDate.toISOString().slice(0, 10),
+        };
+      });
 
-        if (batchCount >= 450) {
-          await flushBatch();
-        }
-      }
-
-      await flushBatch();
-      setImportStatus(`Imported ${normalized.length} logs successfully.`);
+      const importVolunteerHours = httpsCallable<
+        { orgId: string; rows: typeof rows },
+        { imported: number; skipped: number }
+      >(getFirebaseFunctions(), 'importVolunteerHours');
+      const result = await importVolunteerHours({ orgId, rows });
+      const { imported, skipped } = result.data;
+      setImportStatus(
+        skipped > 0
+          ? `Imported ${imported} logs (${skipped} skipped as invalid).`
+          : `Imported ${imported} logs successfully.`,
+      );
     } catch (error) {
       console.error('Import failed', error);
       setImportStatus('Upload failed. Please try again with the template.');

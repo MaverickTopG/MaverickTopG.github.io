@@ -561,6 +561,114 @@ export const rejectHourLog = onCall(async (request) => {
   return { ok: true };
 });
 
+const MAX_IMPORT_ROWS = 500;
+
+const slugifyVolunteerName = (name) => {
+  const slug = String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return slug || 'volunteer';
+};
+
+// Admin-only bulk backfill of historical volunteer hours (Excel import on the web dashboard).
+// Runs with Admin SDK privileges because the client can only create hourLogs/volunteers for
+// itself (see firestore.rules) -- an admin importing hours on someone else's behalf can't be
+// expressed as a direct client write under that rule, so it goes through this callable instead.
+export const importVolunteerHours = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+
+  const orgId = String(request.data?.orgId || '').trim();
+  if (!orgId) throw new HttpsError('invalid-argument', 'orgId is required.');
+  await assertOrgAdmin(uid, orgId);
+
+  const rows = Array.isArray(request.data?.rows) ? request.data.rows : [];
+  if (!rows.length) throw new HttpsError('invalid-argument', 'rows must be a non-empty array.');
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new HttpsError('invalid-argument', `Cannot import more than ${MAX_IMPORT_ROWS} rows at once.`);
+  }
+
+  const volunteersRef = db.collection('organizations').doc(orgId).collection('volunteers');
+  const existingSnap = await volunteersRef.get();
+  const idByName = new Map();
+  existingSnap.forEach((docSnap) => {
+    const name = String(docSnap.data().displayName || '').trim().toLowerCase();
+    if (name && !idByName.has(name)) idByName.set(name, docSnap.id);
+  });
+
+  let batch = db.batch();
+  let batchWrites = 0;
+  let imported = 0;
+  let skipped = 0;
+  const flush = async () => {
+    if (batchWrites === 0) return;
+    await batch.commit();
+    batch = db.batch();
+    batchWrites = 0;
+  };
+
+  for (const row of rows) {
+    const name = String(row?.name || '').trim();
+    const hours = Number(row?.hours);
+    const date = String(row?.date || '').trim();
+    if (!name || !Number.isFinite(hours) || hours <= 0 || !date) {
+      skipped += 1;
+      continue;
+    }
+
+    const key = name.toLowerCase();
+    let volunteerId = idByName.get(key);
+    if (!volunteerId) {
+      volunteerId = `import-${slugifyVolunteerName(name)}-${volunteersRef.doc().id.slice(0, 6)}`;
+      batch.set(volunteersRef.doc(volunteerId), {
+        userId: volunteerId,
+        displayName: name,
+        email: '',
+        role: 'volunteer',
+        status: 'active',
+        imported: true,
+        perOrgStats: { hours: 0 },
+        createdAt: Timestamp.now(),
+      });
+      batchWrites += 1;
+      idByName.set(key, volunteerId);
+    }
+
+    const logRef = db.collection('organizations').doc(orgId).collection('hourLogs').doc();
+    batch.set(logRef, {
+      userId: volunteerId,
+      hours,
+      description: String(row?.task || '').trim() || 'Imported hours',
+      date,
+      status: 'verified',
+      verifiedBy: uid,
+      verifiedAt: Timestamp.now(),
+      source: 'import',
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    batch.set(
+      volunteersRef.doc(volunteerId),
+      { perOrgStats: { hours: FieldValue.increment(hours) } },
+      { merge: true },
+    );
+    batchWrites += 2;
+    imported += 1;
+
+    if (batchWrites >= 400) {
+      await flush();
+    }
+  }
+
+  await flush();
+
+  if (imported > 0) {
+    await recordAuditLog(orgId, uid, 'hours.imported', 'hourLog', null, {
+      count: String(imported), skipped: String(skipped),
+    });
+  }
+
+  return { imported, skipped };
+});
+
 export const consumeNebulaePrompt = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {

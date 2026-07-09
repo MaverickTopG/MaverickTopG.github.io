@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { getFirebaseAuth, getFirestoreDb } from '../lib/firebase';
-import { getActiveSubAdminSession, resolveOrgAdmins, resolveOrgContext, subscribeToOrgCollection } from '../lib/orgContext';
+import { getActiveSubAdminSession, subscribeToOrgAdminContext } from '../lib/orgContext';
 import {
   computeDashboardMetrics,
   computeVolunteerHours,
@@ -80,9 +81,6 @@ export const useDashboardMetrics = (
   const [weekOffset, setWeekOffset] = useState(0);
   const [adminUid, setAdminUid] = useState<string>('');
   const [adminEmail, setAdminEmail] = useState<string>('');
-  const [orgAdminIds, setOrgAdminIds] = useState<string[]>([]);
-  const [orgAdminEmails, setOrgAdminEmails] = useState<string[]>([]);
-  const [memberLinks, setMemberLinks] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
   const [subAdminScopeKey, setSubAdminScopeKey] = useState<string>(() => getActiveSubAdminSession()?.groupId || '');
 
   useEffect(() => {
@@ -101,7 +99,13 @@ export const useDashboardMetrics = (
   useEffect(() => {
     const auth = getFirebaseAuth();
     const db = getFirestoreDb();
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubContext: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubContext) {
+        unsubContext();
+        unsubContext = null;
+      }
       if (!user) {
         setOrgCode('');
         setOrgId('');
@@ -112,91 +116,76 @@ export const useDashboardMetrics = (
       }
       setAdminUid(user.uid || '');
       setAdminEmail((user.email || '').toLowerCase());
-      try {
-        const context = await resolveOrgContext(db, user.uid, user.email || null);
-        setOrgCode(context.orgCode || '');
+      unsubContext = subscribeToOrgAdminContext(db, user.uid, (context) => {
         setOrgId(context.orgId || '');
-        const adminContext = await resolveOrgAdmins(db, context.orgId, context.orgCode);
-        setOrgAdminIds(adminContext.adminIds || []);
-        setOrgAdminEmails(adminContext.adminEmails || []);
         setError(null);
-      } catch (err) {
-        console.error('Admin org lookup failed', err);
-        setError('Unable to load organization data.');
-      } finally {
         setLoading(false);
-      }
+      });
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubContext) unsubContext();
+    };
   }, []);
 
   useEffect(() => {
-    if (!orgCode && !orgId) {
+    if (!orgId) {
       setVolunteers([]);
       setLogs([]);
       return;
     }
 
     const db = getFirestoreDb();
-    const unsubVolunteers = subscribeToOrgCollection({
-      db,
-      collectionName: 'users',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        const data: VolunteerRecord[] = rows.map((row) => {
-          const docData = row.data || {};
-          const email = (docData.email || '').toString().trim();
-          const firstName = (docData.firstName || docData.name || '').toString().trim();
-          const lastName = (docData.lastName || docData.last_name || '').toString().trim();
+    const volunteersRef = collection(db, 'organizations', orgId, 'volunteers');
+    const activeVolunteersQuery = query(volunteersRef, where('status', '==', 'active'));
+    const unsubVolunteers = onSnapshot(
+      activeVolunteersQuery,
+      (snap) => {
+        const data: VolunteerRecord[] = snap.docs.map((docSnap) => {
+          const docData = docSnap.data() as Record<string, unknown>;
+          const email = String(docData.email || '').trim();
+          const displayName = String(docData.displayName || '').trim();
+          const [firstName, ...rest] = displayName ? displayName.split(' ') : [];
           return {
-            id: row.id,
+            id: docSnap.id,
             firstName: firstName || (email.includes('@') ? email.split('@')[0] : email) || 'Volunteer',
-            lastName,
+            lastName: rest.join(' '),
             email,
-            role: (docData.role as string) || 'volunteer',
+            role: String(docData.role || 'volunteer'),
             totalHours: 0,
-            lastActivity: (docData.lastActivity as string) || null,
+            lastActivity: null,
           };
         });
         setVolunteers(data);
       },
-      onError: () => {
-        setError('Unable to load volunteers.');
-      },
-    });
+      () => setError('Unable to load volunteers.'),
+    );
 
-    const unsubLogs = subscribeToOrgCollection({
-      db,
-      collectionName: 'volunteer_logs',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        const data: ActivityLog[] = rows.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) }));
+    const hourLogsRef = collection(db, 'organizations', orgId, 'hourLogs');
+    const unsubLogs = onSnapshot(
+      hourLogsRef,
+      (snap) => {
+        const data: ActivityLog[] = snap.docs.map((docSnap) => {
+          const docData = docSnap.data() as Record<string, unknown>;
+          return {
+            id: docSnap.id,
+            userId: String(docData.userId || ''),
+            hours: Number(docData.hours || 0),
+            approve: docData.status === 'verified' ? 'approved' : 'pending',
+            date: docData.date,
+          };
+        });
         setLogs(data);
       },
-      onError: () => {
-        setError('Unable to load volunteer logs.');
-      },
-    });
-
-    const unsubMemberLinks = subscribeToOrgCollection({
-      db,
-      collectionName: 'user_organizations',
-      orgCode,
-      orgId,
-      onData: (rows) => {
-        setMemberLinks(rows);
-      },
-    });
+      () => setError('Unable to load volunteer logs.'),
+    );
 
     return () => {
       unsubVolunteers();
       unsubLogs();
-      unsubMemberLinks();
     };
-  }, [orgCode, orgId, subAdminScopeKey]);
+  }, [orgId, subAdminScopeKey]);
 
   const computed = useMemo(() => {
     const isAdminLikeRole = (role: unknown) => {
@@ -205,8 +194,6 @@ export const useDashboardMetrics = (
     };
 
     const filteredVolunteers = volunteers.filter((volunteer) => {
-      if (orgAdminIds.includes(volunteer.id)) return false;
-      if (orgAdminEmails.includes((volunteer.email || '').toLowerCase())) return false;
       if (adminUid && volunteer.id === adminUid) return false;
       if (adminEmail && (volunteer.email || '').toLowerCase() === adminEmail) return false;
       if (isAdminLikeRole(volunteer.role)) return false;
@@ -215,45 +202,22 @@ export const useDashboardMetrics = (
     const filteredLogs = logs.filter((log) => {
       const logUserId = (log.user_id || log.userId || log.volunteer_id || log.volunteerId || '') as string;
       const logEmail = String((log as Record<string, unknown>).volunteer_email || (log as Record<string, unknown>).email || '').toLowerCase();
-      if (orgAdminIds.includes(logUserId)) return false;
-      if (orgAdminEmails.includes(logEmail)) return false;
       if (adminUid && logUserId === adminUid) return false;
       if (adminEmail && logEmail === adminEmail) return false;
       const logRole = (log as Record<string, unknown>).role || (log as Record<string, unknown>).volunteer_role;
       if (isAdminLikeRole(logRole)) return false;
       return true;
     });
-    const scopedMemberLinks = includeAllScopes
-      ? memberLinks
-      : memberLinks.filter((row) =>
-          matchesScopeContext((row.data || {}) as Record<string, unknown>, subAdminScopeKey),
+    const scopedVolunteers = includeAllScopes
+      ? filteredVolunteers
+      : filteredVolunteers.filter((volunteer) =>
+          matchesScopeContext(volunteer as unknown as Record<string, unknown>, subAdminScopeKey),
         );
     const scopedLogs = includeAllScopes
       ? filteredLogs
       : filteredLogs.filter((log) =>
           matchesScopeContext((log as Record<string, unknown>) || {}, subAdminScopeKey),
         );
-
-    const scopedAllowedIds = new Set<string>();
-    const scopedAllowedEmails = new Set<string>();
-    scopedMemberLinks.forEach((row) => {
-      const data = row.data || {};
-      const id = String(data.user_id || data.userId || data.uid || row.id || '').trim();
-      const email = String(data.user_email || data.email || '').trim().toLowerCase();
-      if (id) scopedAllowedIds.add(id);
-      if (email) scopedAllowedEmails.add(email);
-    });
-    scopedLogs.forEach((log) => {
-      const id = String(log.user_id || log.userId || log.volunteer_id || log.volunteerId || '').trim();
-      const email = String((log as Record<string, unknown>).volunteer_email || (log as Record<string, unknown>).email || '').trim().toLowerCase();
-      if (id) scopedAllowedIds.add(id);
-      if (email) scopedAllowedEmails.add(email);
-    });
-
-    const scopedVolunteers = filteredVolunteers.filter((volunteer) => {
-      const email = String(volunteer.email || '').trim().toLowerCase();
-      return scopedAllowedIds.has(volunteer.id) || (email && scopedAllowedEmails.has(email));
-    });
 
     const dedupedVolunteers = dedupeVolunteers(scopedVolunteers);
     const enriched = computeVolunteerHours(dedupedVolunteers, scopedLogs);
@@ -293,9 +257,6 @@ export const useDashboardMetrics = (
     adminUid,
     includeAllScopes,
     logs,
-    memberLinks,
-    orgAdminEmails,
-    orgAdminIds,
     subAdminScopeKey,
     volunteers,
     weekOffset,
