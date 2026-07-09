@@ -176,7 +176,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({ onSignIn, onBack }) => {
                     </form>
 
                     <p className="text-center mt-8 text-gray-500 font-medium text-sm">
-                        Don't have an account? <button className="text-lime-600 font-bold hover:underline">Sign up for free</button>
+                        Don't have an account? <button type="button" onClick={() => { window.location.href = '/create'; }} className="text-lime-600 font-bold hover:underline">Sign up for free</button>
                     </p>
                 </motion.div>
             </div>
